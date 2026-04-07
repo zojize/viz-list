@@ -5,7 +5,8 @@ export default antfu(
     unocss: true,
     formatters: true,
     rules: {
-      "style/yield-star-spacing": ["error", "after"]
-    }
+      'style/yield-star-spacing': ['error', 'after'],
+      'style/generator-star-spacing': ['error', { before: false, after: true }],
+    },
   },
 )
