@@ -6,6 +6,9 @@ const config: KnipConfig = {
   },
   entry: [
     'src/composables/index.ts', // barrel file for auto-import
+    'src/composables/interpreter/index.ts', // public API for interpreter
+    'src/composables/interpreter/declarations.ts', // used by evaluate.ts
+    'src/composables/interpreter/types.ts', // exports used by interpreter modules
   ],
   ignoreDependencies: [
     // UnoCSS icon sets used via presetIcons

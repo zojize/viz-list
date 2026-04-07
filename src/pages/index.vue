@@ -8,8 +8,7 @@ import cytoscape from 'cytoscape'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
 import * as monaco from 'monaco-editor'
 import { Language, Parser } from 'web-tree-sitter'
-import { getObjectId } from '~/composables/getObjectId'
-import { NULL, useCppInterpreter } from '~/composables/useCppInterpreter'
+import { NULL_ADDRESS, useCppInterpreter } from '~/composables/useCppInterpreter'
 
 useHead({
   title: 'Viz List',
@@ -148,119 +147,110 @@ const tree = computed(() => {
 
 const { init, step, reset, context, isActive } = useCppInterpreter(tree)
 
-interface ListNodeType {
-  type: 'struct'
-  name: 'Node'
-  fields: {
-    data: { value: number }
-    next: { value: CppValue }
-    prev?: { value: CppValue }
-  }
+function readCell(address: number) {
+  return context.memory.cells.get(address)
 }
 
-interface ListNodePtrType {
-  type: 'pointer'
-  ref: {
-    value: ListNodeType
-    dead?: boolean
-  }
+function readNodeField(structBase: number, fieldName: string, structName: string): CppValue | undefined {
+  const structDef = context.structs[structName]
+  if (!structDef)
+    return undefined
+  const fieldNames = Object.keys(structDef)
+  const idx = fieldNames.indexOf(fieldName)
+  if (idx === -1)
+    return undefined
+  return context.memory.cells.get(structBase + 1 + idx)?.value
 }
 
-function isListNode(node: CppValue | void): node is ListNodeType {
-  return !!node && typeof node === 'object'
-    && node.type === 'struct'
-    && node.name === 'Node'
+function isNodeStruct(value: CppValue | undefined): value is { type: 'struct', name: 'Node', base: number } {
+  return !!value && typeof value === 'object' && value.type === 'struct' && value.name === 'Node'
 }
 
-function isListNodePtr(node: CppValue | void): node is ListNodePtrType {
-  return !!node && typeof node === 'object'
-    && node.type === 'pointer'
-    && node.ref !== NULL
-    && typeof node.ref.value === 'object'
-    && node.ref.value.type === 'struct'
-    && node.ref.value.name === 'Node'
+function isNodePtr(value: CppValue | undefined): value is { type: 'pointer', address: number } {
+  if (!value || typeof value !== 'object' || value.type !== 'pointer' || value.address === NULL_ADDRESS)
+    return false
+  const cell = readCell(value.address)
+  if (!cell || cell.dead)
+    return false
+  const target = cell.value
+  return typeof target === 'object' && target.type === 'struct' && target.name === 'Node'
 }
 
-function isNullPtr(node: CppValue | void): node is {
-  type: 'pointer'
-  ref: typeof NULL
-} {
-  return !!node && typeof node === 'object'
-    && node.type === 'pointer'
-    && node.ref === NULL
+function isNullPtr(value: CppValue | undefined): value is { type: 'pointer', address: number } {
+  return !!value && typeof value === 'object'
+    && value.type === 'pointer'
+    && value.address === NULL_ADDRESS
 }
 
-const linkedLists = ref<{
-  type: 'struct'
-  name: 'LinkedList'
-  fields: {
-    head: { value: CppValue }
-    tail?: { value: CppValue }
-  }
-}[]>([])
+const linkedLists = ref<{ type: 'struct', name: 'LinkedList', base: number }[]>([])
 
 watch(
-  () => context.store,
-  () => linkedLists.value = context.store
-    .filter(({ type }) => typeof type === 'object' && type.type === 'struct' && type.name === 'LinkedList')
-    .map(({ value }) => toRaw(value) as typeof linkedLists.value[number]),
-  // computed don't have deep watch...
+  () => context.memory.cells,
+  () => {
+    linkedLists.value = [...context.memory.cells.values()]
+      .filter(cell => !cell.dead && typeof cell.type === 'object' && cell.type.type === 'struct' && cell.type.name === 'LinkedList')
+      .map(cell => toRaw(cell.value) as { type: 'struct', name: 'LinkedList', base: number })
+  },
   { deep: true },
 )
 
 const linkedListNodes = computed(() => {
   const dupes = new Set<string>()
   const lists = linkedLists.value
-    .map(({ fields }) => fields)
-    .map(({ head, tail }) => {
-      const nodes: (ListNodePtrType | null)[] = []
-      if (tail)
+    .map((list) => {
+      const headValue = readNodeField(list.base, 'head', 'LinkedList')
+      const hasTail = !!context.structs.LinkedList?.tail
+      const nodes: ({ address: number } | null)[] = []
+      if (hasTail)
         nodes.push(null)
 
-      let node = head.value
-      // assume null if node is not a ListNode
-      while (isListNodePtr(node)) {
-        nodes.push(node)
-        node = node.ref.value.fields.next.value
+      let current = headValue
+      // follow linked list via addresses
+      while (isNodePtr(current)) {
+        nodes.push({ address: current.address })
+        current = readNodeField(current.address, 'next', 'Node')
       }
       nodes.push(null)
       return nodes
     })
     .map((nodes, row) => nodes.flatMap((node, col) => {
-      const id = node ? getObjectId(node.ref.value) : `null${row}-${col ? 'tail' : 'head'}`
+      const id = node ? node.address.toString() : `null${row}-${col ? 'tail' : 'head'}`
       if (dupes.has(id))
         return []
       dupes.add(id)
+      const dataValue = node ? readNodeField(node.address, 'data', 'Node') : undefined
       return [{
         data: {
-          node: node?.ref.value,
+          address: node?.address,
           id,
-          label: `${node?.ref.value.fields.data.value ?? 'NULL'}`,
+          label: `${dataValue ?? 'NULL'}`,
           row,
           col,
         },
       }]
     }))
 
-  // const free = []
-  const free = context.store
-    .filter(o => !o.dead && isListNode(o.value) && !dupes.has(getObjectId(o.value)))
-    .map(({ value }, col) => ({
-      data: {
-        node: value as ListNodeType,
-        id: getObjectId(value as ListNodeType),
-        label: `${(value as ListNodeType).fields.data.value}`,
-        row: lists.length,
-        col: col + 1,
-      },
-    }))
+  const free = [...context.memory.cells.entries()]
+    .filter(([addr, cell]) => !cell.dead && isNodeStruct(cell.value) && !dupes.has(addr.toString()))
+    .map(([addr, _cell], col) => {
+      const dataValue = readNodeField(addr, 'data', 'Node')
+      return {
+        data: {
+          address: addr,
+          id: addr.toString(),
+          label: `${dataValue}`,
+          row: lists.length,
+          col: col + 1,
+        },
+      }
+    })
 
   return {
     lists,
     free: free.length
       ? [{
           data: {
-            node: undefined,
+            address: undefined,
             id: `null${lists.length}-head`,
             label: 'NULL',
             row: lists.length,
@@ -268,7 +258,7 @@ const linkedListNodes = computed(() => {
           },
         }, ...free, {
           data: {
-            node: undefined,
+            address: undefined,
             id: `null${lists.length}-tail`,
             label: 'NULL',
             row: lists.length,
@@ -285,27 +275,32 @@ const linkedListEdges = computed(() =>
     .concat([linkedListNodes.value.free])
     .map((nodes, row) => nodes
       .flatMap((node) => {
-        const next = node.data.node?.fields.next.value
-        const prev = node.data.node?.fields.prev?.value
+        const addr = node.data.address
+        if (addr == null)
+          return []
+        const next = readNodeField(addr, 'next', 'Node')
+        const prev = readNodeField(addr, 'prev', 'Node')
+        const nextIsPtr = isNodePtr(next) || isNullPtr(next)
+        const prevIsPtr = isNodePtr(prev) || isNullPtr(prev)
         return [
-          ...(isListNodePtr(next) || isNullPtr(next))
+          ...nextIsPtr
             ? [{
                 data: {
                   source: node.data.id,
                   target: isNullPtr(next)
                     ? `null${row}-tail`
-                    : getObjectId(next.ref.value),
+                    : (next as { type: 'pointer', address: number }).address.toString(),
                   type: 'next',
                 },
               }]
             : [],
-          ...(isListNodePtr(prev) || isNullPtr(prev))
+          ...prevIsPtr
             ? [{
                 data: {
                   source: node.data.id,
                   target: isNullPtr(prev)
                     ? `null${row}-head`
-                    : getObjectId(prev.ref.value),
+                    : (prev as { type: 'pointer', address: number }).address.toString(),
                   type: 'prev',
                 },
               }]
