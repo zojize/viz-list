@@ -7,7 +7,7 @@ import { constrainedEditor } from 'constrained-editor-plugin'
 import cytoscape from 'cytoscape'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
 import * as monaco from 'monaco-editor'
-import Parser from 'web-tree-sitter'
+import { Language, Parser } from 'web-tree-sitter'
 import { getObjectId } from '~/composables/getObjectId'
 import { NULL, useCppInterpreter } from '~/composables/useCppInterpreter'
 
@@ -41,13 +41,14 @@ struct LinkedList {
   Node *head;
 };\n\n`
 
+const templateFileNameRe = /([^/]+)\.cpp$/
 const templates = Object.fromEntries(Object.entries(
   import.meta.glob('~/templates/*.cpp', {
     eager: true,
     import: 'default',
     query: '?raw',
   }),
-).map(([path, code]) => [path.match(/([^/]+)\.cpp$/)![1], code] as [string, string]))
+).map(([path, code]) => [path.match(templateFileNameRe)![1], code] as [string, string]))
 const selectedTemplateName = useLocalStorage('selected-template', Object.keys(templates)[0])
 const isDoubly = useLocalStorage('is-doubly', true)
 if (route.query.doubly) {
@@ -91,7 +92,7 @@ onMounted(() => {
       prefixLines.length,
       1,
       prefixLines.length + codeLines.length - 1,
-      codeLines[codeLines.length - 1].length + 1,
+      codeLines.at(-1)!.length + 1,
     ],
     allowMultiline: true,
     label: 'code',
@@ -117,7 +118,7 @@ watch(prefixCode, (prefixCode) => {
       prefixLines.length,
       1,
       prefixLines.length + codeLines.length - 1,
-      codeLines[codeLines.length - 1].length + 1,
+      codeLines.at(-1)!.length + 1,
     ],
     allowMultiline: true,
     label: 'code',
@@ -129,9 +130,9 @@ onUnmounted(() => editor.value?.dispose())
 useEventListener('resize', () => editor.value?.layout({} as any))
 
 const parser = shallowRef<Parser>(undefined!)
-const cpp = shallowRef<Parser.Language>()
+const cpp = shallowRef<Language>()
 Parser.init().then(() => {
-  return Parser.Language.load('tree-sitter-cpp.wasm')
+  return Language.load('tree-sitter-cpp.wasm')
 }).then((language) => {
   const parser_ = new Parser()
   parser_.setLanguage(language)
@@ -141,7 +142,8 @@ Parser.init().then(() => {
 
 const tree = computed(() => {
   // TODO: use tree.edit after first parse
-  return markRaw(parser.value.parse(completeCode.value))
+  const result = parser.value.parse(completeCode.value)
+  return result ? markRaw(result) : undefined
 })
 
 const { init, step, reset, context, isActive } = useCppInterpreter(tree)
@@ -324,11 +326,11 @@ const style = {
         'border-color': '#666',
         'border-width': 2,
         'label': 'data(label)',
-        'text-valign': 'center',
-        'text-halign': 'center',
+        'text-valign': 'center' as const,
+        'text-halign': 'center' as const,
         'color': '#000',
         'font-size': '12px',
-        'shape': 'round-rectangle',
+        'shape': 'round-rectangle' as const,
       },
     },
     {
@@ -344,8 +346,8 @@ const style = {
         'width': 3,
         'line-color': '#ccc',
         'target-arrow-color': '#ccc',
-        'target-arrow-shape': 'triangle',
-        'curve-style': 'unbundled-bezier',
+        'target-arrow-shape': 'triangle' as const,
+        'curve-style': 'unbundled-bezier' as const,
       },
     },
     {
@@ -371,11 +373,11 @@ const style = {
         'border-color': '#888',
         'border-width': 2,
         'label': 'data(label)',
-        'text-valign': 'center',
-        'text-halign': 'center',
+        'text-valign': 'center' as const,
+        'text-halign': 'center' as const,
         'color': '#fff',
         'font-size': '12px',
-        'shape': 'round-rectangle',
+        'shape': 'round-rectangle' as const,
       },
     },
     {
@@ -391,8 +393,8 @@ const style = {
         'width': 3,
         'line-color': '#888',
         'target-arrow-color': '#888',
-        'target-arrow-shape': 'triangle',
-        'curve-style': 'unbundled-bezier',
+        'target-arrow-shape': 'triangle' as const,
+        'curve-style': 'unbundled-bezier' as const,
       },
     },
     {
@@ -410,7 +412,7 @@ const style = {
       },
     },
   ],
-} satisfies Record<string, cytoscape.Stylesheet[]>
+} satisfies Record<string, cytoscape.StylesheetJsonBlock[]>
 
 onMounted(() => {
   cy.value = cytoscape({
@@ -513,7 +515,7 @@ function saveToUrl() {
   playingShareAnimation.value = true
   // this is so stupid...
   // https://stackoverflow.com/a/78483208/14835397
-  clipBoardIconUrl.value = `url("data:image/svg+xml,%3C!-- ${+new Date()} --%3E${clipboardIcon}")`
+  clipBoardIconUrl.value = `url("data:image/svg+xml,%3C!-- ${Date.now()} --%3E${clipboardIcon}")`
   setTimeout(() => playingShareAnimation.value = false, 2000)
 }
 

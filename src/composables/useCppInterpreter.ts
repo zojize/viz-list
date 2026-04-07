@@ -1,21 +1,21 @@
-import type Parser from 'web-tree-sitter'
+import type { Node as SyntaxNode, Tree } from 'web-tree-sitter'
 
 // eslint-disable-next-line unused-imports/no-unused-vars
 const CppPrimitiveTypes = ['int', 'float', 'double', 'char', 'bool', 'void'] as const
 export type CppType
   = (typeof CppPrimitiveTypes)[number]
-  | { type: 'pointer', to: CppType }
-  | { type: 'array', of: CppType, size: number }
-  | { type: 'struct', name: string }
+    | { type: 'pointer', to: CppType }
+    | { type: 'array', of: CppType, size: number }
+    | { type: 'struct', name: string }
 
 export type CppValue
   = number
-  | boolean
+    | boolean
   // pointer? reference!
   // TODO: actually implement C memory model
-  | { type: 'pointer', ref: { value: CppValue, dead?: boolean } }
-  | { type: 'array', items: { value: CppValue }[] }
-  | { type: 'struct', name: string, fields: Record<string, { value: CppValue }> }
+    | { type: 'pointer', ref: { value: CppValue, dead?: boolean } }
+    | { type: 'array', items: { value: CppValue }[] }
+    | { type: 'struct', name: string, fields: Record<string, { value: CppValue }> }
 
 interface EnvEntry {
   type: CppType
@@ -27,7 +27,7 @@ interface InterpreterContext {
   functions: Record<string, {
     returnType: CppType
     params: { name: string, type: CppType }[]
-    body: Parser.SyntaxNode
+    body: SyntaxNode
   }>
   globalEnv: Record<string, EnvEntry>
   envStack: Record<string, EnvEntry>[]
@@ -37,7 +37,7 @@ interface InterpreterContext {
     value: CppValue
     dead: boolean
   }[]
-  currentNode?: Parser.SyntaxNode
+  currentNode?: SyntaxNode
 }
 
 export interface UseCppInterpreterReturn {
@@ -59,7 +59,7 @@ export const NULL = markRaw(Object.defineProperty({
   enumerable: false,
 }))
 
-export function useCppInterpreter(tree: MaybeRefOrGetter<Parser.Tree | void>): UseCppInterpreterReturn {
+export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>): UseCppInterpreterReturn {
   const context: InterpreterContext = reactive({
     structs: {},
     functions: {},
@@ -223,10 +223,10 @@ const unaryOps: Record<string, (a: number | boolean) => number | boolean> = {
 }
 
 function* evaluate(
-  node: Parser.SyntaxNode,
+  node: SyntaxNode,
   context: InterpreterContext,
 ): Generator<void, CppValue | null | undefined> {
-  function setCurrentNode(node: Parser.SyntaxNode) {
+  function setCurrentNode(node: SyntaxNode) {
     context.currentNode = markRaw(node)
   }
   setCurrentNode(node)
@@ -336,8 +336,8 @@ function* evaluate(
         node.childForFieldName('declarator')!,
         context,
       )
-      asserts(!(name in context.envStack[context.envStack.length - 1]), `Variable ${name} already declared`)
-      context.envStack[context.envStack.length - 1][name] = { type, loc: context.store.length }
+      asserts(!(name in context.envStack.at(-1)!), `Variable ${name} already declared`)
+      context.envStack.at(-1)![name] = { type, loc: context.store.length }
       context.store.push({ type, value: value!, dead: false })
       setCurrentNode(node)
       return yield // pause execution
@@ -554,7 +554,7 @@ class Break extends Error {
   }
 }
 
-function processDeclaration(type: Parser.SyntaxNode, declarator: Parser.SyntaxNode, context: InterpreterContext) {
+function processDeclaration(type: SyntaxNode, declarator: SyntaxNode, context: InterpreterContext) {
   asserts(['type_identifier', 'primitive_type'].includes(type.type))
   asserts([
     'identifier',
@@ -566,7 +566,7 @@ function processDeclaration(type: Parser.SyntaxNode, declarator: Parser.SyntaxNo
   ].includes(declarator.type))
 
   const baseType: CppType = type.type === 'primitive_type' ? type.text as CppType : { type: 'struct', name: type.text }
-  function *helper(baseType: CppType, declarator: Parser.SyntaxNode): Generator<void, {
+  function* helper(baseType: CppType, declarator: SyntaxNode): Generator<void, {
     type: CppType
     name: string
     params?: { type: CppType, name: string }[]
@@ -587,7 +587,7 @@ function processDeclaration(type: Parser.SyntaxNode, declarator: Parser.SyntaxNo
           params: declarator
             .childForFieldName('parameters')!
             .namedChildren
-            .map(param => getGeneratorReturn(processDeclaration(
+            .map((param: SyntaxNode) => getGeneratorReturn(processDeclaration(
               param.childForFieldName('type')!,
               param.childForFieldName('declarator')!,
               context,
@@ -619,7 +619,7 @@ function processDeclaration(type: Parser.SyntaxNode, declarator: Parser.SyntaxNo
 }
 
 function lvalue(
-  node: Parser.SyntaxNode,
+  node: SyntaxNode,
   context: InterpreterContext,
 ): [type: CppType, lvalue: { value: CppValue }] {
   switch (node.type) {
@@ -688,7 +688,7 @@ function lvalue(
   }
 }
 
-function *processAssignment(lhs: Parser.SyntaxNode, value: CppValue | null, op: string, context: InterpreterContext): Generator<void, CppValue> {
+function* processAssignment(lhs: SyntaxNode, value: CppValue | null, op: string, context: InterpreterContext): Generator<void, CppValue> {
   const [type, lval] = lvalue(lhs, context)
   if (op !== '=') {
     op = op.slice(0, -1)
@@ -726,10 +726,10 @@ function castIfNull(type: CppType, value: CppValue | null): CppValue {
   }
 }
 
-function *initializeValue(
+function* initializeValue(
   type: CppType,
   context: InterpreterContext,
-  initializer?: Parser.SyntaxNode,
+  initializer?: SyntaxNode,
 ): Generator<void, CppValue> {
   if (!initializer) {
     switch (type) {
