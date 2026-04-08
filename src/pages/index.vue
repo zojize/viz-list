@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import type { CppValue } from '~/composables/useCppInterpreter'
 import { useHead } from '@unhead/vue'
 import { useEventListener, useIntervalFn, useLocalStorage } from '@vueuse/core'
 // @ts-expect-error: no types
 import { constrainedEditor } from 'constrained-editor-plugin'
-import cytoscape from 'cytoscape'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
 import * as monaco from 'monaco-editor'
 import { Language, Parser } from 'web-tree-sitter'
-import { NULL_ADDRESS, useCppInterpreter } from '~/composables/useCppInterpreter'
+import { useCppInterpreter } from '~/composables/useCppInterpreter'
+import { useMemoryDiff } from '~/composables/useMemoryDiff'
 
 useHead({
   title: 'Viz List',
@@ -140,6 +139,8 @@ Parser.init().then(() => {
 })
 
 const tree = computed(() => {
+  if (!parser.value)
+    return undefined
   // TODO: use tree.edit after first parse
   const result = parser.value.parse(completeCode.value)
   return result ? markRaw(result) : undefined
@@ -147,312 +148,8 @@ const tree = computed(() => {
 
 const { init, step, reset, context, isActive } = useCppInterpreter(tree)
 
-function readCell(address: number) {
-  return context.memory.cells.get(address)
-}
-
-function readNodeField(structBase: number, fieldName: string, structName: string): CppValue | undefined {
-  const structDef = context.structs[structName]
-  if (!structDef)
-    return undefined
-  const fieldNames = Object.keys(structDef)
-  const idx = fieldNames.indexOf(fieldName)
-  if (idx === -1)
-    return undefined
-  return context.memory.cells.get(structBase + 1 + idx)?.value
-}
-
-function isNodeStruct(value: CppValue | undefined): value is { type: 'struct', name: 'Node', base: number } {
-  return !!value && typeof value === 'object' && value.type === 'struct' && value.name === 'Node'
-}
-
-function isNodePtr(value: CppValue | undefined): value is { type: 'pointer', address: number } {
-  if (!value || typeof value !== 'object' || value.type !== 'pointer' || value.address === NULL_ADDRESS)
-    return false
-  const cell = readCell(value.address)
-  if (!cell || cell.dead)
-    return false
-  const target = cell.value
-  return typeof target === 'object' && target.type === 'struct' && target.name === 'Node'
-}
-
-function isNullPtr(value: CppValue | undefined): value is { type: 'pointer', address: number } {
-  return !!value && typeof value === 'object'
-    && value.type === 'pointer'
-    && value.address === NULL_ADDRESS
-}
-
-const linkedLists = ref<{ type: 'struct', name: 'LinkedList', base: number }[]>([])
-
-watch(
-  () => context.memory.cells,
-  () => {
-    linkedLists.value = [...context.memory.cells.values()]
-      .filter(cell => !cell.dead && typeof cell.type === 'object' && cell.type.type === 'struct' && cell.type.name === 'LinkedList')
-      .map(cell => toRaw(cell.value) as { type: 'struct', name: 'LinkedList', base: number })
-  },
-  { deep: true },
-)
-
-const linkedListNodes = computed(() => {
-  const dupes = new Set<string>()
-  const lists = linkedLists.value
-    .map((list) => {
-      const headValue = readNodeField(list.base, 'head', 'LinkedList')
-      const hasTail = !!context.structs.LinkedList?.tail
-      const nodes: ({ address: number } | null)[] = []
-      if (hasTail)
-        nodes.push(null)
-
-      let current = headValue
-      // follow linked list via addresses
-      while (isNodePtr(current)) {
-        nodes.push({ address: current.address })
-        current = readNodeField(current.address, 'next', 'Node')
-      }
-      nodes.push(null)
-      return nodes
-    })
-    .map((nodes, row) => nodes.flatMap((node, col) => {
-      const id = node ? node.address.toString() : `null${row}-${col ? 'tail' : 'head'}`
-      if (dupes.has(id))
-        return []
-      dupes.add(id)
-      const dataValue = node ? readNodeField(node.address, 'data', 'Node') : undefined
-      return [{
-        data: {
-          address: node?.address,
-          id,
-          label: `${dataValue ?? 'NULL'}`,
-          row,
-          col,
-        },
-      }]
-    }))
-
-  const free = [...context.memory.cells.entries()]
-    .filter(([addr, cell]) => !cell.dead && isNodeStruct(cell.value) && !dupes.has(addr.toString()))
-    .map(([addr, _cell], col) => {
-      const dataValue = readNodeField(addr, 'data', 'Node')
-      return {
-        data: {
-          address: addr,
-          id: addr.toString(),
-          label: `${dataValue}`,
-          row: lists.length,
-          col: col + 1,
-        },
-      }
-    })
-
-  return {
-    lists,
-    free: free.length
-      ? [{
-          data: {
-            address: undefined,
-            id: `null${lists.length}-head`,
-            label: 'NULL',
-            row: lists.length,
-            col: 0,
-          },
-        }, ...free, {
-          data: {
-            address: undefined,
-            id: `null${lists.length}-tail`,
-            label: 'NULL',
-            row: lists.length,
-            col: free.length + 1,
-          },
-        }]
-      : [],
-  }
-})
-
-const linkedListEdges = computed(() =>
-  linkedListNodes.value
-    .lists
-    .concat([linkedListNodes.value.free])
-    .map((nodes, row) => nodes
-      .flatMap((node) => {
-        const addr = node.data.address
-        if (addr == null)
-          return []
-        const next = readNodeField(addr, 'next', 'Node')
-        const prev = readNodeField(addr, 'prev', 'Node')
-        const nextIsPtr = isNodePtr(next) || isNullPtr(next)
-        const prevIsPtr = isNodePtr(prev) || isNullPtr(prev)
-        return [
-          ...nextIsPtr
-            ? [{
-                data: {
-                  source: node.data.id,
-                  target: isNullPtr(next)
-                    ? `null${row}-tail`
-                    : (next as { type: 'pointer', address: number }).address.toString(),
-                  type: 'next',
-                },
-              }]
-            : [],
-          ...prevIsPtr
-            ? [{
-                data: {
-                  source: node.data.id,
-                  target: isNullPtr(prev)
-                    ? `null${row}-head`
-                    : (prev as { type: 'pointer', address: number }).address.toString(),
-                  type: 'prev',
-                },
-              }]
-            : [],
-        ]
-      }))
-    .flat(),
-)
-
-const cyContainer = useTemplateRef('cy-container')
-const cy = shallowRef<cytoscape.Core>()
-const style = {
-  light: [
-    {
-      selector: 'node',
-      style: {
-        'background-opacity': 0,
-        'border-color': '#666',
-        'border-width': 2,
-        'label': 'data(label)',
-        'text-valign': 'center' as const,
-        'text-halign': 'center' as const,
-        'color': '#000',
-        'font-size': '12px',
-        'shape': 'round-rectangle' as const,
-      },
-    },
-    {
-      selector: 'node[id^="null"]',
-      style: {
-        'border-width': 0,
-        'color': '#ff0000',
-      },
-    },
-    {
-      selector: 'edge',
-      style: {
-        'width': 3,
-        'line-color': '#ccc',
-        'target-arrow-color': '#ccc',
-        'target-arrow-shape': 'triangle' as const,
-        'curve-style': 'unbundled-bezier' as const,
-      },
-    },
-    {
-      selector: 'edge[type="next"]',
-      style: {
-        'line-color': '#4caf50',
-        'target-arrow-color': '#4caf50',
-      },
-    },
-    {
-      selector: 'edge[type="prev"]',
-      style: {
-        'line-color': '#ff9800',
-        'target-arrow-color': '#ff9800',
-      },
-    },
-  ],
-  dark: [
-    {
-      selector: 'node',
-      style: {
-        'background-opacity': 0,
-        'border-color': '#888',
-        'border-width': 2,
-        'label': 'data(label)',
-        'text-valign': 'center' as const,
-        'text-halign': 'center' as const,
-        'color': '#fff',
-        'font-size': '12px',
-        'shape': 'round-rectangle' as const,
-      },
-    },
-    {
-      selector: 'node[id^="null"]',
-      style: {
-        'border-width': 0,
-        'color': '#ff0000',
-      },
-    },
-    {
-      selector: 'edge',
-      style: {
-        'width': 3,
-        'line-color': '#888',
-        'target-arrow-color': '#888',
-        'target-arrow-shape': 'triangle' as const,
-        'curve-style': 'unbundled-bezier' as const,
-      },
-    },
-    {
-      selector: 'edge[type="next"]',
-      style: {
-        'line-color': '#4caf50',
-        'target-arrow-color': '#4caf50',
-      },
-    },
-    {
-      selector: 'edge[type="prev"]',
-      style: {
-        'line-color': '#ff9800',
-        'target-arrow-color': '#ff9800',
-      },
-    },
-  ],
-} satisfies Record<string, cytoscape.StylesheetJsonBlock[]>
-
-onMounted(() => {
-  cy.value = cytoscape({
-    container: cyContainer.value!,
-    maxZoom: 2,
-    minZoom: 0.5,
-    autoungrabify: true,
-    // TODO: highlight variable on select
-    autounselectify: true,
-  })
-})
-
-watchEffect(() => {
-  if (!cy.value)
-    return
-  cy.value.style(style[dark.value ? 'dark' : 'light'])
-})
-
-watchEffect(() => {
-  if (!cy.value)
-    return
-  cy.value.elements().remove()
-  const elems = ([
-    ...Array.from(linkedListNodes.value.lists.flat()),
-    ...Array.from(linkedListNodes.value.free),
-    ...Array.from(linkedListEdges.value),
-  ])
-  // console.log(elems, linkedListNodes.value)
-  cy.value.add(elems)
-  cy.value.layout({
-    name: 'grid',
-    fit: true,
-    padding: 30,
-    nodeDimensionsIncludeLabels: true,
-    position(node) {
-      return {
-        row: node.data('row'),
-        col: node.data('col'),
-      }
-    },
-    avoidOverlap: true,
-    avoidOverlapPadding: 15,
-    spacingFactor: 0.5,
-  }).run()
-})
+const { changedAddresses, snapshot, diff } = useMemoryDiff(() => context.memory)
+const selectedAddress = ref<number | null>(null)
 
 watch(() => context.currentNode, (node) => {
   if (!node || !isActive.value)
@@ -518,6 +215,7 @@ function handleReset() {
   decorations.value?.clear()
   pause()
   reset()
+  selectedAddress.value = null
 }
 
 function handleRun() {
@@ -531,7 +229,9 @@ function handlePause() {
 
 function runStep() {
   try {
+    snapshot()
     const done = step()
+    diff()
     if (done) {
       pause()
     }
@@ -576,6 +276,7 @@ function handleStep() {
 
 <template>
   <div class="h-full w-full flex flex-row gap-2">
+    <!-- Left: Editor -->
     <div class="flex flex-1 flex-col">
       <div class="mb-2 ml-4 flex justify-between">
         <div class="flex flex-row items-center gap-2">
@@ -612,18 +313,28 @@ function handleStep() {
       </div>
       <div ref="monaco-container" class="h-full w-full" />
     </div>
-    <div class="relative flex-1">
-      <h2 class="absolute left-2 top-2 text-lg font-bold">
-        Linked Lists
-      </h2>
-      <h2 class="absolute right-2 top-2 text-lg font-bold">
-        <pre class="text-[#4caf50]">->next</pre>
-        <pre class="text-[#ff9800]">->prev</pre>
-      </h2>
-      <div v-if="linkedListNodes.lists.length === 0" class="absolute inset-0 flex items-center justify-center">
-        Nothing to see here yet...
+
+    <!-- Right: Visualization -->
+    <div class="flex flex-1 flex-col gap-1">
+      <!-- Top: Memory Map (60%) -->
+      <div class="flex-[3] overflow-hidden border border-gray-200 rounded dark:border-gray-700">
+        <MemoryMap
+          :context="context"
+          :changed-addresses="changedAddresses"
+          @select-cell="selectedAddress = $event"
+        />
       </div>
-      <div ref="cy-container" class="h-full w-full" />
+      <!-- Bottom: Detail Panel (40%) -->
+      <div class="flex-[2] overflow-hidden border border-gray-200 rounded dark:border-gray-700">
+        <DetailPanel
+          :context="context"
+          :selected-address="selectedAddress"
+          :changed-addresses="changedAddresses"
+          :simulating="running"
+          @navigate="selectedAddress = $event"
+          @clear-selection="selectedAddress = null"
+        />
+      </div>
     </div>
   </div>
 </template>
