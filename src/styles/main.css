@@ -6,6 +6,66 @@ body,
   padding: 0;
 }
 
+html {
+  background: #f8f9fa;
+  color: #1a1a2e;
+}
+
 html.dark {
-  background: #121212;
+  background: #0f1117;
+  color: #e2e4e8;
+}
+
+/* Speed slider custom styling */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: #252830;
+  outline: none;
+}
+
+html:not(.dark) input[type='range'] {
+  background: #e2e4e8;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #4d9375;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+input[type='range']::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #4d9375;
+  cursor: pointer;
+  border: none;
+}
+
+/* Error toast animation */
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.error-toast-enter {
+  animation: slide-up 0.25s ease-out;
 }

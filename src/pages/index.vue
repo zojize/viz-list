@@ -1,23 +1,21 @@
 <script setup lang="ts">
 import { useHead } from '@unhead/vue'
-import { useEventListener, useIntervalFn, useLocalStorage } from '@vueuse/core'
-// @ts-expect-error: no types
-import { constrainedEditor } from 'constrained-editor-plugin'
+import { useIntervalFn, useLocalStorage } from '@vueuse/core'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
-import * as monaco from 'monaco-editor'
 import { Language, Parser } from 'web-tree-sitter'
 import { useCppInterpreter } from '~/composables/useCppInterpreter'
 import { useMemoryDiff } from '~/composables/useMemoryDiff'
+import { useMonacoEditor } from '~/composables/useMonacoEditor'
 
 useHead({
   title: 'Viz List',
-  meta: [
-    { name: 'description', content: 'Visualize linked list operations' },
-  ],
+  meta: [{ name: 'description', content: 'Visualize linked list operations' }],
 })
 
 const route = useRoute()
 const router = useRouter()
+
+// ---- Struct prefix code ----
 
 const doublyCode = `struct Node {
   int data;
@@ -39,189 +37,162 @@ struct LinkedList {
   Node *head;
 };\n\n`
 
-const templateFileNameRe = /([^/]+)\.cpp$/
-const templates = Object.fromEntries(Object.entries(
-  import.meta.glob('~/templates/*.cpp', {
-    eager: true,
-    import: 'default',
-    query: '?raw',
-  }),
-).map(([path, code]) => [path.match(templateFileNameRe)![1], code] as [string, string]))
-const selectedTemplateName = useLocalStorage('selected-template', Object.keys(templates)[0])
+// ---- Templates (singly/doubly variants) ----
+
+const templateFileRe = /([^/]+)\.cpp$/
+
+const singlyTemplates = Object.fromEntries(Object.entries(
+  import.meta.glob('~/templates/singly/*.cpp', { eager: true, import: 'default', query: '?raw' }),
+).map(([path, code]) => [path.match(templateFileRe)![1], code] as [string, string]))
+
+const doublyTemplates = Object.fromEntries(Object.entries(
+  import.meta.glob('~/templates/doubly/*.cpp', { eager: true, import: 'default', query: '?raw' }),
+).map(([path, code]) => [path.match(templateFileRe)![1], code] as [string, string]))
+
 const isDoubly = useLocalStorage('is-doubly', true)
-if (route.query.doubly) {
+if (route.query.doubly)
   isDoubly.value = route.query.doubly === 'true'
-}
+
+const templates = computed(() => isDoubly.value ? doublyTemplates : singlyTemplates)
+const templateNames = computed(() => Object.keys(templates.value))
+const selectedTemplateName = useLocalStorage('selected-template', 'insertBack')
+
 const prefixCode = computed(() => isDoubly.value ? doublyCode : singlyCode)
-const code = useLocalStorage('code', templates[selectedTemplateName.value])
+const code = useLocalStorage('code', templates.value[selectedTemplateName.value] ?? '')
 if (route.query.code) {
   const queryCode = route.query.code as string
   let userCode = decompressFromEncodedURIComponent(queryCode)
-  if (!userCode) {
+  if (!userCode)
     userCode = decompressFromEncodedURIComponent(decodeURIComponent(queryCode))
-  }
   code.value = userCode
 }
-const editor = shallowRef<monaco.editor.IStandaloneCodeEditor>()
+
+// ---- Monaco editor (composable) ----
+
 const monacoContainer = useTemplateRef('monaco-container')
-const completeCode = computed(() => prefixCode.value + code.value)
-const decorations = shallowRef<monaco.editor.IEditorDecorationsCollection>()
-
-onMounted(() => {
-  const editorInstance = monaco.editor.create(monacoContainer.value!, {
-    value: completeCode.value,
-    automaticLayout: true,
-    language: 'cpp',
-    minimap: {
-      enabled: false,
-    },
-  })
-  editor.value = editorInstance
-  decorations.value = editorInstance.createDecorationsCollection()
-
-  const model = editorInstance.getModel()!
-  const constrainedInstance = constrainedEditor(monaco)
-  constrainedInstance.initializeIn(editorInstance)
-  // console.log(restrictedCode.ranges)
-  const prefixLines = prefixCode.value.split('\n')
-  const codeLines = code.value.split('\n')
-  const constrainedModel = constrainedInstance.addRestrictionsTo(model, [{
-    range: [
-      prefixLines.length,
-      1,
-      prefixLines.length + codeLines.length - 1,
-      codeLines.at(-1)!.length + 1,
-    ],
-    allowMultiline: true,
-    label: 'code',
-  }])
-
-  model.onDidChangeContent(() => {
-    decorations.value?.clear()
-    code.value = constrainedModel.getValueInEditableRanges().code
-  })
+const {
+  completeCode,
+  highlightCurrentNode,
+  highlightError,
+  clearHighlight,
+  resetTracking,
+  setReadOnly,
+  setTemplateCode,
+} = useMonacoEditor({
+  container: monacoContainer,
+  prefixCode,
+  code,
 })
 
-watch(prefixCode, (prefixCode) => {
-  if (!editor.value)
-    return
-
-  const prefixLines = prefixCode.split('\n')
-  const codeLines = code.value.split('\n')
-  const model = editor.value.getModel() as any
-  model.updateRestrictions([])
-  editor.value.setValue(completeCode.value)
-  model.updateRestrictions([{
-    range: [
-      prefixLines.length,
-      1,
-      prefixLines.length + codeLines.length - 1,
-      codeLines.at(-1)!.length + 1,
-    ],
-    allowMultiline: true,
-    label: 'code',
-  }])
-  code.value = model.getValueInEditableRanges().code
-})
-
-onUnmounted(() => editor.value?.dispose())
-useEventListener('resize', () => editor.value?.layout({} as any))
+// ---- Tree-Sitter ----
 
 const parser = shallowRef<Parser>(undefined!)
 const cpp = shallowRef<Language>()
-Parser.init().then(() => {
-  return Language.load('tree-sitter-cpp.wasm')
-}).then((language) => {
-  const parser_ = new Parser()
-  parser_.setLanguage(language)
+Parser.init().then(() => Language.load('tree-sitter-cpp.wasm')).then((language) => {
+  const p = new Parser()
+  p.setLanguage(language)
   cpp.value = language
-  parser.value = parser_
+  parser.value = p
 })
 
 const tree = computed(() => {
   if (!parser.value)
     return undefined
-  // TODO: use tree.edit after first parse
   const result = parser.value.parse(completeCode.value)
   return result ? markRaw(result) : undefined
 })
 
-const { init, step, reset, context, isActive } = useCppInterpreter(tree)
+// ---- Interpreter ----
 
+const { init, step, reset, context, isActive } = useCppInterpreter(tree)
 const { changedAddresses, snapshot, diff } = useMemoryDiff(() => context.memory)
-const selectedAddress = ref<number | null>(null)
+const selectedAddress = shallowRef<number | null>(null)
 const hoveredNodeAddress = shallowRef<number | null>(null)
 const hoveredFieldAddress = shallowRef<number | null>(null)
+
+const executionError = shallowRef<{ message: string, line?: number } | null>(null)
+
+// ---- Current line highlighting ----
 
 watch(() => context.currentNode, (node) => {
   if (!node || !isActive.value)
     return
-
-  decorations.value?.clear()
-
-  const { startPosition, endPosition } = node
-  const range = new monaco.Range(
-    startPosition.row + 1,
-    startPosition.column + 1,
-    endPosition.row + 1,
-    endPosition.column + 1,
-  )
-
-  decorations.value?.append([{
-    range,
-    options: {
-      isWholeLine: false,
-      className: 'bg-yellow-500 bg-op-20',
-    },
-  }])
+  highlightCurrentNode(node)
 })
 
-// TODO: add slider for simulation speed
-const { resume, pause, isActive: running } = useIntervalFn(handleStep, 200, { immediate: false, immediateCallback: true })
-watch(running, running => editor.value?.updateOptions({ readOnly: running }))
+// ---- Speed control ----
 
-watch(selectedTemplateName, (selectedTemplate) => {
+const speedMs = useLocalStorage('sim-speed', 200)
+const { resume, pause, isActive: running } = useIntervalFn(handleStep, speedMs, { immediate: false, immediateCallback: true })
+watch(running, r => setReadOnly(r))
+
+// ---- Template switching ----
+
+watch(selectedTemplateName, (name) => {
   pause()
-  if (!templates[selectedTemplate])
-    return
-  const model = editor.value?.getModel() as any
-  if (model)
-    model.updateValueInEditableRanges({ code: templates[selectedTemplate] })
+  const tmpl = templates.value[name]
+  if (tmpl)
+    setTemplateCode(tmpl)
 })
 
-const editedWhileActive = ref(false)
+// When switching singly ↔ doubly, reload the current template
+watch(isDoubly, () => {
+  pause()
+  const tmpl = templates.value[selectedTemplateName.value]
+  if (tmpl)
+    setTemplateCode(tmpl)
+})
+
+const editedWhileActive = shallowRef(false)
 watch(code, () => editedWhileActive.value = isActive.value)
 
-const playingShareAnimation = ref(false)
+// ---- Template picker dropdown ----
+
+const templatePickerOpen = shallowRef(false)
+
+function selectTemplate(name: string) {
+  selectedTemplateName.value = name
+  templatePickerOpen.value = false
+}
+
+// Close dropdown when clicking outside
+function handleClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (!target.closest('[data-testid="template-picker"]'))
+    templatePickerOpen.value = false
+}
+onMounted(() => document.addEventListener('click', handleClickOutside))
+onUnmounted(() => document.removeEventListener('click', handleClickOutside))
+
+// ---- Share ----
+
+const playingShareAnimation = shallowRef(false)
 const clipboardIcon = '%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'1em\' height=\'1em\' viewBox=\'0 0 24 24\'%3E%3Cg fill=\'none\' stroke=\'currentColor\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'2\'%3E%3Cpath stroke-dasharray=\'72\' stroke-dashoffset=\'72\' d=\'M12 3h7v18h-14v-18h7Z\'%3E%3Canimate fill=\'freeze\' attributeName=\'stroke-dashoffset\' dur=\'0.6s\' values=\'72;0\'/%3E%3C/path%3E%3Cpath stroke-dasharray=\'12\' stroke-dashoffset=\'12\' stroke-width=\'1\' d=\'M14.5 3.5v3h-5v-3\'%3E%3Canimate fill=\'freeze\' attributeName=\'stroke-dashoffset\' begin=\'0.7s\' dur=\'0.2s\' values=\'12;0\'/%3E%3C/path%3E%3Cpath stroke-dasharray=\'10\' stroke-dashoffset=\'10\' d=\'M9 13l2 2l4 -4\'%3E%3Canimate fill=\'freeze\' attributeName=\'stroke-dashoffset\' begin=\'0.9s\' dur=\'0.2s\' values=\'10;0\'/%3E%3C/path%3E%3C/g%3E%3C/svg%3E'
-const clipBoardIconUrl = ref(`url("data:image/svg+xml,${clipboardIcon}")`)
+const clipBoardIconUrl = shallowRef(`url("data:image/svg+xml,${clipboardIcon}")`)
+
 function saveToUrl() {
   const savedCode = compressToEncodedURIComponent(code.value)
-  const doubly = isDoubly.value ? 'true' : 'false'
-  router.replace({
-    query: {
-      code: savedCode,
-      doubly,
-    },
-  })
-
+  router.replace({ query: { code: savedCode, doubly: isDoubly.value ? 'true' : 'false' } })
   navigator.clipboard.writeText(window.location.href)
   playingShareAnimation.value = true
-  // this is so stupid...
-  // https://stackoverflow.com/a/78483208/14835397
   clipBoardIconUrl.value = `url("data:image/svg+xml,%3C!-- ${Date.now()} --%3E${clipboardIcon}")`
   setTimeout(() => playingShareAnimation.value = false, 2000)
 }
 
+// ---- Actions ----
+
 function handleReset() {
-  decorations.value?.clear()
+  clearHighlight()
   pause()
   reset()
+  resetTracking()
   selectedAddress.value = null
+  executionError.value = null
 }
 
 function handleRun() {
   editedWhileActive.value = false
+  executionError.value = null
   resume()
 }
 
@@ -234,37 +205,24 @@ function runStep() {
     snapshot()
     const done = step()
     diff()
-    if (done) {
+    if (done)
       pause()
-    }
   }
   catch (e) {
-    console.error(e, context.currentNode)
-    if (context.currentNode) {
-      const { startPosition, endPosition } = context.currentNode
-      decorations.value?.clear()
-      const range = new monaco.Range(
-        startPosition.row + 1,
-        startPosition.column + 1,
-        endPosition.row + 1,
-        endPosition.column + 1,
-      )
-      decorations.value?.append([{
-        range,
-        options: {
-          className: 'bg-red-500 bg-op-20',
-          isWholeLine: false,
-          hoverMessage: {
-            value: (e as Error).message || 'Error',
-          },
-        },
-      }])
+    const err = e as Error
+    console.error(err, context.currentNode)
+    executionError.value = {
+      message: err.message || 'Runtime error',
+      line: context.currentNode ? context.currentNode.startPosition.row + 1 : undefined,
     }
+    if (context.currentNode)
+      highlightError(context.currentNode, err.message || 'Error')
     pause()
   }
 }
 
 function handleStep() {
+  executionError.value = null
   if (!isActive.value || editedWhileActive.value) {
     editedWhileActive.value = false
     init()
@@ -274,54 +232,161 @@ function handleStep() {
     runStep()
   }
 }
+
+const speedLabel = computed(() => {
+  const ms = speedMs.value
+  if (ms <= 50)
+    return 'fast'
+  if (ms <= 150)
+    return 'med'
+  if (ms <= 300)
+    return 'slow'
+  return 'slower'
+})
 </script>
 
 <template>
-  <div class="h-full w-full flex flex-row gap-2">
-    <!-- Left: Editor -->
-    <div class="flex flex-1 flex-col">
-      <div class="mb-2 ml-4 flex justify-between">
-        <div class="flex flex-row items-center gap-2">
-          <label class="flex select-none items-center gap-1">
-            <input
-              v-model="isDoubly"
-              data-testid="checkbox-doubly"
-              type="checkbox"
-              class="h-3 w-3 appearance-none border rounded-full bg-gray-200 transition duration-150 ease-in-out checked:bg-green-600 dark:bg-gray-700 focus:outline-none dark:checked:bg-green-400"
-            >
-            <span class="text-sm text-gray-700 dark:text-gray-300">doubly</span>
-          </label>
-          <select
-            v-model="selectedTemplateName"
-            data-testid="template-select"
-            class="border border-gray-300 rounded-md bg-white p-1 text-gray-700 transition duration-150 ease-in-out dark:border-gray-600 dark:bg-hex-121212 dark:text-gray-300 focus:outline-none"
-          >
-            <option v-for="(_, name) in templates" :key="name" :value="name">
-              {{ name }}
-            </option>
-          </select>
-          <div class="relative">
-            <div class="peer i-mdi-help-circle-outline op-75 hover:cursor-help" />
-            <p class="absolute z-10 ml-5 mt-[-150%] block w-50 select-none rounded bg-white p-2 text-sm op-0 shadow-lg transition-duration-150 transition-ease-in-out dark:bg-gray-800 peer-hover:op-100">
-              The C++ interpreter does not accurately implement the semantics of the C++ language, and its memory model is vastly different from C++ for the sake of simplicity. It supports a subset of the C++ language sufficient for visualizing linked list operations.
-            </p>
-          </div>
-        </div>
+  <div class="h-full w-full flex flex-col gap-0 lg:flex-row lg:gap-1 lg:p-1">
+    <!-- Left: Editor + controls -->
+    <div class="min-h-0 flex flex-1 flex-col">
+      <!-- Controls toolbar -->
+      <div class="flex items-center justify-between gap-2 px-2 py-1.5">
+        <!-- Left: template picker + doubly toggle -->
         <div class="flex items-center gap-2">
-          <button class="i-mdi-share icon-btn" :style="playingShareAnimation && { '--un-icon': clipBoardIconUrl }" title="share" @click="playingShareAnimation || saveToUrl()" />
-          <button data-testid="btn-reset" class="i-mdi-refresh icon-btn" title="reset" @click="handleReset()" />
-          <button v-if="running" data-testid="btn-pause" class="i-mdi-pause icon-btn" title="pause" @click="handlePause()" />
-          <button v-else data-testid="btn-run" class="i-mdi-play icon-btn" title="run" @click="handleRun()" />
-          <button data-testid="btn-step" class="i-mdi-step-forward icon-btn" title="step" @click="handleStep()" />
+          <!-- Template dropdown -->
+          <div data-testid="template-picker" class="relative">
+            <button
+              class="flex items-center gap-1.5 rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium transition-all dark:bg-white/5"
+              :class="templatePickerOpen ? 'text-vitesse' : 'text-gray-600 dark:text-gray-400'"
+              @click.stop="templatePickerOpen = !templatePickerOpen"
+            >
+              <div class="i-carbon-code text-[0.85em]" />
+              {{ selectedTemplateName }}
+              <div class="i-carbon-chevron-down text-[0.7em] transition-transform" :class="templatePickerOpen && 'rotate-180'" />
+            </button>
+            <Transition
+              enter-active-class="transition-all duration-150 ease-out"
+              enter-from-class="opacity-0 -translate-y-1 scale-95"
+              leave-active-class="transition-all duration-100 ease-in"
+              leave-to-class="opacity-0 -translate-y-1 scale-95"
+            >
+              <div
+                v-if="templatePickerOpen"
+                class="absolute left-0 top-full z-20 mt-1 min-w-40 border border-gray-200 rounded-lg bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800"
+              >
+                <button
+                  v-for="name in templateNames"
+                  :key="name"
+                  :data-testid="`template-${name}`"
+                  class="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors"
+                  :class="selectedTemplateName === name
+                    ? 'text-vitesse bg-vitesse/5'
+                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'"
+                  @click="selectTemplate(name)"
+                >
+                  <div
+                    class="h-1.5 w-1.5 rounded-full"
+                    :class="selectedTemplateName === name ? 'bg-vitesse' : 'bg-transparent'"
+                  />
+                  {{ name }}
+                </button>
+              </div>
+            </Transition>
+          </div>
+
+          <!-- Doubly toggle -->
+          <label data-testid="checkbox-doubly" class="flex cursor-pointer select-none items-center gap-1.5">
+            <div
+              class="h-4 w-7 rounded-full p-0.5 transition-colors duration-150"
+              :class="isDoubly ? 'bg-vitesse' : 'bg-gray-300 dark:bg-gray-600'"
+              @click="isDoubly = !isDoubly"
+            >
+              <div
+                class="h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-150"
+                :class="isDoubly ? 'translate-x-3' : 'translate-x-0'"
+              />
+            </div>
+            <span class="text-xs text-gray-500">doubly</span>
+          </label>
+        </div>
+
+        <!-- Right: playback controls -->
+        <div class="flex items-center gap-2">
+          <!-- Speed slider -->
+          <div v-if="running || isActive" class="flex items-center gap-1.5">
+            <span class="text-[10px] text-gray-500 font-mono uppercase">{{ speedLabel }}</span>
+            <input
+              :value="520 - speedMs"
+              type="range"
+              min="20"
+              max="500"
+              step="10"
+              class="w-16"
+              title="Simulation speed"
+              @input="speedMs = 520 - Number(($event.target as HTMLInputElement).value)"
+            >
+          </div>
+
+          <!-- Playback buttons -->
+          <div class="toolbar-group">
+            <button data-testid="btn-reset" class="icon-btn" title="Reset" @click="handleReset()">
+              <div class="i-carbon-reset" />
+            </button>
+            <button v-if="running" data-testid="btn-pause" class="icon-btn" title="Pause" @click="handlePause()">
+              <div class="i-carbon-pause-filled text-vitesse" />
+            </button>
+            <button v-else data-testid="btn-run" class="icon-btn" title="Run" @click="handleRun()">
+              <div class="i-carbon-play-filled" />
+            </button>
+            <button data-testid="btn-step" class="icon-btn" title="Step" @click="handleStep()">
+              <div class="i-carbon-skip-forward-filled" />
+            </button>
+          </div>
+
+          <button
+            class="icon-btn"
+            :style="playingShareAnimation && { '--un-icon': clipBoardIconUrl }"
+            title="Copy share link"
+            @click="playingShareAnimation || saveToUrl()"
+          >
+            <div class="i-carbon-share" />
+          </button>
         </div>
       </div>
-      <div ref="monaco-container" class="h-full w-full" />
+
+      <!-- Editor -->
+      <div ref="monaco-container" class="min-h-0 flex-1" />
+
+      <!-- Error toast -->
+      <Transition
+        enter-active-class="transition-all duration-250 ease-out"
+        enter-from-class="translate-y-full opacity-0"
+        leave-active-class="transition-all duration-200 ease-in"
+        leave-to-class="translate-y-full opacity-0"
+      >
+        <div
+          v-if="executionError"
+          class="mx-2 mb-2 flex items-start gap-2 border border-accent-rose/20 rounded-lg bg-accent-rose/10 px-3 py-2"
+        >
+          <div class="i-carbon-warning-alt mt-0.5 shrink-0 text-accent-rose" />
+          <div class="min-w-0 flex-1">
+            <p class="text-xs text-accent-rose font-medium">
+              {{ executionError.message }}
+            </p>
+            <p v-if="executionError.line" class="mt-0.5 text-[10px] text-accent-rose/60 font-mono">
+              line {{ executionError.line }}
+            </p>
+          </div>
+          <button class="shrink-0 text-accent-rose/60 hover:text-accent-rose" @click="executionError = null">
+            <div class="i-carbon-close text-xs" />
+          </button>
+        </div>
+      </Transition>
     </div>
 
     <!-- Right: Visualization -->
     <div data-testid="viz-panel" class="min-h-0 flex flex-1 flex-col gap-1">
-      <!-- Top: Memory Map (60%) -->
-      <div class="min-h-0 flex-[3] overflow-hidden border border-gray-200 rounded dark:border-gray-700">
+      <div class="min-h-0 flex-[3] overflow-hidden panel-border">
         <MemoryMap
           :context="context"
           :changed-addresses="changedAddresses"
@@ -330,8 +395,7 @@ function handleStep() {
           @select-cell="selectedAddress = $event"
         />
       </div>
-      <!-- Bottom: Detail Panel (40%) -->
-      <div class="min-h-0 flex-[2] overflow-hidden border border-gray-200 rounded dark:border-gray-700">
+      <div class="min-h-0 flex-[2] overflow-hidden panel-border">
         <DetailPanel
           :context="context"
           :selected-address="selectedAddress"

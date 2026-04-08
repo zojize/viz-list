@@ -2,8 +2,6 @@ void insertBack(LinkedList *list, int data) {
   Node *newNode = new Node;
   newNode->data = data;
   newNode->next = nullptr;
-  newNode->prev = list->tail;
-  list->tail = newNode;
 
   if (list->head == nullptr) {
     list->head = newNode;
@@ -14,8 +12,22 @@ void insertBack(LinkedList *list, int data) {
   while (temp->next != nullptr) {
     temp = temp->next;
   }
-
   temp->next = newNode;
+}
+
+void reverse(LinkedList *list) {
+  Node *prev = nullptr;
+  Node *current = list->head;
+  Node *next = nullptr;
+
+  while (current != nullptr) {
+    next = current->next;
+    current->next = prev;
+    prev = current;
+    current = next;
+  }
+
+  list->head = prev;
 }
 
 int main() {
@@ -23,11 +35,9 @@ int main() {
   insertBack(&list, 1);
   insertBack(&list, 2);
   insertBack(&list, 3);
-
-  LinkedList list2;
-  insertBack(&list2, 1);
-  insertBack(&list2, 2);
-  insertBack(&list2, 3);
+  insertBack(&list, 4);
+  insertBack(&list, 5);
+  reverse(&list);
 
   return 0;
 }
