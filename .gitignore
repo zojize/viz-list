@@ -7,3 +7,9 @@ dist-ssr
 node_modules
 .idea/
 *.log
+.claude
+docs
+.playwright-mcp
+.agents
+.superpowers
+skills-lock.json

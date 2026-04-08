@@ -22,8 +22,6 @@ const config: KnipConfig = {
     'tree-sitter-cpp',
     // Virtual module from UnoCSS
     'uno.css',
-    // Types for cytoscape
-    '@types/cytoscape',
     // No tests yet, but needed when tests are added
     '@vue/test-utils',
   ],

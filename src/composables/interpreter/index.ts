@@ -44,6 +44,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     context.callStack = []
     context.currentNode = undefined
     mem.reset()
+    context.memory = { ...mem.space }
     gen = undefined
     isActive.value = false
   }
@@ -112,12 +113,17 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     asserts('main' in context.functions)
     gen = evaluate(context.functions.main.body, context, mem)
     context.callStack.push({ env: [] })
+    // Trigger reactivity for memory allocated during init
+    context.memory = { ...mem.space }
   }
 
   function step() {
     asserts(gen)
     try {
       const done = !!gen.next().done
+      // Trigger Vue reactivity for memory mutations (the raw Map was mutated
+      // by the interpreter, bypassing Vue's reactive proxy)
+      context.memory = { ...mem.space }
       if (done)
         isActive.value = false
       return done
