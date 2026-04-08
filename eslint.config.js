@@ -7,6 +7,7 @@ export default antfu(
     ignores: [
       'docs/**',
       'plan.md',
+      'test-results/**',
     ],
     rules: {
       'style/yield-star-spacing': ['error', 'after'],

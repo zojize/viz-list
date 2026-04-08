@@ -5,10 +5,30 @@ import {
   presetWebFonts,
 } from 'unocss'
 
+// Colors aligned with Vitesse theme (https://github.com/antfu/vscode-theme-vitesse)
 export default defineConfig({
+  theme: {
+    colors: {
+      // Vitesse green — the primary accent
+      vitesse: {
+        DEFAULT: '#4d9375',
+        light: '#1c6b48',
+      },
+      accent: {
+        green: '#4d9375',
+        amber: '#e0a569',
+        rose: '#cb7676',
+        blue: '#6394bf',
+        cyan: '#5eaab5',
+        purple: '#a78bfa',
+      },
+    },
+  },
   shortcuts: [
-    ['btn', 'px-4 py-1 rounded inline-block bg-teal-600 text-white cursor-pointer hover:bg-teal-700 disabled:cursor-default disabled:bg-gray-600 disabled:opacity-50'],
-    ['icon-btn', 'text-[0.9em] text-hex-404040 inline-block cursor-pointer select-none transition duration-200 ease-in-out hover:text-teal-600 !outline-none disabled:cursor-default'],
+    ['btn', 'px-4 py-1.5 rounded-lg inline-flex items-center gap-1.5 cursor-pointer transition-all duration-150 text-sm font-medium disabled:cursor-default disabled:opacity-40'],
+    ['icon-btn', 'inline-flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer select-none transition-all duration-150 text-gray-500 dark:text-gray-400 hover:text-vitesse hover:bg-vitesse/10 !outline-none disabled:cursor-default disabled:opacity-40'],
+    ['toolbar-group', 'flex items-center gap-0.5 bg-gray-100 dark:bg-white/5 rounded-lg p-0.5'],
+    ['panel-border', 'border border-gray-200 dark:border-gray-800 rounded-lg'],
   ],
   presets: [
     presetUno(),
@@ -19,9 +39,8 @@ export default defineConfig({
     }),
     presetWebFonts({
       fonts: {
-        sans: 'DM Sans',
-        serif: 'DM Serif Display',
-        mono: 'DM Mono',
+        sans: 'General Sans:400,500,600',
+        mono: 'JetBrains Mono:400,500,600',
       },
     }),
   ],

@@ -1,21 +1,24 @@
 <template>
-  <nav class="flex justify-between px-4 py-2">
-    <h1 class="text-lg font-bold">
-      Viz List
-    </h1>
+  <nav class="flex items-center justify-between border-b border-gray-200 px-4 py-1.5 dark:border-gray-800">
+    <div class="flex items-center gap-3">
+      <h1 class="text-base font-semibold tracking-tight">
+        <span class="text-vitesse">viz</span><span class="opacity-60">list</span>
+      </h1>
+    </div>
 
-    <div class="flex items-center gap-2">
-      <button class="icon-btn" @click="toggleDark()">
+    <div class="flex items-center gap-1">
+      <button class="icon-btn" title="Toggle theme" @click="toggleDark()">
         <div class="i-carbon-sun dark:i-carbon-moon" />
       </button>
-
       <a
-        class="i-carbon-logo-github icon-btn"
+        class="icon-btn"
         rel="noreferrer"
         href="https://github.com/zojize/viz-list"
         target="_blank"
         title="GitHub"
-      />
+      >
+        <div class="i-carbon-logo-github" />
+      </a>
     </div>
   </nav>
 </template>

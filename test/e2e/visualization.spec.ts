@@ -114,10 +114,17 @@ test.describe('data structure panel', () => {
   })
 })
 
+// Helper to select a template via dropdown
+async function selectTemplate(page: import('@playwright/test').Page, name: string) {
+  await page.getByTestId('template-picker').locator('button').first().click()
+  await page.waitForTimeout(100)
+  await page.getByTestId(`template-${name}`).click()
+  await page.waitForTimeout(200)
+}
+
 test.describe('reverse algorithm visualization', () => {
   test.beforeEach(async ({ page }) => {
-    await page.getByTestId('template-select').selectOption('reverse')
-    await page.waitForTimeout(200)
+    await selectTemplate(page, 'reverse')
   })
 
   test('shows partial chains mid-reverse', async ({ page }) => {
@@ -155,8 +162,7 @@ test.describe('reverse algorithm visualization', () => {
 
 test.describe('viewport overflow', () => {
   test('page does not scroll beyond viewport after running reverse', async ({ page }) => {
-    await page.getByTestId('template-select').selectOption('reverse')
-    await page.waitForTimeout(200)
+    await selectTemplate(page, 'reverse')
 
     await page.getByTestId('btn-run').click()
     await page.waitForTimeout(20_000)
