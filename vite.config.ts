@@ -1,4 +1,5 @@
 import path from 'node:path'
+import process from 'node:process'
 import Vue from '@vitejs/plugin-vue'
 import UnoCSS from 'unocss/vite'
 import AutoImport from 'unplugin-auto-import/vite'
@@ -9,7 +10,7 @@ import VueRouter from 'unplugin-vue-router/vite'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  base: '/viz-list/',
+  base: process.env.NETLIFY ? '/' : '/viz-list/',
   resolve: {
     alias: {
       '~/': `${path.resolve(__dirname, 'src')}/`,
