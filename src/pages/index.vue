@@ -6,6 +6,7 @@ import { Language, Parser } from 'web-tree-sitter'
 import { useCppInterpreter } from '~/composables/useCppInterpreter'
 import { useMemoryDiff } from '~/composables/useMemoryDiff'
 import { useMonacoEditor } from '~/composables/useMonacoEditor'
+import { useStatementAddresses } from '~/composables/useStatementAddresses'
 
 useHead({
   title: 'Viz List',
@@ -78,6 +79,7 @@ const {
   resetTracking,
   setReadOnly,
   setTemplateCode,
+  highlightVariable,
 } = useMonacoEditor({
   container: monacoContainer,
   prefixCode,
@@ -106,6 +108,7 @@ const tree = computed(() => {
 
 const { init, step, reset, context, isActive } = useCppInterpreter(tree)
 const { changedAddresses, snapshot, diff } = useMemoryDiff(() => context.memory)
+const { lhsAddresses, rhsAddresses } = useStatementAddresses(context, isActive)
 const selectedAddress = shallowRef<number | null>(null)
 const hoveredNodeAddress = shallowRef<number | null>(null)
 const hoveredFieldAddress = shallowRef<number | null>(null)
@@ -392,7 +395,11 @@ const speedLabel = computed(() => {
           :changed-addresses="changedAddresses"
           :highlighted-address="hoveredNodeAddress"
           :highlighted-field-address="hoveredFieldAddress"
+          :statement-lhs-addresses="lhsAddresses"
+          :statement-rhs-addresses="rhsAddresses"
           @select-cell="selectedAddress = $event"
+          @hover-pointer="hoveredNodeAddress = $event"
+          @hover-variable="highlightVariable($event, context.currentNode)"
         />
       </div>
       <div class="min-h-0 flex-[2] overflow-hidden panel-border">
