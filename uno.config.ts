@@ -7,6 +7,13 @@ import {
 
 // Colors aligned with Vitesse theme (https://github.com/antfu/vscode-theme-vitesse)
 export default defineConfig({
+  content: {
+    pipeline: {
+      include: [
+        /\.(vue|svelte|[jt]sx?|mdx?|astro|elm|php|phtml|html)($|\?)/,
+      ],
+    },
+  },
   theme: {
     colors: {
       // Vitesse green — the primary accent
