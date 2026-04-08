@@ -7,13 +7,20 @@ const props = defineProps<{
   changedAddresses: ReadonlySet<number>
   highlightedAddress?: number | null
   highlightedFieldAddress?: number | null
+  /** Addresses involved in the current statement: LHS (write targets) */
+  statementLhsAddresses?: ReadonlySet<number>
+  /** Addresses involved in the current statement: RHS (read sources) */
+  statementRhsAddresses?: ReadonlySet<number>
 }>()
 
 const emit = defineEmits<{
   selectCell: [address: number]
+  hoverPointer: [address: number | null]
+  hoverVariable: [name: string | null]
 }>()
 
 const hoveredTarget = shallowRef<number | null>(null)
+const hoverSource = shallowRef<'stack' | 'heap' | null>(null)
 
 // ---- Helpers ----
 
@@ -80,13 +87,29 @@ function isFieldHighlighted(fieldAddress: number): boolean {
   return props.highlightedFieldAddress === fieldAddress
 }
 
-function handleHoverPointer(address: number | null) {
+function handleHoverPointerStack(address: number | null) {
   hoveredTarget.value = address
+  hoverSource.value = address !== null ? 'stack' : null
+  emit('hoverPointer', address)
+}
+
+function handleHoverPointerHeap(address: number | null) {
+  hoveredTarget.value = address
+  hoverSource.value = address !== null ? 'heap' : null
+  emit('hoverPointer', address)
 }
 
 function handleClickPointer(address: number) {
   if (address !== NULL_ADDRESS)
     emit('selectCell', address)
+}
+
+function isStatementLhs(address: number): boolean {
+  return !!props.statementLhsAddresses?.has(address)
+}
+
+function isStatementRhs(address: number): boolean {
+  return !!props.statementRhsAddresses?.has(address)
 }
 
 // ---- Stack entries ----
@@ -189,9 +212,17 @@ watch(() => props.highlightedAddress, (addr) => {
     el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 })
 
-// Also scroll when hovering pointer values within the memory map
+// Scroll when hovering pointer values — only cross-column (stack→heap or heap→stack)
 watch(hoveredTarget, (addr) => {
   if (addr === null || addr === undefined || addr === NULL_ADDRESS || !containerRef.value)
+    return
+  // Determine which column the target is in
+  const targetCell = props.context.memory.cells.get(addr)
+  if (!targetCell)
+    return
+  const targetColumn = targetCell.region === 'heap' ? 'heap' : 'stack'
+  // Only scroll if target is in a different column than where the hover originated
+  if (hoverSource.value === targetColumn)
     return
   const el = containerRef.value.querySelector(`[data-address="${addr}"]`)
   if (el)
@@ -222,11 +253,15 @@ watch(() => props.highlightedFieldAddress, (addr) => {
           :data-testid="`stack-entry-${entry.address}`"
           class="cursor-pointer border-l-3 border-transparent rounded bg-gray-50 font-mono transition-all duration-200 dark:bg-gray-800/80"
           :class="{
-            'border-l-yellow-400!': changedAddresses.has(entry.address),
-            'border-l-blue-400!': hoveredTarget === entry.address || isCellHighlighted(entry.address),
+            'border-l-blue-500!': isStatementLhs(entry.address),
+            'border-l-green-500!': isStatementRhs(entry.address),
+            'border-l-yellow-400!': changedAddresses.has(entry.address) && !isStatementLhs(entry.address) && !isStatementRhs(entry.address),
+            'border-l-blue-400!': (hoveredTarget === entry.address || isCellHighlighted(entry.address)) && !isStatementLhs(entry.address) && !isStatementRhs(entry.address),
             'opacity-40': !entry.inScope,
           }"
           @click="emit('selectCell', entry.address)"
+          @pointerenter="entry.inScope && emit('hoverVariable', entry.name)"
+          @pointerleave="emit('hoverVariable', null)"
         >
           <!-- Address bar: address left, var name + type right -->
           <div class="flex items-center justify-between rounded-t bg-gray-200/80 px-2 py-0.5 text-[10px] dark:bg-gray-700/50">
@@ -246,7 +281,11 @@ watch(() => props.highlightedFieldAddress, (addr) => {
                 :key="name"
                 :data-field-address="field.address"
                 class="flex items-baseline justify-between py-0.5 transition-colors"
-                :class="{ 'bg-blue-500/15 rounded px-1 -mx-1': isFieldHighlighted(field.address) }"
+                :class="{
+                  'bg-blue-500/15 rounded px-1 -mx-1': isFieldHighlighted(field.address),
+                  'bg-blue-500/10 rounded px-1 -mx-1': isStatementLhs(field.address),
+                  'bg-green-500/10 rounded px-1 -mx-1': isStatementRhs(field.address),
+                }"
               >
                 <span class="text-gray-500">{{ name }}</span>
                 <span
@@ -254,8 +293,8 @@ watch(() => props.highlightedFieldAddress, (addr) => {
                   class="cursor-pointer hover:underline"
                   :class="field.value.address === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
                   @click.stop="handleClickPointer(field.value.address)"
-                  @pointerenter="handleHoverPointer(field.value.address)"
-                  @pointerleave="handleHoverPointer(null)"
+                  @pointerenter="handleHoverPointerStack(field.value.address)"
+                  @pointerleave="handleHoverPointerStack(null)"
                 >{{ formatValue(field.value) }}</span>
                 <span v-else class="text-orange-600 font-semibold dark:text-orange-300">{{ formatValue(field.value) }}</span>
               </div>
@@ -267,8 +306,8 @@ watch(() => props.highlightedFieldAddress, (addr) => {
                 class="cursor-pointer hover:underline"
                 :class="entry.cell.value.address === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
                 @click.stop="handleClickPointer(entry.cell.value.address)"
-                @pointerenter="handleHoverPointer(entry.cell.value.address)"
-                @pointerleave="handleHoverPointer(null)"
+                @pointerenter="handleHoverPointerStack(entry.cell.value.address)"
+                @pointerleave="handleHoverPointerStack(null)"
               >{{ formatValue(entry.cell.value) }}</span>
             </template>
 
@@ -290,20 +329,26 @@ watch(() => props.highlightedFieldAddress, (addr) => {
       <div class="mb-1 text-[10px] text-gray-500 tracking-wide uppercase">
         Heap
       </div>
-      <MemoryCell
-        v-for="entry in heapEntries"
-        :key="entry.cell.address"
-        :data-address="entry.cell.address"
-        :data-testid="`heap-cell-${entry.cell.address}`"
-        :cell="entry.cell"
-        :field-values="entry.fields"
-        :changed="changedAddresses.has(entry.cell.address)"
-        :highlighted-field-address="highlightedFieldAddress"
-        :class="{ 'border-l-blue-400!': hoveredTarget === entry.cell.address || isCellHighlighted(entry.cell.address) }"
-        @click-pointer="handleClickPointer"
-        @hover-pointer="handleHoverPointer"
-        @click-cell="emit('selectCell', $event)"
-      />
+      <TransitionGroup name="heap-cell">
+        <MemoryCell
+          v-for="entry in heapEntries"
+          :key="entry.cell.address"
+          :data-address="entry.cell.address"
+          :data-testid="`heap-cell-${entry.cell.address}`"
+          :cell="entry.cell"
+          :field-values="entry.fields"
+          :changed="changedAddresses.has(entry.cell.address)"
+          :highlighted-field-address="highlightedFieldAddress"
+          :class="{
+            'border-l-blue-500!': isStatementLhs(entry.cell.address),
+            'border-l-green-500!': isStatementRhs(entry.cell.address),
+            'border-l-blue-400!': (hoveredTarget === entry.cell.address || isCellHighlighted(entry.cell.address)) && !isStatementLhs(entry.cell.address) && !isStatementRhs(entry.cell.address),
+          }"
+          @click-pointer="handleClickPointer"
+          @hover-pointer="handleHoverPointerHeap"
+          @click-cell="emit('selectCell', $event)"
+        />
+      </TransitionGroup>
       <div v-if="heapEntries.length === 0" class="text-xs text-gray-500 italic">
         No heap allocations
       </div>
@@ -329,6 +374,26 @@ watch(() => props.highlightedFieldAddress, (addr) => {
   transform: translateX(16px);
 }
 .stack-cell-move {
+  transition: transform 0.3s ease;
+}
+
+.heap-cell-enter-from {
+  opacity: 0;
+  transform: scale(0.95);
+}
+.heap-cell-enter-active {
+  transition: all 0.25s ease-out;
+}
+.heap-cell-leave-active {
+  transition: all 0.35s ease-in;
+  position: absolute;
+  width: 100%;
+}
+.heap-cell-leave-to {
+  opacity: 0;
+  transform: translateX(16px) scale(0.95);
+}
+.heap-cell-move {
   transition: transform 0.3s ease;
 }
 </style>
