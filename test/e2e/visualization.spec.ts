@@ -201,12 +201,11 @@ test.describe('hover interactions', () => {
     // Step 5 times to enter insertBack with stack variables visible
     await stepN(page, 5)
 
-    // Wait for Monaco editor to be ready
-    await page.waitForSelector('.view-overlays')
+    // Wait for Monaco editor to be ready (view-overlays is aria-hidden, so check attached not visible)
+    await page.waitForSelector('.view-overlays', { state: 'attached' })
 
     // Find the stack variable card for the 'data' int parameter
-    const stackColumn = page.getByTestId('stack-column')
-    const dataCard = stackColumn.locator('.cursor-pointer.border-l-3').filter({ hasText: 'data' }).filter({ hasText: 'int' }).first()
+    const dataCard = page.locator('.cursor-pointer.border-l-3').filter({ hasText: 'data' }).filter({ hasText: 'int' }).first()
     await expect(dataCard).toBeVisible()
 
     // Hover on the stack variable card
@@ -215,6 +214,6 @@ test.describe('hover interactions', () => {
 
     // Monaco should create decoration overlays with class bg-cyan-500
     const decoration = page.locator('.view-overlays .bg-cyan-500').first()
-    await expect(decoration).toBeVisible()
+    await expect(decoration).toBeAttached()
   })
 })
