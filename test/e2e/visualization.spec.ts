@@ -196,4 +196,25 @@ test.describe('hover interactions', () => {
       expect(classes).toContain('border-l-blue-400')
     }
   })
+
+  test('hovering a stack variable card highlights its declaration in Monaco', async ({ page }) => {
+    // Step 5 times to enter insertBack with stack variables visible
+    await stepN(page, 5)
+
+    // Wait for Monaco editor to be ready
+    await page.waitForSelector('.view-overlays')
+
+    // Find the stack variable card for the 'data' int parameter
+    const stackColumn = page.getByTestId('stack-column')
+    const dataCard = stackColumn.locator('.cursor-pointer.border-l-3').filter({ hasText: 'data' }).filter({ hasText: 'int' }).first()
+    await expect(dataCard).toBeVisible()
+
+    // Hover on the stack variable card
+    await dataCard.hover()
+    await page.waitForTimeout(200)
+
+    // Monaco should create decoration overlays with class bg-cyan-500
+    const decoration = page.locator('.view-overlays .bg-cyan-500').first()
+    await expect(decoration).toBeVisible()
+  })
 })
