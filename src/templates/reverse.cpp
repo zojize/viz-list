@@ -21,6 +21,7 @@ void insertBack(LinkedList *list, int data) {
 void reverse(LinkedList *list) {
   Node *temp = nullptr;
   Node *current = list->head;
+  Node *oldHead = list->head;
 
   while (current != nullptr) {
     temp = current->prev;
@@ -32,6 +33,7 @@ void reverse(LinkedList *list) {
   if (temp != nullptr) {
     list->head = temp->prev;
   }
+  list->tail = oldHead;
 }
 
 int main() {

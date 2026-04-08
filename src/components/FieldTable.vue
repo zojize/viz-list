@@ -82,7 +82,7 @@ const fields = computed((): FieldRow[] => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-2">
+  <div data-testid="field-table" class="flex flex-col gap-2">
     <div class="flex items-center gap-2">
       <span v-if="structName" class="text-purple-600 font-bold dark:text-purple-400">{{ structName }}</span>
       <span class="text-xs text-gray-500 font-mono">at 0x{{ cell.address.toString(16).padStart(2, '0') }}</span>
@@ -99,6 +99,7 @@ const fields = computed((): FieldRow[] => {
       <div
         v-for="field in fields"
         :key="field.name"
+        :data-testid="`field-${field.name}`"
         class="flex items-center justify-between border-b border-gray-200 px-3 py-1.5 text-xs font-mono last:border-b-0 dark:border-gray-700"
         :class="{ 'bg-yellow-500/10': field.changed }"
       >

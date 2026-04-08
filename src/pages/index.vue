@@ -285,6 +285,7 @@ function handleStep() {
           <label class="flex select-none items-center gap-1">
             <input
               v-model="isDoubly"
+              data-testid="checkbox-doubly"
               type="checkbox"
               class="h-3 w-3 appearance-none border rounded-full bg-gray-200 transition duration-150 ease-in-out checked:bg-green-600 dark:bg-gray-700 focus:outline-none dark:checked:bg-green-400"
             >
@@ -292,6 +293,7 @@ function handleStep() {
           </label>
           <select
             v-model="selectedTemplateName"
+            data-testid="template-select"
             class="border border-gray-300 rounded-md bg-white p-1 text-gray-700 transition duration-150 ease-in-out dark:border-gray-600 dark:bg-hex-121212 dark:text-gray-300 focus:outline-none"
           >
             <option v-for="(_, name) in templates" :key="name" :value="name">
@@ -307,17 +309,17 @@ function handleStep() {
         </div>
         <div class="flex items-center gap-2">
           <button class="i-mdi-share icon-btn" :style="playingShareAnimation && { '--un-icon': clipBoardIconUrl }" title="share" @click="playingShareAnimation || saveToUrl()" />
-          <button class="i-mdi-refresh icon-btn" title="reset" @click="handleReset()" />
-          <button v-if="running" class="i-mdi-pause icon-btn" title="pause" @click="handlePause()" />
-          <button v-else class="i-mdi-play icon-btn" title="run" @click="handleRun()" />
-          <button class="i-mdi-step-forward icon-btn" title="step" @click="handleStep()" />
+          <button data-testid="btn-reset" class="i-mdi-refresh icon-btn" title="reset" @click="handleReset()" />
+          <button v-if="running" data-testid="btn-pause" class="i-mdi-pause icon-btn" title="pause" @click="handlePause()" />
+          <button v-else data-testid="btn-run" class="i-mdi-play icon-btn" title="run" @click="handleRun()" />
+          <button data-testid="btn-step" class="i-mdi-step-forward icon-btn" title="step" @click="handleStep()" />
         </div>
       </div>
       <div ref="monaco-container" class="h-full w-full" />
     </div>
 
     <!-- Right: Visualization -->
-    <div class="min-h-0 flex flex-1 flex-col gap-1">
+    <div data-testid="viz-panel" class="min-h-0 flex flex-1 flex-col gap-1">
       <!-- Top: Memory Map (60%) -->
       <div class="min-h-0 flex-[3] overflow-hidden border border-gray-200 rounded dark:border-gray-700">
         <MemoryMap

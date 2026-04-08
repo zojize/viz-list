@@ -21,3 +21,18 @@ jobs:
       - run: bun run lint
       - run: bun run typecheck
       - run: bun run build
+      - run: bun run test -- run
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install chromium --with-deps
+
+      - run: bun run test:e2e
