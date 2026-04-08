@@ -84,14 +84,14 @@ const fields = computed((): FieldRow[] => {
 <template>
   <div class="flex flex-col gap-2">
     <div class="flex items-center gap-2">
-      <span v-if="structName" class="text-purple-400 font-bold">{{ structName }}</span>
+      <span v-if="structName" class="text-purple-600 font-bold dark:text-purple-400">{{ structName }}</span>
       <span class="text-xs text-gray-500 font-mono">at 0x{{ cell.address.toString(16).padStart(2, '0') }}</span>
       <span
         class="rounded px-1.5 py-0.5 text-[10px]"
         :class="{
-          'bg-green-900 text-green-300': cell.region === 'heap',
-          'bg-blue-900 text-blue-300': cell.region === 'stack',
-          'bg-gray-700 text-gray-300': cell.region === 'global',
+          'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300': cell.region === 'heap',
+          'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300': cell.region === 'stack',
+          'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300': cell.region === 'global',
         }"
       >{{ cell.region }}</span>
     </div>
@@ -111,13 +111,13 @@ const fields = computed((): FieldRow[] => {
             :class="field.pointerAddress === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
             @click="field.pointerAddress !== NULL_ADDRESS && emit('navigate', field.pointerAddress)"
           >{{ formatValue(field.value) }}</span>
-          <span v-else class="text-orange-300 font-bold">{{ formatValue(field.value) }}</span>
+          <span v-else class="text-orange-600 font-bold dark:text-orange-300">{{ formatValue(field.value) }}</span>
         </div>
       </div>
     </div>
     <div v-else class="rounded bg-gray-100 px-3 py-2 text-xs font-mono dark:bg-gray-800">
       <span class="text-[10px] text-gray-600">{{ formatType(cell.type) }}</span>
-      <span class="ml-2 text-orange-300 font-bold">{{ formatValue(cell.value) }}</span>
+      <span class="ml-2 text-orange-600 font-bold dark:text-orange-300">{{ formatValue(cell.value) }}</span>
     </div>
   </div>
 </template>

@@ -150,6 +150,8 @@ const { init, step, reset, context, isActive } = useCppInterpreter(tree)
 
 const { changedAddresses, snapshot, diff } = useMemoryDiff(() => context.memory)
 const selectedAddress = ref<number | null>(null)
+const hoveredNodeAddress = shallowRef<number | null>(null)
+const hoveredFieldAddress = shallowRef<number | null>(null)
 
 watch(() => context.currentNode, (node) => {
   if (!node || !isActive.value)
@@ -315,24 +317,29 @@ function handleStep() {
     </div>
 
     <!-- Right: Visualization -->
-    <div class="flex flex-1 flex-col gap-1">
+    <div class="min-h-0 flex flex-1 flex-col gap-1">
       <!-- Top: Memory Map (60%) -->
-      <div class="flex-[3] overflow-hidden border border-gray-200 rounded dark:border-gray-700">
+      <div class="min-h-0 flex-[3] overflow-hidden border border-gray-200 rounded dark:border-gray-700">
         <MemoryMap
           :context="context"
           :changed-addresses="changedAddresses"
+          :highlighted-address="hoveredNodeAddress"
+          :highlighted-field-address="hoveredFieldAddress"
           @select-cell="selectedAddress = $event"
         />
       </div>
       <!-- Bottom: Detail Panel (40%) -->
-      <div class="flex-[2] overflow-hidden border border-gray-200 rounded dark:border-gray-700">
+      <div class="min-h-0 flex-[2] overflow-hidden border border-gray-200 rounded dark:border-gray-700">
         <DetailPanel
           :context="context"
           :selected-address="selectedAddress"
           :changed-addresses="changedAddresses"
           :simulating="running"
+          :highlighted-address="hoveredNodeAddress"
           @navigate="selectedAddress = $event"
           @clear-selection="selectedAddress = null"
+          @hover-node="hoveredNodeAddress = $event"
+          @hover-field="hoveredFieldAddress = $event"
         />
       </div>
     </div>
