@@ -230,11 +230,11 @@ function handleArrowLeave() {
 </script>
 
 <template>
-  <div class="flex flex-col gap-3 p-2">
+  <div data-testid="linked-list-view" class="flex flex-col gap-3 p-2">
     <div v-if="chains.length === 0" class="text-sm text-gray-500 italic">
       No linked lists detected
     </div>
-    <div v-for="(chain, chainIdx) in chains" :key="chain.id" class="relative flex items-center gap-0 overflow-x-auto py-3 pl-2">
+    <div v-for="(chain, chainIdx) in chains" :key="chain.id" :data-testid="`chain-${chain.id}`" class="relative flex items-center gap-0 overflow-x-auto py-3 pl-2">
       <!-- First node's prev pointer (show actual value, not hardcoded NULL) -->
       <template v-if="hasPrev && chain.nodes.length > 0">
         <span
@@ -278,6 +278,7 @@ function handleArrowLeave() {
 
         <!-- Node box -->
         <div
+          :data-testid="`ds-node-${node.address}`"
           class="shrink-0 cursor-pointer border rounded px-3 py-2 text-center font-mono transition-all"
           :class="{
             'border-blue-400 bg-blue-500/10': isNodeHighlighted(node.address),

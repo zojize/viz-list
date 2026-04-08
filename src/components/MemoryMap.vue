@@ -208,9 +208,9 @@ watch(() => props.highlightedFieldAddress, (addr) => {
 </script>
 
 <template>
-  <div ref="memory-map-container" class="h-full flex gap-2 overflow-hidden p-2">
+  <div ref="memory-map-container" data-testid="memory-map" class="h-full flex gap-2 overflow-hidden p-2">
     <!-- Stack column -->
-    <div class="flex flex-1 flex-col gap-0.5 overflow-y-auto">
+    <div data-testid="stack-column" class="flex flex-1 flex-col gap-0.5 overflow-y-auto">
       <div class="mb-1 text-[10px] text-gray-500 tracking-wide uppercase">
         Stack
       </div>
@@ -219,6 +219,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
           v-for="entry in stackEntries"
           :key="entry.address"
           :data-address="entry.address"
+          :data-testid="`stack-entry-${entry.address}`"
           class="cursor-pointer border-l-3 border-transparent rounded bg-gray-50 font-mono transition-all duration-200 dark:bg-gray-800/80"
           :class="{
             'border-l-yellow-400!': changedAddresses.has(entry.address),
@@ -285,7 +286,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
     </div>
 
     <!-- Heap column -->
-    <div class="flex flex-1 flex-col gap-0.5 overflow-y-auto">
+    <div data-testid="heap-column" class="flex flex-1 flex-col gap-0.5 overflow-y-auto">
       <div class="mb-1 text-[10px] text-gray-500 tracking-wide uppercase">
         Heap
       </div>
@@ -293,6 +294,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
         v-for="entry in heapEntries"
         :key="entry.cell.address"
         :data-address="entry.cell.address"
+        :data-testid="`heap-cell-${entry.cell.address}`"
         :cell="entry.cell"
         :field-values="entry.fields"
         :changed="changedAddresses.has(entry.cell.address)"

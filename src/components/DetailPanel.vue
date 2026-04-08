@@ -27,12 +27,13 @@ const showDetail = computed(() => selectedCell.value !== null && !props.simulati
 </script>
 
 <template>
-  <div class="h-full overflow-auto p-2">
+  <div data-testid="detail-panel" class="h-full overflow-auto p-2">
     <!-- Detail mode: FieldTable + linked list context -->
     <template v-if="showDetail && selectedCell">
-      <div class="mb-2 flex items-center justify-between">
+      <div data-testid="detail-section" class="mb-2 flex items-center justify-between">
         <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
         <button
+          data-testid="detail-close"
           class="i-mdi-close text-xs text-gray-500 hover:text-gray-300"
           title="Close"
           @click="emit('clearSelection')"
@@ -64,7 +65,7 @@ const showDetail = computed(() => selectedCell.value !== null && !props.simulati
 
     <!-- Default mode: data structure overview -->
     <template v-else>
-      <div class="mb-2 text-[10px] text-gray-500 tracking-wide uppercase">
+      <div data-testid="ds-section" class="mb-2 text-[10px] text-gray-500 tracking-wide uppercase">
         Data Structures
       </div>
       <LinkedListView

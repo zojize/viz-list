@@ -187,7 +187,7 @@ function handleArrowLeave() {
 </script>
 
 <template>
-  <div class="flex items-center gap-0 overflow-x-auto px-2 py-2">
+  <div data-testid="linked-list-context" class="flex items-center gap-0 overflow-x-auto px-2 py-2">
     <!-- First node's prev pointer (show actual value) -->
     <template v-if="hasPrev && chain.length > 0 && chain[0].address !== null">
       <span
