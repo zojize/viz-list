@@ -11,7 +11,6 @@ import './styles/main.css'
 
 import 'uno.css'
 import './scripts/monaco'
-import './scripts/cytoscape'
 
 createApp(App)
   .use(createRouter({

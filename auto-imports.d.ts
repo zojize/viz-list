@@ -9,6 +9,7 @@ declare global {
   const EffectScope: typeof import('vue').EffectScope
   const NULL: typeof import('./src/composables/useCppInterpreter').NULL
   const NULL_ADDRESS: typeof import('./src/composables/useCppInterpreter').NULL_ADDRESS
+  const collectVariableIdentifiers: typeof import('./src/composables/useMonacoEditor').collectVariableIdentifiers
   const computed: typeof import('vue').computed
   const createApp: typeof import('vue').createApp
   const customRef: typeof import('vue').customRef
@@ -16,6 +17,7 @@ declare global {
   const defineAsyncComponent: typeof import('vue').defineAsyncComponent
   const defineComponent: typeof import('vue').defineComponent
   const effectScope: typeof import('vue').effectScope
+  const findEnclosingFunction: typeof import('./src/composables/useMonacoEditor').findEnclosingFunction
   const getCurrentInstance: typeof import('vue').getCurrentInstance
   const getCurrentScope: typeof import('vue').getCurrentScope
   const getCurrentWatcher: typeof import('vue').getCurrentWatcher
@@ -66,9 +68,11 @@ declare global {
   const useId: typeof import('vue').useId
   const useMemoryDiff: typeof import('./src/composables/useMemoryDiff').useMemoryDiff
   const useModel: typeof import('vue').useModel
+  const useMonacoEditor: typeof import('./src/composables/useMonacoEditor').useMonacoEditor
   const useRoute: typeof import('vue-router').useRoute
   const useRouter: typeof import('vue-router').useRouter
   const useSlots: typeof import('vue').useSlots
+  const useStatementAddresses: typeof import('./src/composables/useStatementAddresses').useStatementAddresses
   const useTemplateRef: typeof import('vue').useTemplateRef
   const watch: typeof import('vue').watch
   const watchEffect: typeof import('vue').watchEffect
@@ -83,6 +87,9 @@ declare global {
   // @ts-ignore
   export type { CppType, CppValue } from './src/composables/useCppInterpreter'
   import('./src/composables/useCppInterpreter')
+  // @ts-ignore
+  export type { UseMonacoEditorOptions } from './src/composables/useMonacoEditor'
+  import('./src/composables/useMonacoEditor')
 }
 
 // for vue template auto import
@@ -93,6 +100,7 @@ declare module 'vue' {
     readonly EffectScope: UnwrapRef<typeof import('vue')['EffectScope']>
     readonly NULL: UnwrapRef<typeof import('./src/composables/useCppInterpreter')['NULL']>
     readonly NULL_ADDRESS: UnwrapRef<typeof import('./src/composables/useCppInterpreter')['NULL_ADDRESS']>
+    readonly collectVariableIdentifiers: UnwrapRef<typeof import('./src/composables/useMonacoEditor')['collectVariableIdentifiers']>
     readonly computed: UnwrapRef<typeof import('vue')['computed']>
     readonly createApp: UnwrapRef<typeof import('vue')['createApp']>
     readonly customRef: UnwrapRef<typeof import('vue')['customRef']>
@@ -100,6 +108,7 @@ declare module 'vue' {
     readonly defineAsyncComponent: UnwrapRef<typeof import('vue')['defineAsyncComponent']>
     readonly defineComponent: UnwrapRef<typeof import('vue')['defineComponent']>
     readonly effectScope: UnwrapRef<typeof import('vue')['effectScope']>
+    readonly findEnclosingFunction: UnwrapRef<typeof import('./src/composables/useMonacoEditor')['findEnclosingFunction']>
     readonly getCurrentInstance: UnwrapRef<typeof import('vue')['getCurrentInstance']>
     readonly getCurrentScope: UnwrapRef<typeof import('vue')['getCurrentScope']>
     readonly getCurrentWatcher: UnwrapRef<typeof import('vue')['getCurrentWatcher']>
@@ -150,9 +159,11 @@ declare module 'vue' {
     readonly useId: UnwrapRef<typeof import('vue')['useId']>
     readonly useMemoryDiff: UnwrapRef<typeof import('./src/composables/useMemoryDiff')['useMemoryDiff']>
     readonly useModel: UnwrapRef<typeof import('vue')['useModel']>
+    readonly useMonacoEditor: UnwrapRef<typeof import('./src/composables/useMonacoEditor')['useMonacoEditor']>
     readonly useRoute: UnwrapRef<typeof import('vue-router')['useRoute']>
     readonly useRouter: UnwrapRef<typeof import('vue-router')['useRouter']>
     readonly useSlots: UnwrapRef<typeof import('vue')['useSlots']>
+    readonly useStatementAddresses: UnwrapRef<typeof import('./src/composables/useStatementAddresses')['useStatementAddresses']>
     readonly useTemplateRef: UnwrapRef<typeof import('vue')['useTemplateRef']>
     readonly watch: UnwrapRef<typeof import('vue')['watch']>
     readonly watchEffect: UnwrapRef<typeof import('vue')['watchEffect']>
