@@ -12,6 +12,31 @@ export interface UseMonacoEditorOptions {
   code: Ref<string>
 }
 
+/**
+ * Walk a Tree-sitter subtree and collect all `identifier` nodes matching the
+ * given name. This naturally excludes field accesses (`field_identifier` after
+ * `->` / `.`) and struct field declarations.
+ */
+export function collectVariableIdentifiers(root: SyntaxNode, variableName: string): SyntaxNode[] {
+  const ids: SyntaxNode[] = []
+  const walk = (n: SyntaxNode) => {
+    if (n.type === 'identifier' && n.text === variableName)
+      ids.push(n)
+    for (let i = 0; i < n.childCount; i++)
+      walk(n.child(i)!)
+  }
+  walk(root)
+  return ids
+}
+
+/** Find the nearest enclosing `function_definition` node, or the tree root. */
+export function findEnclosingFunction(node: SyntaxNode): SyntaxNode {
+  let fn: SyntaxNode | null = node
+  while (fn && fn.type !== 'function_definition')
+    fn = fn.parent
+  return fn ?? node.tree.rootNode
+}
+
 export function useMonacoEditor(options: UseMonacoEditorOptions) {
   const { container, prefixCode, code } = options
 
@@ -160,6 +185,72 @@ export function useMonacoEditor(options: UseMonacoEditorOptions) {
       model.updateValueInEditableRanges({ code: templateCode })
   }
 
+  // ---- Variable highlight (secondary decorations, e.g. on stack hover) ----
+
+  const varDecorations = shallowRef<monaco.editor.IEditorDecorationsCollection>()
+
+  // Initialize secondary decoration collection after editor is mounted
+  watch(editor, (ed) => {
+    if (ed)
+      varDecorations.value = ed.createDecorationsCollection()
+  })
+
+  function highlightVariable(variableName: string | null, scopeNode?: SyntaxNode) {
+    varDecorations.value?.clear()
+    if (!variableName || !editor.value)
+      return
+
+    // Use AST-based def-use analysis when a scope node is available
+    if (scopeNode) {
+      const searchRoot = findEnclosingFunction(scopeNode)
+      const ids = collectVariableIdentifiers(searchRoot, variableName)
+
+      if (ids.length > 0) {
+        varDecorations.value?.append(
+          ids.map(id => ({
+            range: new monaco.Range(
+              id.startPosition.row + 1,
+              id.startPosition.column + 1,
+              id.endPosition.row + 1,
+              id.endPosition.column + 1,
+            ),
+            options: {
+              isWholeLine: false,
+              className: 'bg-cyan-500 bg-op-30',
+            },
+          })),
+        )
+      }
+      return
+    }
+
+    // Fallback: regex-based matching when no AST is available
+    const model = editor.value.getModel()
+    if (!model)
+      return
+
+    const matches = model.findMatches(
+      `\\b${variableName}\\b`,
+      false,
+      true,
+      true,
+      null,
+      false,
+    )
+
+    if (matches.length > 0) {
+      varDecorations.value?.append(
+        matches.map(m => ({
+          range: m.range,
+          options: {
+            isWholeLine: false,
+            className: 'bg-cyan-500 bg-op-30',
+          },
+        })),
+      )
+    }
+  }
+
   return {
     editor: editor as Readonly<typeof editor>,
     completeCode,
@@ -169,5 +260,6 @@ export function useMonacoEditor(options: UseMonacoEditorOptions) {
     resetTracking,
     setReadOnly,
     setTemplateCode,
+    highlightVariable,
   }
 }
