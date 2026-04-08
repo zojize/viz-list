@@ -6,11 +6,14 @@ const props = defineProps<{
   selectedAddress: number | null
   changedAddresses: ReadonlySet<number>
   simulating?: boolean
+  highlightedAddress?: number | null
 }>()
 
 const emit = defineEmits<{
   navigate: [address: number]
   clearSelection: []
+  hoverNode: [address: number | null]
+  hoverField: [address: number | null]
 }>()
 
 const selectedCell = computed(() => {
@@ -48,10 +51,12 @@ const showDetail = computed(() => selectedCell.value !== null && !props.simulati
           <div class="mb-1 text-[10px] text-gray-500 tracking-wide uppercase">
             Linked List
           </div>
-          <NeighborhoodGraph
+          <LinkedListContext
             :address="selectedCell.address"
             :context="context"
             @navigate="emit('navigate', $event)"
+            @hover-node="emit('hoverNode', $event)"
+            @hover-field="emit('hoverField', $event)"
           />
         </div>
       </div>
@@ -64,7 +69,10 @@ const showDetail = computed(() => selectedCell.value !== null && !props.simulati
       </div>
       <LinkedListView
         :context="context"
+        :highlighted-address="highlightedAddress"
         @select-node="emit('navigate', $event)"
+        @hover-node="emit('hoverNode', $event)"
+        @hover-field="emit('hoverField', $event)"
       />
     </template>
   </div>
