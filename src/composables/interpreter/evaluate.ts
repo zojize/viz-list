@@ -301,6 +301,10 @@ export function* evaluate(
         mem,
       )
     }
+    case 'subscript_expression': {
+      const [, addr] = lvalue(node, context, mem)
+      return mem.read(addr).value
+    }
     case 'pointer_expression': {
       const argument = node.childForFieldName('argument')!
       const operator = node.childForFieldName('operator')!
@@ -444,6 +448,9 @@ export function* evaluate(
       else if (elseBlock)
         return yield* evaluate(elseBlock, context, mem)
       return
+    }
+    case 'else_clause': {
+      return yield* evaluate(node.namedChildren[0], context, mem)
     }
     case 'condition_clause': {
       const result = checksDefined(yield* evaluate(node.childForFieldName('value')!, context, mem))
