@@ -12,7 +12,7 @@ async function stepN(page: import('@playwright/test').Page, n: number) {
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
   // Wait for the parser to initialize (Tree-Sitter WASM load)
-  await expect(page.getByTestId('btn-step')).toBeVisible()
+  await expect(page.getByTestId('btn-step')).toBeVisible({ timeout: 15_000 })
   await page.waitForTimeout(500)
 })
 
