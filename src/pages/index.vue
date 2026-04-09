@@ -50,15 +50,25 @@ const doublyTemplates = Object.fromEntries(Object.entries(
   import.meta.glob('~/templates/doubly/*.cpp', { eager: true, import: 'default', query: '?raw' }),
 ).map(([path, code]) => [path.match(templateFileRe)![1], code] as [string, string]))
 
+const generalTemplates = Object.fromEntries(Object.entries(
+  import.meta.glob('~/templates/general/*.cpp', { eager: true, import: 'default', query: '?raw' }),
+).map(([path, code]) => [path.match(templateFileRe)![1], code] as [string, string]))
+
 const isDoubly = useLocalStorage('is-doubly', true)
 if (route.query.doubly)
   isDoubly.value = route.query.doubly === 'true'
 
-const templates = computed(() => isDoubly.value ? doublyTemplates : singlyTemplates)
+const linkedListTemplates = computed(() => isDoubly.value ? doublyTemplates : singlyTemplates)
+const templates = computed(() => ({ ...linkedListTemplates.value, ...generalTemplates }))
 const templateNames = computed(() => Object.keys(templates.value))
 const selectedTemplateName = useLocalStorage('selected-template', 'insertBack')
 
-const prefixCode = computed(() => isDoubly.value ? doublyCode : singlyCode)
+const isGeneralTemplate = computed(() => selectedTemplateName.value in generalTemplates)
+const prefixCode = computed(() => {
+  if (isGeneralTemplate.value)
+    return ''
+  return isDoubly.value ? doublyCode : singlyCode
+})
 const code = useLocalStorage('code', templates.value[selectedTemplateName.value] ?? '')
 if (route.query.code) {
   const queryCode = route.query.code as string
