@@ -69,9 +69,6 @@ test.describe('data structure panel', () => {
     // Run the full insertBack for first call
     await stepN(page, 15)
 
-    const dsSection = page.getByTestId('ds-section')
-    await expect(dsSection).toBeVisible()
-
     const linkedListView = page.getByTestId('linked-list-view')
     await expect(linkedListView).toBeVisible()
     // Should have at least one node in the chain
@@ -79,38 +76,35 @@ test.describe('data structure panel', () => {
     await expect(nodes.first()).toBeVisible()
   })
 
-  test('shows detail panel when clicking a node', async ({ page }) => {
-    await stepN(page, 10)
+  test('shows detail panel when clicking a DS node', async ({ page }) => {
+    await stepN(page, 15)
 
-    // Click a heap cell to open detail
-    const heapColumn = page.getByTestId('heap-column')
-    const firstHeapCell = heapColumn.locator('[data-testid^="heap-cell-"]').first()
-    await firstHeapCell.click()
+    // Click a DS node to open detail
+    const linkedListView = page.getByTestId('linked-list-view')
+    const firstNode = linkedListView.locator('[data-testid^="ds-node-"]').first()
+    await firstNode.click()
 
-    // Detail section should appear
-    const detailSection = page.getByTestId('detail-section')
-    await expect(detailSection).toBeVisible()
-
-    // Field table should show struct fields
+    // Field table should slide in
     const fieldTable = page.getByTestId('field-table')
     await expect(fieldTable).toBeVisible()
     await expect(fieldTable).toContainText('data')
     await expect(fieldTable).toContainText('next')
   })
 
-  test('close button returns to data structure view', async ({ page }) => {
-    await stepN(page, 10)
+  test('close button hides detail panel', async ({ page }) => {
+    await stepN(page, 15)
 
-    // Open detail by clicking heap cell
-    const firstHeapCell = page.getByTestId('heap-column').locator('[data-testid^="heap-cell-"]').first()
-    await firstHeapCell.click()
-    await expect(page.getByTestId('detail-section')).toBeVisible()
+    // Open detail by clicking DS node
+    const firstNode = page.getByTestId('linked-list-view').locator('[data-testid^="ds-node-"]').first()
+    await firstNode.click()
+    await expect(page.getByTestId('field-table')).toBeVisible()
 
     // Close it
     await page.getByTestId('detail-close').click()
 
-    // Data structure section should be back
-    await expect(page.getByTestId('ds-section')).toBeVisible()
+    // Field table should be gone, linked list view still visible
+    await expect(page.getByTestId('field-table')).not.toBeVisible()
+    await expect(page.getByTestId('linked-list-view')).toBeVisible()
   })
 })
 
