@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import type { CppType, CppValue, InterpreterContext, MemoryCell } from '~/composables/interpreter/types'
+import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/types'
+import { computed, shallowRef, watch } from 'vue'
+import DSValue from '~/components/DSValue.vue'
+import LinkedListChain from '~/components/LinkedListChain.vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
+import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { usePannableCanvas } from '~/composables/usePannableCanvas'
 
 const props = defineProps<{
-  context: Readonly<InterpreterContext>
   highlightedAddress?: number | null
   selectedAddress?: number | null
 }>()
@@ -14,6 +17,8 @@ const emit = defineEmits<{
   hoverNode: [address: number | null]
   hoverField: [address: number | null]
 }>()
+
+const context = useInterpreterContext()
 
 // ---- Format helpers ----
 
@@ -50,7 +55,7 @@ function formatType(type: CppType): string {
 // ---- Helpers to read memory ----
 
 function getNodeDef() {
-  return props.context.structs.Node
+  return context.structs.Node
 }
 
 function readNodeField(nodeBase: number, fieldName: string): CppValue | undefined {
@@ -60,7 +65,7 @@ function readNodeField(nodeBase: number, fieldName: string): CppValue | undefine
   const idx = Object.keys(nodeDef).indexOf(fieldName)
   if (idx === -1)
     return undefined
-  return props.context.memory.cells.get(nodeBase + 1 + idx)?.value
+  return context.memory.cells.get(nodeBase + 1 + idx)?.value
 }
 
 function getNodeFieldAddress(nodeBase: number, fieldName: string): number | undefined {
@@ -80,7 +85,7 @@ function getPointerAddr(value: CppValue | undefined): number | null {
 }
 
 function getNodeBase(address: number): number {
-  const cell = props.context.memory.cells.get(address)
+  const cell = context.memory.cells.get(address)
   if (!cell)
     return address
   const v = cell.value
@@ -130,7 +135,7 @@ function followNextChain(startAddr: number, limit = 100): ChainNode[] {
     if (seen.has(cur))
       break
     seen.add(cur)
-    const cell = props.context.memory.cells.get(cur)
+    const cell = context.memory.cells.get(cur)
     if (!cell || cell.dead)
       break
     const node = buildChainNode(cur)
@@ -146,10 +151,10 @@ const chains = computed((): ListChain[] => {
     return []
 
   const startingPoints = new Map<number, string>()
-  const listDef = props.context.structs.LinkedList
+  const listDef = context.structs.LinkedList
   if (listDef) {
     const seenBases = new Set<number>()
-    for (const cell of props.context.memory.cells.values()) {
+    for (const cell of context.memory.cells.values()) {
       if (cell.dead || typeof cell.type !== 'object' || cell.type.type !== 'struct' || cell.type.name !== 'LinkedList')
         continue
       const v = cell.value
@@ -160,7 +165,7 @@ const chains = computed((): ListChain[] => {
       seenBases.add(v.base)
       for (const fieldName of Object.keys(listDef)) {
         const idx = Object.keys(listDef).indexOf(fieldName)
-        const fieldCell = props.context.memory.cells.get(v.base + 1 + idx)
+        const fieldCell = context.memory.cells.get(v.base + 1 + idx)
         if (fieldCell && typeof fieldCell.value === 'object' && fieldCell.value.type === 'pointer' && fieldCell.value.address !== NULL_ADDRESS) {
           startingPoints.set(fieldCell.value.address, fieldName)
         }
@@ -185,7 +190,7 @@ const chains = computed((): ListChain[] => {
     result.push({ id: `${label}-${startAddr}`, nodes })
   }
 
-  for (const cell of props.context.memory.cells.values()) {
+  for (const cell of context.memory.cells.values()) {
     if (cell.dead || cell.region !== 'heap')
       continue
     if (typeof cell.type !== 'object' || cell.type.type !== 'struct' || cell.type.name !== 'Node')
@@ -239,12 +244,12 @@ const chainAddresses = computed(() => {
 /** Addresses that are struct fields or array elements (sub-cells) */
 function getSubCellAddresses(): Set<number> {
   const sub = new Set<number>()
-  for (const cell of props.context.memory.cells.values()) {
+  for (const cell of context.memory.cells.values()) {
     if (cell.dead)
       continue
     const v = cell.value
     if (typeof v === 'object' && v.type === 'struct') {
-      const structDef = props.context.structs[v.name]
+      const structDef = context.structs[v.name]
       if (structDef) {
         for (let i = 0; i < Object.keys(structDef).length; i++)
           sub.add(v.base + 1 + i)
@@ -300,22 +305,22 @@ const standaloneItems = computed((): DataItem[] => {
   }
 
   // Current scope variables (not dimmed)
-  for (let i = props.context.envStack.length - 1; i >= 0; i--) {
-    const env = props.context.envStack[i]
+  for (let i = context.envStack.length - 1; i >= 0; i--) {
+    const env = context.envStack[i]
     for (const [name, entry] of Object.entries(env)) {
-      const cell = props.context.memory.cells.get(entry.address)
+      const cell = context.memory.cells.get(entry.address)
       if (cell)
         addItem(name, cell, false)
     }
   }
 
   // Caller scope variables (dimmed)
-  for (let ci = props.context.callStack.length - 1; ci >= 0; ci--) {
-    const savedEnvs = props.context.callStack[ci].env
+  for (let ci = context.callStack.length - 1; ci >= 0; ci--) {
+    const savedEnvs = context.callStack[ci].env
     for (let i = savedEnvs.length - 1; i >= 0; i--) {
       const env = savedEnvs[i]
       for (const [name, entry] of Object.entries(env)) {
-        const cell = props.context.memory.cells.get(entry.address)
+        const cell = context.memory.cells.get(entry.address)
         if (cell)
           addItem(name, cell, true)
       }
@@ -323,7 +328,7 @@ const standaloneItems = computed((): DataItem[] => {
   }
 
   // Live heap data not in chains
-  for (const cell of props.context.memory.cells.values()) {
+  for (const cell of context.memory.cells.values()) {
     if (cell.dead || cell.region !== 'heap')
       continue
     addItem(formatType(cell.type), cell, false)
@@ -454,7 +459,6 @@ const kindBg: Record<DataItem['kind'], string> = {
             </div>
             <DSValue
               :cell="item.cell"
-              :context="context"
               @navigate="emit('selectNode', $event)"
               @hover-node="emit('hoverNode', $event)"
             />

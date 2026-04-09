@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 const props = defineProps<{

@@ -1,3 +1,7 @@
+<script setup lang="ts">
+import { toggleDark } from '~/composables/dark'
+</script>
+
 <template>
   <nav class="flex items-center justify-between border-b border-gray-200 px-4 py-1.5 dark:border-gray-800">
     <div class="flex items-center gap-3">

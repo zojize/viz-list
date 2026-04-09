@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AddressLink from '~/components/AddressLink.vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 export interface ChainNode {

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/types'
+import { computed } from 'vue'
+import AddressLink from '~/components/AddressLink.vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 const props = defineProps<{
@@ -76,21 +78,16 @@ const structName = computed(() => {
         v-for="[name, field] in fieldValues"
         :key="name"
         :data-field-address="field.address"
-        class="flex items-baseline justify-between border-b border-gray-200 py-1 font-mono transition-colors last:border-b-0 dark:border-gray-200/10 odd:bg-gray-200/30 dark:odd:bg-gray-700/20"
+        class="flex items-baseline justify-between gap-4 border-b border-gray-200 py-1 font-mono transition-colors last:border-b-0 dark:border-gray-200/10"
         :class="{ 'bg-blue-500/15! rounded px-1 -mx-1': highlightedFieldAddress === field.address }"
       >
-        <div class="flex items-baseline gap-1.5">
-          <span class="text-gray-500">{{ name }}</span>
-          <span class="text-[9px] text-gray-600">{{ formatType(field.type) }}</span>
-        </div>
-        <span
+        <span class="shrink-0 text-gray-500">{{ name }}</span>
+        <AddressLink
           v-if="isPointerValue(field.value)"
-          class="cursor-pointer font-mono hover:underline"
-          :class="field.value.address === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
-          @click.stop="emit('clickPointer', field.value.address)"
-          @pointerenter="emit('hoverPointer', field.value.address)"
-          @pointerleave="emit('hoverPointer', null)"
-        >{{ formatValue(field.value) }}</span>
+          :address="field.value.address"
+          @navigate="emit('clickPointer', $event)"
+          @hover="emit('hoverPointer', $event)"
+        />
         <span v-else class="text-orange-600 font-semibold font-mono dark:text-orange-300">{{ formatValue(field.value) }}</span>
       </div>
     </template>

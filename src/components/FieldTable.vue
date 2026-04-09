@@ -1,16 +1,21 @@
 <script setup lang="ts">
-import type { CppType, CppValue, InterpreterContext, MemoryCell } from '~/composables/interpreter/types'
+import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/types'
+import { computed } from 'vue'
+import AddressLink from '~/components/AddressLink.vue'
+import DSValue from '~/components/DSValue.vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
+import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
 const props = defineProps<{
   cell: MemoryCell
-  context: Readonly<InterpreterContext>
   changedAddresses: ReadonlySet<number>
 }>()
 
 const emit = defineEmits<{
   navigate: [address: number]
 }>()
+
+const context = useInterpreterContext()
 
 function formatValue(value: CppValue): string {
   if (typeof value === 'number' || typeof value === 'boolean')
@@ -68,13 +73,13 @@ const structBase = computed(() => {
 const fields = computed((): FieldRow[] => {
   if (!structName.value)
     return []
-  const structDef = props.context.structs[structName.value]
+  const structDef = context.structs[structName.value]
   if (!structDef)
     return []
   const base = structBase.value
   return Object.keys(structDef).map((name, i) => {
     const addr = base + 1 + i
-    const fieldCell = props.context.memory.cells.get(addr)
+    const fieldCell = context.memory.cells.get(addr)
     const value = fieldCell?.value ?? 0
     return {
       name,
@@ -114,30 +119,45 @@ const fields = computed((): FieldRow[] => {
 
     <!-- Struct fields -->
     <div v-else-if="fields.length" class="rounded bg-gray-100 dark:bg-gray-800">
-      <div
-        v-for="field in fields"
-        :key="field.name"
-        :data-testid="`field-${field.name}`"
-        class="flex items-center justify-between border-b border-gray-200 px-3 py-1.5 text-xs font-mono last:border-b-0 dark:border-gray-700 odd:bg-gray-200/30 dark:odd:bg-gray-700/30"
-        :class="{ 'bg-yellow-500/10!': field.changed }"
-      >
-        <span class="text-gray-400">{{ field.name }}</span>
-        <div class="flex items-center gap-2">
-          <span class="text-[10px] text-gray-600">{{ formatType(field.type) }}</span>
-          <AddressLink
-            v-if="field.isPointer"
-            :address="field.pointerAddress"
-            @navigate="emit('navigate', $event)"
-          />
-          <DSValue
-            v-else-if="typeof field.value === 'object' && (field.value.type === 'struct' || field.value.type === 'array')"
-            :cell="context.memory.cells.get(field.address)!"
-            :context="context"
-            @navigate="emit('navigate', $event)"
-          />
-          <span v-else class="text-orange-600 font-bold dark:text-orange-300">{{ formatValue(field.value) }}</span>
+      <template v-for="field in fields" :key="field.name">
+        <!-- Complex value (struct/array): own row with value below -->
+        <div
+          v-if="typeof field.value === 'object' && (field.value.type === 'struct' || field.value.type === 'array')"
+          :data-testid="`field-${field.name}`"
+          class="border-b border-gray-200 px-3 py-1.5 text-xs font-mono last:border-b-0 dark:border-gray-700"
+          :class="{ 'bg-yellow-500/10': field.changed }"
+        >
+          <div class="flex items-baseline gap-2">
+            <span class="text-gray-400">{{ field.name }}:</span>
+            <span class="text-[10px] text-gray-600">{{ formatType(field.type) }}</span>
+          </div>
+          <div class="pl-2 pt-0.5">
+            <DSValue
+              :cell="context.memory.cells.get(field.address)!"
+
+              @navigate="emit('navigate', $event)"
+            />
+          </div>
         </div>
-      </div>
+        <!-- Simple value: inline row -->
+        <div
+          v-else
+          :data-testid="`field-${field.name}`"
+          class="flex items-center justify-between border-b border-gray-200 px-3 py-1.5 text-xs font-mono last:border-b-0 dark:border-gray-700"
+          :class="{ 'bg-yellow-500/10': field.changed }"
+        >
+          <span class="text-gray-400">{{ field.name }}</span>
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] text-gray-600">{{ formatType(field.type) }}</span>
+            <AddressLink
+              v-if="field.isPointer"
+              :address="field.pointerAddress"
+              @navigate="emit('navigate', $event)"
+            />
+            <span v-else class="text-orange-600 font-bold dark:text-orange-300">{{ formatValue(field.value) }}</span>
+          </div>
+        </div>
+      </template>
     </div>
     <div v-else class="rounded bg-gray-100 px-3 py-2 text-xs font-mono dark:bg-gray-800">
       <span class="text-[10px] text-gray-600">{{ formatType(cell.type) }}</span>

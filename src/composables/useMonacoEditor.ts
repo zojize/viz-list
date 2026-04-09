@@ -6,7 +6,7 @@ import { constrainedEditor } from 'constrained-editor-plugin'
 import * as monaco from 'monaco-editor'
 import { computed, onMounted, onUnmounted, shallowRef, watch } from 'vue'
 
-export interface UseMonacoEditorOptions {
+interface UseMonacoEditorOptions {
   container: Ref<HTMLElement | null>
   prefixCode: Ref<string>
   code: Ref<string>

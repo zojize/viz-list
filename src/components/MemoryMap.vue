@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import type { CppType, CppValue, InterpreterContext, MemoryCell as MemoryCellType } from '~/composables/interpreter/types'
+import type { CppType, CppValue, MemoryCell as MemoryCellType } from '~/composables/interpreter/types'
+import { computed, shallowRef, useTemplateRef, watch } from 'vue'
+import AddressLink from '~/components/AddressLink.vue'
+import DSValue from '~/components/DSValue.vue'
+import MemoryCell from '~/components/MemoryCell.vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
+import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
 const props = defineProps<{
-  context: Readonly<InterpreterContext>
   changedAddresses: ReadonlySet<number>
   highlightedAddress?: number | null
   highlightedFieldAddress?: number | null
@@ -21,6 +25,8 @@ const emit = defineEmits<{
   hoverVariable: [name: string | null]
 }>()
 
+const context = useInterpreterContext()
+
 const hoveredTarget = shallowRef<number | null>(null)
 const hoverSource = shallowRef<'stack' | 'heap' | null>(null)
 
@@ -33,14 +39,14 @@ function getFieldValues(cell: MemoryCellType): Map<string, { type: CppType, valu
   if (typeof structValue !== 'object' || structValue.type !== 'struct')
     return undefined
   const base = structValue.base
-  const structDef = props.context.structs[cell.type.name]
+  const structDef = context.structs[cell.type.name]
   if (!structDef)
     return undefined
   const map = new Map<string, { type: CppType, value: CppValue, address: number }>()
   const fieldNames = Object.keys(structDef)
   for (let i = 0; i < fieldNames.length; i++) {
     const fieldAddr = base + 1 + i
-    const fieldCell = props.context.memory.cells.get(fieldAddr)
+    const fieldCell = context.memory.cells.get(fieldAddr)
     if (fieldCell)
       map.set(fieldNames[i], { type: structDef[fieldNames[i]], value: fieldCell.value, address: fieldAddr })
   }
@@ -131,13 +137,13 @@ interface StackEntry {
 
 const stackEntries = computed(() => {
   const entries: StackEntry[] = []
-  const envLen = props.context.envStack.length
+  const envLen = context.envStack.length
 
   // All envStack entries are in the current function — never dim them
   for (let i = envLen - 1; i >= 0; i--) {
-    const env = props.context.envStack[i]
+    const env = context.envStack[i]
     for (const [name, entry] of Object.entries(env)) {
-      const cell = props.context.memory.cells.get(entry.address)
+      const cell = context.memory.cells.get(entry.address)
       if (!cell || cell.dead)
         continue
       entries.push({
@@ -151,12 +157,12 @@ const stackEntries = computed(() => {
     }
   }
 
-  for (let ci = props.context.callStack.length - 1; ci >= 0; ci--) {
-    const savedEnvs = props.context.callStack[ci].env
+  for (let ci = context.callStack.length - 1; ci >= 0; ci--) {
+    const savedEnvs = context.callStack[ci].env
     for (let i = savedEnvs.length - 1; i >= 0; i--) {
       const env = savedEnvs[i]
       for (const [name, entry] of Object.entries(env)) {
-        const cell = props.context.memory.cells.get(entry.address)
+        const cell = context.memory.cells.get(entry.address)
         if (!cell || cell.dead)
           continue
         entries.push({
@@ -171,8 +177,8 @@ const stackEntries = computed(() => {
     }
   }
 
-  for (const [name, entry] of Object.entries(props.context.globalEnv)) {
-    const cell = props.context.memory.cells.get(entry.address)
+  for (const [name, entry] of Object.entries(context.globalEnv)) {
+    const cell = context.memory.cells.get(entry.address)
     if (!cell || cell.dead)
       continue
     entries.push({
@@ -200,12 +206,12 @@ const heapEntries = computed(() => {
   const structFieldAddresses = new Set<number>()
 
   // First pass: collect all struct/array field addresses so we skip them
-  for (const cell of props.context.memory.cells.values()) {
+  for (const cell of context.memory.cells.values()) {
     if (cell.dead || cell.region !== 'heap')
       continue
     const v = cell.value
     if (typeof v === 'object' && v.type === 'struct') {
-      const structDef = props.context.structs[v.name]
+      const structDef = context.structs[v.name]
       if (structDef) {
         for (let i = 0; i < Object.keys(structDef).length; i++)
           structFieldAddresses.add(v.base + 1 + i)
@@ -218,7 +224,7 @@ const heapEntries = computed(() => {
   }
 
   // Second pass: add all top-level heap cells (structs, arrays, and standalone primitives)
-  for (const cell of props.context.memory.cells.values()) {
+  for (const cell of context.memory.cells.values()) {
     if (cell.dead || cell.region !== 'heap')
       continue
     if (structFieldAddresses.has(cell.address))
@@ -244,7 +250,7 @@ watch(hoveredTarget, (addr) => {
   if (addr === null || addr === undefined || addr === NULL_ADDRESS || !containerRef.value)
     return
   // Determine which column the target is in
-  const targetCell = props.context.memory.cells.get(addr)
+  const targetCell = context.memory.cells.get(addr)
   if (!targetCell)
     return
   const targetColumn = targetCell.region === 'heap' ? 'heap' : 'stack'
@@ -278,7 +284,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
           :key="entry.address"
           :data-address="entry.address"
           :data-testid="`stack-entry-${entry.address}`"
-          class="cursor-pointer border-l-3 border-transparent rounded bg-gray-50 font-mono transition-all duration-200 dark:bg-gray-800/80"
+          class="cursor-pointer border-l-3 border-transparent rounded bg-gray-200/80 font-mono transition-all duration-200 dark:bg-gray-800"
           :class="{
             'outline outline-2 outline-blue-400 bg-blue-500/20!': selectedAddress === entry.address,
             'border-l-blue-500!': isStatementLhs(entry.address),
@@ -304,40 +310,50 @@ watch(() => props.highlightedFieldAddress, (addr) => {
           <div class="px-2 py-1 text-xs">
             <!-- Struct: show fields -->
             <template v-if="entry.fields">
-              <div
-                v-for="[name, field] in entry.fields"
-                :key="name"
-                :data-field-address="field.address"
-                class="flex items-baseline justify-between rounded py-0.5 transition-colors odd:bg-gray-200/50 dark:odd:bg-gray-700/30"
-                :class="{
-                  'bg-blue-500/15! px-1 -mx-1': isFieldHighlighted(field.address),
-                  'bg-blue-500/10! px-1 -mx-1': isStatementLhs(field.address),
-                  'bg-green-500/10! px-1 -mx-1': isStatementRhs(field.address),
-                }"
-              >
-                <span class="text-gray-500">{{ name }}</span>
-                <AddressLink
-                  v-if="isPointerValue(field.value)"
-                  :address="field.value.address"
-                  @navigate="handleClickPointer"
-                  @hover="handleHoverPointerStack"
-                />
-                <DSValue
-                  v-else-if="typeof field.value === 'object' && (field.value.type === 'struct' || field.value.type === 'array')"
-                  :cell="context.memory.cells.get(field.address)!"
-                  :context="context"
-                  @navigate="handleClickPointer"
-                  @hover-node="handleHoverPointerStack"
-                />
-                <span v-else class="text-orange-600 font-semibold dark:text-orange-300">{{ formatValue(field.value) }}</span>
-              </div>
+              <template v-for="[name, field] in entry.fields" :key="name">
+                <!-- Complex value (struct/array): field name then value below -->
+                <div
+                  v-if="typeof field.value === 'object' && (field.value.type === 'struct' || field.value.type === 'array')"
+                  :data-field-address="field.address"
+                  class="py-0.5 transition-colors"
+                >
+                  <span class="text-gray-500">{{ name }}:</span>
+                  <div class="pl-2">
+                    <DSValue
+                      :cell="context.memory.cells.get(field.address)!"
+
+                      @navigate="handleClickPointer"
+                      @hover-node="handleHoverPointerStack"
+                    />
+                  </div>
+                </div>
+                <!-- Simple value: inline row -->
+                <div
+                  v-else
+                  :data-field-address="field.address"
+                  class="flex items-baseline justify-between gap-4 py-0.5 transition-colors"
+                  :class="{
+                    'bg-blue-500/15 rounded px-1 -mx-1': isFieldHighlighted(field.address),
+                    'bg-blue-500/10 rounded px-1 -mx-1': isStatementLhs(field.address),
+                    'bg-green-500/10 rounded px-1 -mx-1': isStatementRhs(field.address),
+                  }"
+                >
+                  <span class="shrink-0 text-gray-500">{{ name }}</span>
+                  <AddressLink
+                    v-if="isPointerValue(field.value)"
+                    :address="field.value.address"
+                    @navigate="handleClickPointer"
+                    @hover="handleHoverPointerStack"
+                  />
+                  <span v-else class="text-orange-600 font-semibold dark:text-orange-300">{{ formatValue(field.value) }}</span>
+                </div>
+              </template>
             </template>
 
             <!-- Array / Struct: recursive rendering -->
             <template v-else-if="isArrayValue(entry.cell.value) || (typeof entry.cell.value === 'object' && entry.cell.value.type === 'struct')">
               <DSValue
                 :cell="entry.cell"
-                :context="context"
                 @navigate="handleClickPointer"
                 @hover-node="handleHoverPointerStack"
               />

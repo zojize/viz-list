@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import type { CppType, InterpreterContext, MemoryCell } from '~/composables/interpreter/types'
+import type { CppType, MemoryCell } from '~/composables/interpreter/types'
+import { computed } from 'vue'
+import AddressLink from '~/components/AddressLink.vue'
+import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
 const props = defineProps<{
   cell: MemoryCell
-  context: Readonly<InterpreterContext>
   /** Optional prefix for array indices, e.g. "[0]" for nested display */
   indexPrefix?: string
 }>()
@@ -12,6 +14,8 @@ const emit = defineEmits<{
   navigate: [address: number]
   hoverNode: [address: number | null]
 }>()
+
+const context = useInterpreterContext()
 
 function formatType(type: CppType): string {
   if (typeof type === 'string')
@@ -30,8 +34,8 @@ function formatType(type: CppType): string {
 /** Fresh cell value — re-reads from reactive memory each step */
 const freshValue = computed(() => {
   // eslint-disable-next-line ts/no-unused-expressions
-  props.context.memory.version // reactive dependency
-  return props.context.memory.cells.get(props.cell.address)?.value ?? props.cell.value
+  context.memory.version // reactive dependency
+  return context.memory.cells.get(props.cell.address)?.value ?? props.cell.value
 })
 
 const isPrimitive = computed(() => typeof props.cell.type === 'string')
@@ -64,17 +68,17 @@ const structFields = computed((): FieldEntry[] => {
   if (!structName.value)
     return []
   // eslint-disable-next-line ts/no-unused-expressions
-  props.context.memory.version // reactive dependency — re-evaluate each step
-  const freshCell = props.context.memory.cells.get(props.cell.address)
+  context.memory.version // reactive dependency — re-evaluate each step
+  const freshCell = context.memory.cells.get(props.cell.address)
   const v = freshCell?.value
   if (!v || typeof v !== 'object' || v.type !== 'struct')
     return []
-  const structDef = props.context.structs[v.name]
+  const structDef = context.structs[v.name]
   if (!structDef)
     return []
   return Object.keys(structDef).map((name, i) => ({
     name,
-    cell: props.context.memory.cells.get(v.base + 1 + i),
+    cell: context.memory.cells.get(v.base + 1 + i),
     type: structDef[name],
   }))
 })
@@ -87,15 +91,15 @@ interface ArrayEntry {
 
 const arrayElements = computed((): ArrayEntry[] => {
   // eslint-disable-next-line ts/no-unused-expressions
-  props.context.memory.version // reactive dependency — re-evaluate each step
-  const freshCell = props.context.memory.cells.get(props.cell.address)
+  context.memory.version // reactive dependency — re-evaluate each step
+  const freshCell = context.memory.cells.get(props.cell.address)
   const v = freshCell?.value
   if (!v || typeof v !== 'object' || v.type !== 'array')
     return []
   const prefix = props.indexPrefix ?? ''
   return Array.from({ length: v.length }, (_, i) => ({
     index: i,
-    cell: props.context.memory.cells.get(v.base + 1 + i),
+    cell: context.memory.cells.get(v.base + 1 + i),
     prefix: `${prefix}[${i}]`,
   }))
 })
@@ -122,7 +126,7 @@ const arrayElements = computed((): ArrayEntry[] => {
       <template v-if="elem.cell && typeof elem.cell.value === 'object' && elem.cell.value.type === 'array'">
         <DSValue
           :cell="elem.cell"
-          :context="context"
+
           :index-prefix="elem.prefix"
           @navigate="emit('navigate', $event)"
           @hover-node="emit('hoverNode', $event)"
@@ -134,7 +138,7 @@ const arrayElements = computed((): ArrayEntry[] => {
         <DSValue
           v-if="elem.cell"
           :cell="elem.cell"
-          :context="context"
+
           @navigate="emit('navigate', $event)"
           @hover-node="emit('hoverNode', $event)"
         />
@@ -148,21 +152,34 @@ const arrayElements = computed((): ArrayEntry[] => {
     <div class="text-purple-600 font-semibold dark:text-purple-400">
       {{ structName }} {
     </div>
-    <div
-      v-for="field in structFields"
-      :key="field.name"
-      class="flex items-baseline justify-between gap-2 rounded px-1 py-0.5 pl-3 odd:bg-gray-100 dark:odd:bg-gray-800/50"
-    >
-      <span class="text-gray-500 font-mono">{{ field.name }}:</span>
-      <DSValue
-        v-if="field.cell"
-        :cell="field.cell"
-        :context="context"
-        @navigate="emit('navigate', $event)"
-        @hover-node="emit('hoverNode', $event)"
-      />
-      <span v-else class="text-gray-500">?</span>
-    </div>
+    <template v-for="field in structFields" :key="field.name">
+      <!-- Complex value (struct/array): field name then value below, indented -->
+      <template v-if="field.cell && typeof field.cell.value === 'object' && (field.cell.value.type === 'struct' || field.cell.value.type === 'array')">
+        <div class="py-0.5 pl-3">
+          <span class="text-gray-500 font-mono">{{ field.name }}:</span>
+          <div class="pl-2">
+            <DSValue
+              :cell="field.cell"
+
+              @navigate="emit('navigate', $event)"
+              @hover-node="emit('hoverNode', $event)"
+            />
+          </div>
+        </div>
+      </template>
+      <!-- Simple value: inline row -->
+      <div v-else class="flex items-baseline justify-between gap-4 rounded px-1 py-0.5 pl-3 odd:bg-gray-100 dark:odd:bg-gray-800/50">
+        <span class="shrink-0 text-gray-500 font-mono">{{ field.name }}:</span>
+        <DSValue
+          v-if="field.cell"
+          :cell="field.cell"
+
+          @navigate="emit('navigate', $event)"
+          @hover-node="emit('hoverNode', $event)"
+        />
+        <span v-else class="text-gray-500">?</span>
+      </div>
+    </template>
     <div class="text-purple-600 font-semibold dark:text-purple-400">
       }
     </div>

@@ -1,9 +1,10 @@
 import { useDark, useToggle } from '@vueuse/core'
 import * as monaco from 'monaco-editor'
+import { watch } from 'vue'
 import VitesseDark from '~/vitesse/vitesse-dark.json'
 import VitesseLight from '~/vitesse/vitesse-light.json'
 
-export const dark = useDark()
+const dark = useDark()
 export const toggleDark = useToggle(dark)
 
 monaco.editor.defineTheme('vitesse', VitesseLight as any)

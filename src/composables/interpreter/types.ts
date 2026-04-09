@@ -1,3 +1,4 @@
+import type { Ref } from 'vue'
 import type { Node as SyntaxNode } from 'web-tree-sitter'
 
 // eslint-disable-next-line unused-imports/no-unused-vars

@@ -2,8 +2,13 @@
 import { useHead } from '@unhead/vue'
 import { useIntervalFn, useLocalStorage } from '@vueuse/core'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
+import { computed, markRaw, onMounted, onUnmounted, shallowRef, useTemplateRef, watch } from 'vue'
 import { Language, Parser } from 'web-tree-sitter'
+import DataStructureView from '~/components/DataStructureView.vue'
+import FieldTable from '~/components/FieldTable.vue'
+import MemoryMap from '~/components/MemoryMap.vue'
 import { useCppInterpreter } from '~/composables/useCppInterpreter'
+import { provideInterpreterContext } from '~/composables/useInterpreterContext'
 import { useMemoryDiff } from '~/composables/useMemoryDiff'
 import { useMonacoEditor } from '~/composables/useMonacoEditor'
 import { useStatementAddresses } from '~/composables/useStatementAddresses'
@@ -13,8 +18,7 @@ useHead({
   meta: [{ name: 'description', content: 'Visualize linked list operations' }],
 })
 
-const route = useRoute()
-const router = useRouter()
+const queryParams = new URLSearchParams(window.location.search)
 
 // ---- Struct prefix code ----
 
@@ -55,8 +59,8 @@ const generalTemplates = Object.fromEntries(Object.entries(
 ).map(([path, code]) => [path.match(templateFileRe)![1], code] as [string, string]))
 
 const isDoubly = useLocalStorage('is-doubly', true)
-if (route.query.doubly)
-  isDoubly.value = route.query.doubly === 'true'
+if (queryParams.has('doubly'))
+  isDoubly.value = queryParams.get('doubly') === 'true'
 
 const linkedListTemplates = computed(() => isDoubly.value ? doublyTemplates : singlyTemplates)
 const templates = computed(() => ({ ...linkedListTemplates.value, ...generalTemplates }))
@@ -70,8 +74,8 @@ const prefixCode = computed(() => {
   return isDoubly.value ? doublyCode : singlyCode
 })
 const code = useLocalStorage('code', templates.value[selectedTemplateName.value] ?? '')
-if (route.query.code) {
-  const queryCode = route.query.code as string
+if (queryParams.has('code')) {
+  const queryCode = queryParams.get('code')!
   let userCode = decompressFromEncodedURIComponent(queryCode)
   if (!userCode)
     userCode = decompressFromEncodedURIComponent(decodeURIComponent(queryCode))
@@ -117,6 +121,7 @@ const tree = computed(() => {
 // ---- Interpreter ----
 
 const { init, step, reset, context, isActive } = useCppInterpreter(tree)
+provideInterpreterContext(context)
 const { changedAddresses, snapshot, diff } = useMemoryDiff(() => context.memory)
 const { lhsAddresses, rhsAddresses } = useStatementAddresses(context, isActive)
 const selectedAddress = shallowRef<number | null>(null)
@@ -190,7 +195,10 @@ const clipBoardIconUrl = shallowRef(`url("data:image/svg+xml,${clipboardIcon}")`
 
 function saveToUrl() {
   const savedCode = compressToEncodedURIComponent(code.value)
-  router.replace({ query: { code: savedCode, doubly: isDoubly.value ? 'true' : 'false' } })
+  const url = new URL(window.location.href)
+  url.searchParams.set('code', savedCode)
+  url.searchParams.set('doubly', isDoubly.value ? 'true' : 'false')
+  window.history.replaceState(null, '', url)
   navigator.clipboard.writeText(window.location.href)
   playingShareAnimation.value = true
   clipBoardIconUrl.value = `url("data:image/svg+xml,%3C!-- ${Date.now()} --%3E${clipboardIcon}")`
@@ -407,7 +415,6 @@ const speedLabel = computed(() => {
     <div data-testid="viz-panel" class="min-h-0 flex flex-1 flex-col gap-1">
       <div class="min-h-0 flex-[3] overflow-hidden panel-border">
         <MemoryMap
-          :context="context"
           :changed-addresses="changedAddresses"
           :highlighted-address="hoveredNodeAddress"
           :highlighted-field-address="hoveredFieldAddress"
@@ -423,7 +430,6 @@ const speedLabel = computed(() => {
         <!-- Data structure view -->
         <div class="min-w-0 flex-1 overflow-hidden panel-border">
           <DataStructureView
-            :context="context"
             :highlighted-address="hoveredNodeAddress"
             :selected-address="selectedAddress"
             @select-node="selectedAddress = $event"
@@ -450,7 +456,6 @@ const speedLabel = computed(() => {
             </div>
             <FieldTable
               :cell="selectedCell"
-              :context="context"
               :changed-addresses="changedAddresses"
               @navigate="selectedAddress = $event"
             />

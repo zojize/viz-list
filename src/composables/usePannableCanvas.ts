@@ -1,7 +1,8 @@
 import type { ShallowRef } from 'vue'
 import { refThrottled } from '@vueuse/core'
+import { nextTick, reactive, readonly, shallowRef } from 'vue'
 
-export interface PanState {
+interface PanState {
   x: number
   y: number
 }
