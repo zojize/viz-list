@@ -339,7 +339,15 @@ export function* evaluate(
           mem,
         )
         asserts(!(name in context.envStack.at(-1)!), `Variable ${name} already declared`)
-        const addr = mem.alloc(type, value!, 'stack')
+        // Structs and arrays already have their header cell allocated by initializeValue;
+        // bind the variable directly to the header address instead of allocating a duplicate.
+        let addr: number
+        if (typeof value === 'object' && (value.type === 'struct' || value.type === 'array')) {
+          addr = value.base
+        }
+        else {
+          addr = mem.alloc(type, value!, 'stack')
+        }
         context.envStack.at(-1)![name] = { type, address: addr }
       }
       setCurrentNode(node)
@@ -366,7 +374,13 @@ export function* evaluate(
 
       const newEnv: Record<string, { type: CppType, address: number }> = {}
       for (const [name, arg] of args) {
-        const addr = mem.alloc(arg.type, arg.value, 'stack')
+        let addr: number
+        if (typeof arg.value === 'object' && (arg.value.type === 'struct' || arg.value.type === 'array')) {
+          addr = arg.value.base
+        }
+        else {
+          addr = mem.alloc(arg.type, arg.value, 'stack')
+        }
         newEnv[name] = { type: arg.type, address: addr }
       }
 

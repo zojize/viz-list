@@ -69,10 +69,10 @@ test.describe('data structure panel', () => {
     // Run the full insertBack for first call
     await stepN(page, 15)
 
-    const linkedListView = page.getByTestId('linked-list-view')
-    await expect(linkedListView).toBeVisible()
+    const dsView = page.getByTestId('ds-view')
+    await expect(dsView).toBeVisible()
     // Should have at least one node in the chain
-    const nodes = linkedListView.locator('[data-testid^="ds-node-"]')
+    const nodes = dsView.locator('[data-testid^="ds-node-"]')
     await expect(nodes.first()).toBeVisible()
   })
 
@@ -80,8 +80,8 @@ test.describe('data structure panel', () => {
     await stepN(page, 15)
 
     // Click a DS node to open detail
-    const linkedListView = page.getByTestId('linked-list-view')
-    const firstNode = linkedListView.locator('[data-testid^="ds-node-"]').first()
+    const dsView = page.getByTestId('ds-view')
+    const firstNode = dsView.locator('[data-testid^="ds-node-"]').first()
     await firstNode.click()
 
     // Field table should slide in
@@ -95,7 +95,7 @@ test.describe('data structure panel', () => {
     await stepN(page, 15)
 
     // Open detail by clicking DS node
-    const firstNode = page.getByTestId('linked-list-view').locator('[data-testid^="ds-node-"]').first()
+    const firstNode = page.getByTestId('ds-view').locator('[data-testid^="ds-node-"]').first()
     await firstNode.click()
     await expect(page.getByTestId('field-table')).toBeVisible()
 
@@ -104,7 +104,7 @@ test.describe('data structure panel', () => {
 
     // Field table should be gone, linked list view still visible
     await expect(page.getByTestId('field-table')).not.toBeVisible()
-    await expect(page.getByTestId('linked-list-view')).toBeVisible()
+    await expect(page.getByTestId('ds-view')).toBeVisible()
   })
 })
 
@@ -126,11 +126,11 @@ test.describe('reverse algorithm visualization', () => {
     // insertBack(5 items) ≈ 50 steps, then ~10 into reverse
     await stepN(page, 62)
 
-    const linkedListView = page.getByTestId('linked-list-view')
-    await expect(linkedListView).toBeVisible()
+    const dsView = page.getByTestId('ds-view')
+    await expect(dsView).toBeVisible()
 
     // Should have multiple chains (partial lists during reverse)
-    const chains = linkedListView.locator('[data-testid^="chain-"]')
+    const chains = dsView.locator('[data-testid^="chain-"]')
     const chainCount = await chains.count()
     expect(chainCount).toBeGreaterThanOrEqual(1)
   })
@@ -141,10 +141,10 @@ test.describe('reverse algorithm visualization', () => {
     // Wait for execution — 200ms per step, ~80 steps = ~16s
     await page.waitForTimeout(20_000)
 
-    const linkedListView = page.getByTestId('linked-list-view')
+    const dsView = page.getByTestId('ds-view')
 
     // Should show a chain with 5 nodes in reversed order
-    const nodes = linkedListView.locator('[data-testid^="ds-node-"]')
+    const nodes = dsView.locator('[data-testid^="ds-node-"]')
     const nodeCount = await nodes.count()
     expect(nodeCount).toBeGreaterThanOrEqual(5)
 
@@ -172,8 +172,8 @@ test.describe('hover interactions', () => {
     // Build some list nodes
     await stepN(page, 15)
 
-    const linkedListView = page.getByTestId('linked-list-view')
-    const firstNode = linkedListView.locator('[data-testid^="ds-node-"]').first()
+    const dsView = page.getByTestId('ds-view')
+    const firstNode = dsView.locator('[data-testid^="ds-node-"]').first()
 
     // Get the node's address from its testid
     const testId = await firstNode.getAttribute('data-testid')
@@ -209,5 +209,57 @@ test.describe('hover interactions', () => {
     // Monaco should create decoration overlays with class bg-cyan-500
     const decoration = page.locator('.view-overlays .bg-cyan-500').first()
     await expect(decoration).toBeAttached()
+  })
+})
+
+test.describe('selection interactions', () => {
+  test('clicking a standalone item then a chain node changes selection', async ({ page }) => {
+    await stepN(page, 15)
+
+    const dsView = page.getByTestId('ds-view')
+
+    // Click a standalone item (e.g. the list pointer)
+    const standaloneItem = dsView.locator('[data-testid^="ds-item-"]').first()
+    await standaloneItem.click()
+    const fieldTable = page.getByTestId('field-table')
+    await expect(fieldTable).toBeVisible()
+    const firstText = await fieldTable.textContent()
+
+    // Now click a chain node — selection should change
+    const chainNode = dsView.locator('[data-testid^="ds-node-"]').first()
+    await chainNode.click()
+    await expect(fieldTable).toBeVisible()
+    const secondText = await fieldTable.textContent()
+    expect(secondText).not.toBe(firstText)
+    await expect(fieldTable).toContainText('Node')
+  })
+
+  test('selection clears when simulation starts', async ({ page }) => {
+    await stepN(page, 15)
+
+    // Open detail by clicking DS node
+    const dsView = page.getByTestId('ds-view')
+    const firstNode = dsView.locator('[data-testid^="ds-node-"]').first()
+    await firstNode.click()
+    await expect(page.getByTestId('field-table')).toBeVisible()
+
+    // Start simulation — detail should close
+    await page.getByTestId('btn-run').click()
+    await page.waitForTimeout(500)
+    await expect(page.getByTestId('field-table')).not.toBeVisible()
+
+    // Pause
+    await page.getByTestId('btn-pause').click()
+  })
+
+  test('node gets selected outline on click', async ({ page }) => {
+    await stepN(page, 15)
+
+    const dsView = page.getByTestId('ds-view')
+    const firstNode = dsView.locator('[data-testid^="ds-node-"]').first()
+    await firstNode.click()
+
+    // Node should have the outline class
+    await expect(firstNode).toHaveClass(/outline/)
   })
 })

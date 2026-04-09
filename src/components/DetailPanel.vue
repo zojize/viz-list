@@ -29,7 +29,7 @@ const showDetail = computed(() => selectedCell.value !== null && !props.simulati
   <div data-testid="detail-panel" class="h-full flex overflow-hidden">
     <!-- Left: Data structures (always visible) -->
     <div class="min-w-0 flex-1 overflow-hidden">
-      <LinkedListView
+      <DataStructureView
         :context="context"
         :highlighted-address="highlightedAddress"
         :selected-address="selectedAddress"

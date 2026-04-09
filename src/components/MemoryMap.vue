@@ -81,6 +81,22 @@ function isPointerValue(value: CppValue): value is { type: 'pointer', address: n
   return typeof value === 'object' && value.type === 'pointer'
 }
 
+function isArrayValue(value: CppValue): value is { type: 'array', base: number, length: number } {
+  return typeof value === 'object' && value.type === 'array'
+}
+
+function getArrayElements(cell: MemoryCellType): { index: number, value: CppValue, address: number }[] | undefined {
+  const v = cell.value
+  if (typeof v !== 'object' || v.type !== 'array')
+    return undefined
+  const elems: { index: number, value: CppValue, address: number }[] = []
+  for (let i = 0; i < v.length; i++) {
+    const elemCell = props.context.memory.cells.get(v.base + 1 + i)
+    elems.push({ index: i, value: elemCell?.value ?? 0, address: v.base + 1 + i })
+  }
+  return elems
+}
+
 function isCellHighlighted(address: number): boolean {
   return props.highlightedAddress === address
 }
@@ -321,6 +337,30 @@ watch(() => props.highlightedFieldAddress, (addr) => {
                   @pointerleave="handleHoverPointerStack(null)"
                 >{{ formatValue(field.value) }}</span>
                 <span v-else class="text-orange-600 font-semibold dark:text-orange-300">{{ formatValue(field.value) }}</span>
+              </div>
+            </template>
+
+            <!-- Array: one row per element -->
+            <template v-else-if="isArrayValue(entry.cell.value)">
+              <div
+                v-for="elem in getArrayElements(entry.cell)"
+                :key="elem.index"
+                class="flex items-baseline justify-between py-0.5 transition-colors"
+                :class="{
+                  'bg-blue-500/10 rounded px-1 -mx-1': isStatementLhs(elem.address),
+                  'bg-green-500/10 rounded px-1 -mx-1': isStatementRhs(elem.address),
+                }"
+              >
+                <span class="text-gray-500">[{{ elem.index }}]</span>
+                <span
+                  v-if="isPointerValue(elem.value)"
+                  class="cursor-pointer hover:underline"
+                  :class="elem.value.address === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
+                  @click.stop="handleClickPointer(elem.value.address)"
+                  @pointerenter="handleHoverPointerStack(elem.value.address)"
+                  @pointerleave="handleHoverPointerStack(null)"
+                >{{ formatValue(elem.value) }}</span>
+                <span v-else class="text-orange-600 font-semibold dark:text-orange-300">{{ formatValue(elem.value) }}</span>
               </div>
             </template>
 

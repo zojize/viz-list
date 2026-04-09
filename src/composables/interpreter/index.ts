@@ -102,7 +102,13 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
               context,
               mem,
             ))
-            const address = mem.alloc(type, value!, 'global')
+            let address: number
+            if (typeof value === 'object' && (value.type === 'struct' || value.type === 'array')) {
+              address = value.base
+            }
+            else {
+              address = mem.alloc(type, value!, 'global')
+            }
             context.globalEnv[name] = { type, address }
           }
           break

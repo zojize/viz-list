@@ -196,6 +196,7 @@ function handleReset() {
 function handleRun() {
   editedWhileActive.value = false
   executionError.value = null
+  selectedAddress.value = null
   resume()
 }
 

@@ -11,9 +11,9 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    DataStructureView: typeof import('./src/components/DataStructureView.vue')['default']
     DetailPanel: typeof import('./src/components/DetailPanel.vue')['default']
     FieldTable: typeof import('./src/components/FieldTable.vue')['default']
-    LinkedListView: typeof import('./src/components/LinkedListView.vue')['default']
     MemoryCell: typeof import('./src/components/MemoryCell.vue')['default']
     MemoryMap: typeof import('./src/components/MemoryMap.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
