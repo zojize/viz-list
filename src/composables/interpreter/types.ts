@@ -36,6 +36,8 @@ export interface AddressSpace {
   cells: Map<number, MemoryCell>
   /** Next stack/global address (grows upward from 1) */
   stackTop: number
+  /** Bumped after each step to invalidate reactive cell reads */
+  version: number
   /** Next heap address (grows downward from MEMORY_SIZE-1) */
   heapBottom: number
 }

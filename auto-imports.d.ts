@@ -69,6 +69,7 @@ declare global {
   const useMemoryDiff: typeof import('./src/composables/useMemoryDiff').useMemoryDiff
   const useModel: typeof import('vue').useModel
   const useMonacoEditor: typeof import('./src/composables/useMonacoEditor').useMonacoEditor
+  const usePannableCanvas: typeof import('./src/composables/usePannableCanvas').usePannableCanvas
   const useRoute: typeof import('vue-router').useRoute
   const useRouter: typeof import('vue-router').useRouter
   const useSlots: typeof import('vue').useSlots
@@ -90,6 +91,9 @@ declare global {
   // @ts-ignore
   export type { UseMonacoEditorOptions } from './src/composables/useMonacoEditor'
   import('./src/composables/useMonacoEditor')
+  // @ts-ignore
+  export type { PanState } from './src/composables/usePannableCanvas'
+  import('./src/composables/usePannableCanvas')
 }
 
 // for vue template auto import
@@ -160,6 +164,7 @@ declare module 'vue' {
     readonly useMemoryDiff: UnwrapRef<typeof import('./src/composables/useMemoryDiff')['useMemoryDiff']>
     readonly useModel: UnwrapRef<typeof import('vue')['useModel']>
     readonly useMonacoEditor: UnwrapRef<typeof import('./src/composables/useMonacoEditor')['useMonacoEditor']>
+    readonly usePannableCanvas: UnwrapRef<typeof import('./src/composables/usePannableCanvas')['usePannableCanvas']>
     readonly useRoute: UnwrapRef<typeof import('vue-router')['useRoute']>
     readonly useRouter: UnwrapRef<typeof import('vue-router')['useRouter']>
     readonly useSlots: UnwrapRef<typeof import('vue')['useSlots']>

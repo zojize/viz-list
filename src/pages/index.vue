@@ -110,6 +110,11 @@ const { init, step, reset, context, isActive } = useCppInterpreter(tree)
 const { changedAddresses, snapshot, diff } = useMemoryDiff(() => context.memory)
 const { lhsAddresses, rhsAddresses } = useStatementAddresses(context, isActive)
 const selectedAddress = shallowRef<number | null>(null)
+const selectedCell = computed(() => {
+  if (selectedAddress.value === null)
+    return null
+  return context.memory.cells.get(selectedAddress.value) ?? null
+})
 const hoveredNodeAddress = shallowRef<number | null>(null)
 const hoveredFieldAddress = shallowRef<number | null>(null)
 
@@ -404,18 +409,43 @@ const speedLabel = computed(() => {
           @hover-variable="highlightVariable($event, context.currentNode)"
         />
       </div>
-      <div class="min-h-0 flex-[2] overflow-hidden panel-border">
-        <DetailPanel
-          :context="context"
-          :selected-address="selectedAddress"
-          :changed-addresses="changedAddresses"
-          :simulating="running"
-          :highlighted-address="hoveredNodeAddress"
-          @navigate="selectedAddress = $event"
-          @clear-selection="selectedAddress = null"
-          @hover-node="hoveredNodeAddress = $event"
-          @hover-field="hoveredFieldAddress = $event"
-        />
+      <div class="min-h-0 flex flex-[2] gap-1">
+        <!-- Data structure view -->
+        <div class="min-w-0 flex-1 overflow-hidden panel-border">
+          <DataStructureView
+            :context="context"
+            :highlighted-address="hoveredNodeAddress"
+            :selected-address="selectedAddress"
+            @select-node="selectedAddress = $event"
+            @hover-node="hoveredNodeAddress = $event"
+            @hover-field="hoveredFieldAddress = $event"
+          />
+        </div>
+        <!-- Detail panel (slides in when selected) -->
+        <Transition
+          enter-active-class="transition-all duration-200 ease-out"
+          enter-from-class="translate-x-3 opacity-0"
+          leave-active-class="transition-all duration-150 ease-in"
+          leave-to-class="translate-x-3 opacity-0"
+        >
+          <div v-if="selectedCell && !running" class="w-64 shrink-0 overflow-auto panel-border p-2">
+            <div class="mb-1.5 flex items-center justify-between">
+              <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
+              <button
+                data-testid="detail-close"
+                class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                title="Close"
+                @click="selectedAddress = null"
+              />
+            </div>
+            <FieldTable
+              :cell="selectedCell"
+              :context="context"
+              :changed-addresses="changedAddresses"
+              @navigate="selectedAddress = $event"
+            />
+          </div>
+        </Transition>
       </div>
     </div>
   </div>

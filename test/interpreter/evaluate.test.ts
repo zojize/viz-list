@@ -429,6 +429,21 @@ describe('array subscript', () => {
     `)
     expect(readGlobal(context, mem, 'r')).toBe(20)
   })
+
+  it('reads and writes 2D array elements', () => {
+    const { context, mem } = safeRunProgram(`
+      int r = 0;
+      void main() {
+        int a[3][3];
+        a[0][0] = 1;
+        a[0][1] = 2;
+        a[1][0] = 10;
+        a[2][2] = 99;
+        r = a[0][0] + a[0][1] + a[1][0] + a[2][2];
+      }
+    `)
+    expect(readGlobal(context, mem, 'r')).toBe(112)
+  })
 })
 
 // ── Function calls ────────────────────────────────────────────────

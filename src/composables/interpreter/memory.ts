@@ -62,6 +62,7 @@ export function createAddressSpace(): MemoryManager {
   const space: AddressSpace = {
     cells: new Map(),
     stackTop: 1,
+    version: 0,
     heapBottom: MEMORY_SIZE - 1,
   }
 
@@ -199,6 +200,7 @@ export function createAddressSpace(): MemoryManager {
   function reset(): void {
     space.cells.clear()
     space.stackTop = 1
+    space.version = 0
     space.heapBottom = MEMORY_SIZE - 1
     space.cells.set(NULL_ADDRESS, makeNullCell())
   }

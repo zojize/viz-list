@@ -123,6 +123,14 @@ export function* initializeValue(
             return { type: 'pointer', address: NULL_ADDRESS }
           case 'array': {
             const base = mem.allocArray(type.of, type.size, 'stack')
+            // For nested arrays/structs, allocate each element properly
+            if (typeof type.of === 'object') {
+              for (let i = 0; i < type.size; i++) {
+                const elemAddr = base + 1 + i
+                const elemValue = yield* initializeValue(type.of, context, mem)
+                mem.write(elemAddr, elemValue)
+              }
+            }
             return { type: 'array', base, length: type.size }
           }
           case 'struct': {

@@ -48,36 +48,6 @@ const isArray = computed(() => {
   return typeof props.cell.value === 'object' && props.cell.value.type === 'array'
 })
 
-interface ArrayElement {
-  index: number
-  value: CppValue
-  address: number
-  isPointer: boolean
-  pointerAddress: number
-  changed: boolean
-}
-
-const arrayElements = computed((): ArrayElement[] => {
-  const v = props.cell.value
-  if (typeof v !== 'object' || v.type !== 'array')
-    return []
-  const elements: ArrayElement[] = []
-  for (let i = 0; i < v.length; i++) {
-    const addr = v.base + 1 + i
-    const elemCell = props.context.memory.cells.get(addr)
-    const value = elemCell?.value ?? 0
-    elements.push({
-      index: i,
-      value,
-      address: addr,
-      isPointer: typeof value === 'object' && value.type === 'pointer',
-      pointerAddress: (typeof value === 'object' && value.type === 'pointer') ? value.address : 0,
-      changed: props.changedAddresses.has(addr),
-    })
-  }
-  return elements
-})
-
 interface FieldRow {
   name: string
   type: CppType
@@ -133,25 +103,13 @@ const fields = computed((): FieldRow[] => {
         }"
       >{{ cell.region }}</span>
     </div>
-    <!-- Array elements -->
-    <div v-if="isArray && arrayElements.length" class="rounded bg-gray-100 dark:bg-gray-800">
-      <div
-        v-for="elem in arrayElements"
-        :key="elem.index"
-        class="flex items-center justify-between border-b border-gray-200 px-3 py-1.5 text-xs font-mono last:border-b-0 dark:border-gray-700"
-        :class="{ 'bg-yellow-500/10': elem.changed }"
-      >
-        <span class="text-gray-400">[{{ elem.index }}]</span>
-        <div class="flex items-center gap-2">
-          <span
-            v-if="elem.isPointer"
-            class="cursor-pointer font-bold hover:underline"
-            :class="elem.pointerAddress === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
-            @click="elem.pointerAddress !== NULL_ADDRESS && emit('navigate', elem.pointerAddress)"
-          >{{ formatValue(elem.value) }}</span>
-          <span v-else class="text-orange-600 font-bold dark:text-orange-300">{{ formatValue(elem.value) }}</span>
-        </div>
-      </div>
+    <!-- Array / general: recursive rendering -->
+    <div v-if="isArray" class="rounded bg-gray-100 p-2 dark:bg-gray-800">
+      <DSValue
+        :cell="cell"
+        :context="context"
+        @navigate="emit('navigate', $event)"
+      />
     </div>
 
     <!-- Struct fields -->
@@ -166,12 +124,11 @@ const fields = computed((): FieldRow[] => {
         <span class="text-gray-400">{{ field.name }}</span>
         <div class="flex items-center gap-2">
           <span class="text-[10px] text-gray-600">{{ formatType(field.type) }}</span>
-          <span
+          <AddressLink
             v-if="field.isPointer"
-            class="cursor-pointer font-bold hover:underline"
-            :class="field.pointerAddress === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
-            @click="field.pointerAddress !== NULL_ADDRESS && emit('navigate', field.pointerAddress)"
-          >{{ formatValue(field.value) }}</span>
+            :address="field.pointerAddress"
+            @navigate="emit('navigate', $event)"
+          />
           <span v-else class="text-orange-600 font-bold dark:text-orange-300">{{ formatValue(field.value) }}</span>
         </div>
       </div>

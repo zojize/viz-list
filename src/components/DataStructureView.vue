@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { CppType, CppValue, InterpreterContext, MemoryCell } from '~/composables/interpreter/types'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
+import { usePannableCanvas } from '~/composables/usePannableCanvas'
 
 const props = defineProps<{
   context: Readonly<InterpreterContext>
@@ -13,8 +14,6 @@ const emit = defineEmits<{
   hoverNode: [address: number | null]
   hoverField: [address: number | null]
 }>()
-
-const hoveredArrow = shallowRef<{ source: number, target: number | null, type: string, fieldAddress: number } | null>(null)
 
 // ---- Format helpers ----
 
@@ -224,6 +223,7 @@ interface DataItem {
   label: string
   kind: 'int' | 'float' | 'char' | 'bool' | 'pointer' | 'struct' | 'array'
   display: string
+  dimmed: boolean
 }
 
 /** Addresses already shown as part of a linked list chain */
@@ -279,25 +279,46 @@ function getKind(cell: MemoryCell): DataItem['kind'] {
 const standaloneItems = computed((): DataItem[] => {
   const items: DataItem[] = []
   const subCells = getSubCellAddresses()
+  const seen = new Set<number>()
 
-  // In-scope stack variables
+  function addItem(name: string, cell: MemoryCell, dimmed: boolean) {
+    if (cell.dead || seen.has(cell.address))
+      return
+    if (chainAddresses.value.has(cell.address))
+      return
+    if (subCells.has(cell.address))
+      return
+    seen.add(cell.address)
+    items.push({
+      address: cell.address,
+      cell,
+      label: name,
+      kind: getKind(cell),
+      display: formatValue(cell.value),
+      dimmed,
+    })
+  }
+
+  // Current scope variables (not dimmed)
   for (let i = props.context.envStack.length - 1; i >= 0; i--) {
     const env = props.context.envStack[i]
     for (const [name, entry] of Object.entries(env)) {
       const cell = props.context.memory.cells.get(entry.address)
-      if (!cell || cell.dead)
-        continue
-      if (chainAddresses.value.has(cell.address))
-        continue
-      if (subCells.has(cell.address))
-        continue
-      items.push({
-        address: cell.address,
-        cell,
-        label: name,
-        kind: getKind(cell),
-        display: formatValue(cell.value),
-      })
+      if (cell)
+        addItem(name, cell, false)
+    }
+  }
+
+  // Caller scope variables (dimmed)
+  for (let ci = props.context.callStack.length - 1; ci >= 0; ci--) {
+    const savedEnvs = props.context.callStack[ci].env
+    for (let i = savedEnvs.length - 1; i >= 0; i--) {
+      const env = savedEnvs[i]
+      for (const [name, entry] of Object.entries(env)) {
+        const cell = props.context.memory.cells.get(entry.address)
+        if (cell)
+          addItem(name, cell, true)
+      }
     }
   }
 
@@ -305,197 +326,47 @@ const standaloneItems = computed((): DataItem[] => {
   for (const cell of props.context.memory.cells.values()) {
     if (cell.dead || cell.region !== 'heap')
       continue
-    if (chainAddresses.value.has(cell.address))
-      continue
-    if (subCells.has(cell.address))
-      continue
-    items.push({
-      address: cell.address,
-      cell,
-      label: formatType(cell.type),
-      kind: getKind(cell),
-      display: formatValue(cell.value),
-    })
+    addItem(formatType(cell.type), cell, false)
   }
 
   return items
 })
 
-/** Array items need special rendering — read their elements */
-function getArrayElements(cell: MemoryCell): { address: number, value: CppValue }[] {
-  const v = cell.value
-  if (typeof v !== 'object' || v.type !== 'array')
-    return []
-  const elems: { address: number, value: CppValue }[] = []
-  for (let i = 0; i < v.length; i++) {
-    const elemCell = props.context.memory.cells.get(v.base + 1 + i)
-    elems.push({ address: v.base + 1 + i, value: elemCell?.value ?? 0 })
-  }
-  return elems
-}
-
 // ---- Whether anything is shown ----
 
 const hasContent = computed(() => chains.value.length > 0 || standaloneItems.value.length > 0)
 
-// ---- Cross-chain logic ----
-
-const allNodeAddresses = computed(() => {
-  const chainMap = new Map<number, number[]>()
-  chains.value.forEach((chain, ci) => {
-    for (const node of chain.nodes) {
-      if (!chainMap.has(node.address))
-        chainMap.set(node.address, [])
-      chainMap.get(node.address)!.push(ci)
-    }
-  })
-  return chainMap
-})
-
-function isNodeInDifferentChain(address: number | null, currentChainIdx: number): boolean {
-  if (address === null)
-    return false
-  const indices = allNodeAddresses.value.get(address)
-  return !!indices && indices.some(ci => ci !== currentChainIdx)
-}
-
 function isNodeHighlighted(address: number): boolean {
-  if (props.highlightedAddress === address)
-    return true
-  if (hoveredArrow.value && (hoveredArrow.value.source === address || hoveredArrow.value.target === address))
-    return true
-  return false
+  return props.highlightedAddress === address
 }
 
 function isNodeSelected(address: number): boolean {
   return props.selectedAddress === address
 }
 
-function handleArrowEnter(source: number, target: number | null, type: string, fieldAddress: number | undefined) {
-  hoveredArrow.value = { source, target, type, fieldAddress: fieldAddress ?? 0 }
-  if (fieldAddress)
-    emit('hoverField', fieldAddress)
-}
-
-function handleArrowLeave() {
-  hoveredArrow.value = null
-  emit('hoverField', null)
-}
-
-// ---- Pannable canvas ----
+// ---- Pannable canvas + draggable items ----
 
 const canvasRef = shallowRef<HTMLElement | null>(null)
-const panOffset = reactive({ x: 0, y: 0 })
-const isPanning = shallowRef(false)
-const panStart = reactive({ x: 0, y: 0, ox: 0, oy: 0 })
 
-// ---- Draggable items ----
-
-const dragOffsets = reactive(new Map<string, { x: number, y: number }>())
-const dragging = shallowRef<{ key: string, pointerId: number } | null>(null)
-const dragStart = reactive({ x: 0, y: 0, ox: 0, oy: 0 })
-
-function getDragOffset(key: string): { x: number, y: number } {
-  return dragOffsets.get(key) ?? { x: 0, y: 0 }
-}
-
-/** Find the drag key for an element (chain id or item key), or null for non-draggable. */
-function getDragKey(el: HTMLElement): string | null {
-  const chain = el.closest('[data-drag-key]') as HTMLElement | null
-  return chain?.dataset.dragKey ?? null
-}
-
-function onPointerDown(e: PointerEvent) {
-  if (!hasContent.value)
-    return
-
-  // Left-click on a draggable item → prepare drag (no pointer capture so clicks still work)
-  if (e.button === 0) {
-    const dragKey = getDragKey(e.target as HTMLElement)
-    if (dragKey) {
-      dragging.value = { key: dragKey, pointerId: e.pointerId }
-      const offset = getDragOffset(dragKey)
-      dragStart.x = e.clientX
-      dragStart.y = e.clientY
-      dragStart.ox = offset.x
-      dragStart.oy = offset.y
-      // No setPointerCapture here — that would redirect click events away from child nodes
-      return
-    }
-  }
-
-  // Middle-click anywhere, or left-click on empty canvas → pan
-  if (e.button === 1 || e.button === 0) {
-    isPanning.value = true
-    panStart.x = e.clientX
-    panStart.y = e.clientY
-    panStart.ox = panOffset.x
-    panStart.oy = panOffset.y
-    canvasRef.value?.setPointerCapture(e.pointerId)
-    e.preventDefault()
-  }
-}
-
-const didDrag = shallowRef(false)
-
-function onPointerMove(e: PointerEvent) {
-  if (dragging.value) {
-    const dx = e.clientX - dragStart.x
-    const dy = e.clientY - dragStart.y
-    if (Math.abs(dx) >= 4 || Math.abs(dy) >= 4) {
-      didDrag.value = true
-      dragOffsets.set(dragging.value.key, {
-        x: dragStart.ox + dx,
-        y: dragStart.oy + dy,
-      })
-    }
-    return
-  }
-  if (isPanning.value) {
-    panOffset.x = panStart.ox + (e.clientX - panStart.x)
-    panOffset.y = panStart.oy + (e.clientY - panStart.y)
-  }
-}
-
-function onPointerUp() {
-  isPanning.value = false
-  dragging.value = null
-  // Reset drag flag after a tick so click handlers can check it
-  nextTick(() => {
-    didDrag.value = false
-  })
-}
+const {
+  panOffset,
+  isPanning,
+  didDrag,
+  getDragOffset,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  panToElement,
+} = usePannableCanvas({
+  canvasRef,
+  hasContent: () => hasContent.value,
+})
 
 // Auto-pan to selected node
 watch(() => props.selectedAddress, (addr) => {
-  if (addr === null || !canvasRef.value)
+  if (addr === null)
     return
-  nextTick(() => nextTick(() => {
-    const el = canvasRef.value?.querySelector(`[data-testid="ds-node-${addr}"], [data-testid="ds-item-${addr}"]`) as HTMLElement | null
-    if (!el || !canvasRef.value)
-      return
-    const container = canvasRef.value.getBoundingClientRect()
-    const node = el.getBoundingClientRect()
-
-    const margin = 16
-    const clippedLeft = node.left < container.left + margin
-    const clippedRight = node.right > container.right - margin
-    const clippedTop = node.top < container.top + margin
-    const clippedBottom = node.bottom > container.bottom - margin
-
-    if (!clippedLeft && !clippedRight && !clippedTop && !clippedBottom)
-      return
-
-    if (clippedLeft || clippedRight) {
-      const nodeXInContent = node.left - container.left - panOffset.x
-      panOffset.x = -(nodeXInContent - container.width / 2 + node.width / 2)
-    }
-
-    if (clippedTop || clippedBottom) {
-      const nodeYInContent = node.top - container.top - panOffset.y
-      panOffset.y = -(nodeYInContent - container.height / 2 + node.height / 2)
-    }
-  }))
+  panToElement(`[data-testid="ds-node-${addr}"], [data-testid="ds-item-${addr}"]`)
 })
 
 // ---- Color/shape for types ----
@@ -538,174 +409,55 @@ const kindBg: Record<DataItem['kind'], string> = {
       </div>
 
       <!-- Linked list chains -->
-      <div
-        v-for="(chain, chainIdx) in chains"
+      <LinkedListChain
+        v-for="chain in chains"
         :key="chain.id"
         :data-testid="`chain-${chain.id}`"
         :data-drag-key="chain.id"
-        class="relative flex items-center gap-0 py-3 pl-2"
+        :nodes="chain.nodes"
+        :has-prev="hasPrev"
+        :highlighted-address="highlightedAddress"
+        :selected-address="selectedAddress"
+        :did-drag="didDrag"
         :style="{
           transform: `translate(${getDragOffset(chain.id).x}px, ${getDragOffset(chain.id).y}px)`,
         }"
-      >
-        <!-- First node's prev pointer -->
-        <template v-if="hasPrev && chain.nodes.length > 0">
-          <span
-            class="shrink-0 cursor-pointer px-1 text-xs font-mono hover:underline"
-            :class="chain.nodes[0].prevAddr === null ? 'text-red-400 opacity-60' : 'text-orange-400'"
-            @pointerenter="handleArrowEnter(chain.nodes[0].address, chain.nodes[0].prevAddr, 'prev', chain.nodes[0].prevFieldAddress)"
-            @pointerleave="handleArrowLeave()"
-          >{{ chain.nodes[0].prevAddr === null ? 'NULL' : formatAddr(chain.nodes[0].prevAddr) }}</span>
-          <span
-            class="shrink-0 cursor-pointer px-0.5 py-1 text-sm text-orange-400 hover:text-orange-300"
-            @pointerenter="handleArrowEnter(chain.nodes[0].address, chain.nodes[0].prevAddr, 'prev', chain.nodes[0].prevFieldAddress)"
-            @pointerleave="handleArrowLeave()"
-          >&#8592;</span>
-        </template>
-
-        <template v-for="(node, i) in chain.nodes" :key="node.address">
-          <!-- Arrows between nodes -->
-          <div v-if="i > 0" class="flex shrink-0 flex-col items-center">
-            <span
-              class="shrink-0 cursor-pointer px-1 py-0.5 text-sm transition-opacity hover:opacity-100"
-              :class="{
-                'text-green-400': !isNodeInDifferentChain(node.address, chainIdx),
-                'text-green-400/30': isNodeInDifferentChain(node.address, chainIdx),
-              }"
-              @pointerenter="handleArrowEnter(chain.nodes[i - 1].address, node.address, 'next', chain.nodes[i - 1].nextFieldAddress)"
-              @pointerleave="handleArrowLeave()"
-            >&#8594;</span>
-            <span
-              v-if="hasPrev"
-              class="shrink-0 cursor-pointer px-1 py-0.5 text-sm transition-opacity hover:opacity-100"
-              :class="{
-                'text-orange-400': !isNodeInDifferentChain(chain.nodes[i - 1].address, chainIdx),
-                'text-orange-400/30': isNodeInDifferentChain(chain.nodes[i - 1].address, chainIdx),
-              }"
-              @pointerenter="handleArrowEnter(node.address, chain.nodes[i - 1].address, 'prev', node.prevFieldAddress)"
-              @pointerleave="handleArrowLeave()"
-            >&#8592;</span>
-          </div>
-
-          <!-- Node box -->
-          <div
-            :data-testid="`ds-node-${node.address}`"
-            class="shrink-0 cursor-pointer border rounded px-3 py-2 text-center font-mono transition-all"
-            :class="{
-              'border-blue-400 bg-blue-500/20 outline outline-2 outline-blue-400': isNodeSelected(node.address),
-              'border-blue-400 bg-blue-500/10': isNodeHighlighted(node.address) && !isNodeSelected(node.address),
-              'border-gray-300 hover:border-blue-400 dark:border-gray-600': !isNodeHighlighted(node.address) && !isNodeSelected(node.address),
-            }"
-            @click="!didDrag && emit('selectNode', node.address)"
-            @pointerenter="emit('hoverNode', node.address)"
-            @pointerleave="emit('hoverNode', null)"
-          >
-            <div class="text-sm text-orange-600 dark:text-orange-300">
-              {{ node.data }}
-            </div>
-            <div class="text-[9px] text-gray-500">
-              {{ formatAddr(node.address) }}
-            </div>
-          </div>
-        </template>
-
-        <!-- Last node's next pointer -->
-        <template v-if="chain.nodes.length > 0">
-          <span
-            class="shrink-0 cursor-pointer px-0.5 py-1 text-sm text-green-400 hover:text-green-300"
-            @pointerenter="chain.nodes.at(-1)!.nextFieldAddress && handleArrowEnter(chain.nodes.at(-1)!.address, chain.nodes.at(-1)!.nextAddr, 'next', chain.nodes.at(-1)!.nextFieldAddress)"
-            @pointerleave="handleArrowLeave()"
-          >&#8594;</span>
-          <span
-            v-if="chain.nodes.at(-1)!.nextAddr === null"
-            class="shrink-0 px-1 text-xs text-red-400"
-          >NULL</span>
-          <span
-            v-else
-            class="shrink-0 cursor-pointer px-1 text-xs text-green-400 font-mono hover:underline"
-            @click="emit('selectNode', chain.nodes.at(-1)!.nextAddr!)"
-          >{{ formatAddr(chain.nodes.at(-1)!.nextAddr!) }} &#x21A9;</span>
-        </template>
-      </div>
+        @select-node="emit('selectNode', $event)"
+        @hover-node="emit('hoverNode', $event)"
+        @hover-field="emit('hoverField', $event)"
+      />
 
       <!-- Standalone data items -->
-      <div v-if="standaloneItems.length > 0" class="flex flex-wrap gap-2 py-2">
+      <div v-if="standaloneItems.length > 0" class="flex flex-wrap items-start gap-2 py-2">
         <template v-for="item in standaloneItems" :key="item.address">
-          <!-- Array: row per element -->
           <div
-            v-if="item.kind === 'array'"
             :data-testid="`ds-item-${item.address}`"
             :data-drag-key="`item-${item.address}`"
-            class="cursor-pointer border-2 rounded p-1.5 font-mono transition-all"
-            :class="[
-              kindColors.array,
-              kindBg.array,
-              isNodeSelected(item.address) ? 'outline outline-2 outline-blue-400' : '',
-              isNodeHighlighted(item.address) ? 'bg-blue-500/10!' : '',
-            ]"
-            :style="{
-              transform: `translate(${getDragOffset(`item-${item.address}`).x}px, ${getDragOffset(`item-${item.address}`).y}px)`,
-            }"
-            @click="!didDrag && emit('selectNode', item.address)"
-            @pointerenter="emit('hoverNode', item.address)"
-            @pointerleave="emit('hoverNode', null)"
-          >
-            <div class="mb-1 flex items-baseline gap-1.5 text-[9px]">
-              <span class="text-orange-500 font-semibold">{{ item.label }}</span>
-              <span class="text-gray-500">{{ formatAddr(item.address) }}</span>
-            </div>
-            <div
-              v-for="(elem, ei) in getArrayElements(item.cell)"
-              :key="ei"
-              class="flex items-baseline justify-between py-0.5 text-[10px]"
-            >
-              <span class="text-gray-500">[{{ ei }}]</span>
-              <span
-                v-if="typeof elem.value === 'object' && elem.value.type === 'pointer'"
-                class="cursor-pointer hover:underline"
-                :class="elem.value.address === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
-                @click.stop="elem.value.address !== NULL_ADDRESS && emit('selectNode', elem.value.address)"
-              >{{ formatValue(elem.value) }}</span>
-              <span v-else class="text-orange-600 dark:text-orange-300">{{ formatValue(elem.value) }}</span>
-            </div>
-          </div>
-
-          <!-- Primitive / pointer / struct: simple box -->
-          <div
-            v-else
-            :data-testid="`ds-item-${item.address}`"
-            class="cursor-pointer border-2 rounded px-3 py-2 text-center font-mono transition-all"
+            class="cursor-pointer border-2 rounded p-1.5 text-xs font-mono transition-all"
             :class="[
               kindColors[item.kind],
               kindBg[item.kind],
               isNodeSelected(item.address) ? 'outline outline-2 outline-blue-400' : '',
               isNodeHighlighted(item.address) ? 'bg-blue-500/10!' : '',
+              item.dimmed ? 'opacity-40' : '',
             ]"
             :style="{
               transform: `translate(${getDragOffset(`item-${item.address}`).x}px, ${getDragOffset(`item-${item.address}`).y}px)`,
             }"
-            :data-drag-key="`item-${item.address}`"
             @click="!didDrag && emit('selectNode', item.address)"
             @pointerenter="emit('hoverNode', item.address)"
             @pointerleave="emit('hoverNode', null)"
           >
-            <div class="text-[9px] text-gray-500">
-              {{ item.label }}
+            <div class="mb-0.5 flex items-baseline gap-1.5 text-[10px]">
+              <span class="text-gray-600 font-semibold dark:text-gray-400">{{ item.label }}</span>
+              <span class="text-gray-400">{{ formatAddr(item.address) }}</span>
             </div>
-            <span
-              v-if="item.kind === 'pointer' && typeof item.cell.value === 'object' && item.cell.value.type === 'pointer'"
-              class="cursor-pointer text-sm hover:underline"
-              :class="item.cell.value.address === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
-              @click.stop="item.cell.value.address !== NULL_ADDRESS && emit('selectNode', item.cell.value.address)"
-              @pointerenter="item.cell.value.address !== NULL_ADDRESS && emit('hoverNode', item.cell.value.address)"
-              @pointerleave="emit('hoverNode', null)"
-            >{{ item.display }}</span>
-            <div v-else class="text-sm text-orange-600 dark:text-orange-300">
-              {{ item.display }}
-            </div>
-            <div class="text-[8px] text-gray-500">
-              {{ formatAddr(item.address) }}
-            </div>
+            <DSValue
+              :cell="item.cell"
+              :context="context"
+              @navigate="emit('selectNode', $event)"
+              @hover-node="emit('hoverNode', $event)"
+            />
           </div>
         </template>
       </div>
