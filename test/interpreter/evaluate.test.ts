@@ -758,6 +758,35 @@ describe('error paths', () => {
     expect(err.kind).toBe('unsupported')
     expect(err.message).toContain('test feature')
   })
+
+  it('stackOverflowError on infinite recursion', () => {
+    expect(() => safeRunProgram(`
+      void foo() { foo(); }
+      void main() { foo(); }
+    `)).toThrow('Stack overflow')
+  })
+
+  it('stackOverflowError on mutual recursion', () => {
+    expect(() => safeRunProgram(`
+      void bar();
+      void foo() { bar(); }
+      void bar() { foo(); }
+      void main() { foo(); }
+    `)).toThrow('Stack overflow')
+  })
+
+  it('deep but finite recursion succeeds', () => {
+    const { context, mem } = safeRunProgram(`
+      int r = 0;
+      void countdown(int n) {
+        if (n == 0) { return; }
+        r = n;
+        countdown(n - 1);
+      }
+      void main() { countdown(100); }
+    `)
+    expect(readGlobal(context, mem, 'r')).toBe(1)
+  })
 })
 
 // ── Dot operator (field_expression with .) ────────────────────────

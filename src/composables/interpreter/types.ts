@@ -88,6 +88,13 @@ export class UseAfterFreeError extends InterpreterError {
   }
 }
 
+export class StackOverflowError extends InterpreterError {
+  constructor(depth: number, node?: SyntaxNode) {
+    super(`Stack overflow: call depth exceeded ${depth}`, node, 'runtime')
+    this.name = 'StackOverflowError'
+  }
+}
+
 export class UnsupportedError extends InterpreterError {
   constructor(feature: string, node?: SyntaxNode) {
     super(`Unsupported: ${feature}`, node, 'unsupported')

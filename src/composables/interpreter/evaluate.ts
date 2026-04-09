@@ -4,7 +4,9 @@ import type { CppType, CppValue, InterpreterContext } from './types'
 import { markRaw } from 'vue'
 import { processDeclaration, setEvaluate } from './declarations'
 import { asserts, castIfNull, checksDefined, getGeneratorReturn, isTruthy } from './helpers'
-import { NULL_ADDRESS, NullPointerError, UnsupportedError, UseAfterFreeError } from './types'
+import { NULL_ADDRESS, NullPointerError, StackOverflowError, UnsupportedError, UseAfterFreeError } from './types'
+
+const MAX_CALL_DEPTH = 256
 
 // ── Pointer equality ──────────────────────────────────────────────
 
@@ -338,6 +340,8 @@ export function* evaluate(
       return yield
     }
     case 'call_expression': {
+      if (context.callStack.length >= MAX_CALL_DEPTH)
+        throw new StackOverflowError(MAX_CALL_DEPTH, node)
       const func = node.childForFieldName('function')!
       asserts(func.type === 'identifier')
       asserts(func.text in context.functions)
