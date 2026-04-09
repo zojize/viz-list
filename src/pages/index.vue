@@ -397,7 +397,8 @@ const speedLabel = computed(() => {
           :highlighted-field-address="hoveredFieldAddress"
           :statement-lhs-addresses="lhsAddresses"
           :statement-rhs-addresses="rhsAddresses"
-          @select-cell="selectedAddress = $event"
+          :selected-address="selectedAddress"
+          @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
           @hover-pointer="hoveredNodeAddress = $event"
           @hover-variable="highlightVariable($event, context.currentNode)"
         />

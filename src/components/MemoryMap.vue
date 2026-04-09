@@ -11,6 +11,8 @@ const props = defineProps<{
   statementLhsAddresses?: ReadonlySet<number>
   /** Addresses involved in the current statement: RHS (read sources) */
   statementRhsAddresses?: ReadonlySet<number>
+  /** Currently selected cell address (for selected state styling) */
+  selectedAddress?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -241,7 +243,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
 <template>
   <div ref="memory-map-container" data-testid="memory-map" class="h-full flex gap-2 overflow-hidden p-2">
     <!-- Stack column -->
-    <div data-testid="stack-column" class="scrollbar-hidden flex flex-1 flex-col gap-0.5 overflow-y-auto">
+    <div data-testid="stack-column" class="scrollbar-hidden flex flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
       <div class="mb-1 text-[10px] text-gray-500 tracking-wide uppercase">
         Stack
       </div>
@@ -253,10 +255,11 @@ watch(() => props.highlightedFieldAddress, (addr) => {
           :data-testid="`stack-entry-${entry.address}`"
           class="cursor-pointer border-l-3 border-transparent rounded bg-gray-50 font-mono transition-all duration-200 dark:bg-gray-800/80"
           :class="{
+            'outline outline-2 outline-blue-400 bg-blue-500/20!': selectedAddress === entry.address,
             'border-l-blue-500!': isStatementLhs(entry.address),
             'border-l-green-500!': isStatementRhs(entry.address),
             'border-l-yellow-400!': changedAddresses.has(entry.address) && !isStatementLhs(entry.address) && !isStatementRhs(entry.address),
-            'border-l-blue-400!': (hoveredTarget === entry.address || isCellHighlighted(entry.address)) && !isStatementLhs(entry.address) && !isStatementRhs(entry.address),
+            'border-l-blue-400!': (hoveredTarget === entry.address || isCellHighlighted(entry.address)) && !isStatementLhs(entry.address) && !isStatementRhs(entry.address) && selectedAddress !== entry.address,
             'opacity-40': !entry.inScope,
           }"
           @click="emit('selectCell', entry.address)"
@@ -325,7 +328,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
     </div>
 
     <!-- Heap column -->
-    <div data-testid="heap-column" class="scrollbar-hidden flex flex-1 flex-col gap-0.5 overflow-y-auto">
+    <div data-testid="heap-column" class="scrollbar-hidden flex flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
       <div class="mb-1 text-[10px] text-gray-500 tracking-wide uppercase">
         Heap
       </div>
@@ -340,9 +343,10 @@ watch(() => props.highlightedFieldAddress, (addr) => {
           :changed="changedAddresses.has(entry.cell.address)"
           :highlighted-field-address="highlightedFieldAddress"
           :class="{
+            'outline outline-2 outline-blue-400': selectedAddress === entry.cell.address,
             'border-l-blue-500!': isStatementLhs(entry.cell.address),
             'border-l-green-500!': isStatementRhs(entry.cell.address),
-            'border-l-blue-400!': (hoveredTarget === entry.cell.address || isCellHighlighted(entry.cell.address)) && !isStatementLhs(entry.cell.address) && !isStatementRhs(entry.cell.address),
+            'border-l-blue-400!': (hoveredTarget === entry.cell.address || isCellHighlighted(entry.cell.address)) && !isStatementLhs(entry.cell.address) && !isStatementRhs(entry.cell.address) && selectedAddress !== entry.cell.address,
           }"
           @click-pointer="handleClickPointer"
           @hover-pointer="handleHoverPointerHeap"

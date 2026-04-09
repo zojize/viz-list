@@ -5,6 +5,7 @@ import { NULL_ADDRESS } from '~/composables/interpreter/types'
 const props = defineProps<{
   context: Readonly<InterpreterContext>
   highlightedAddress?: number | null
+  selectedAddress?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -217,6 +218,10 @@ function isNodeHighlighted(address: number): boolean {
   return false
 }
 
+function isNodeSelected(address: number): boolean {
+  return props.selectedAddress === address
+}
+
 function handleArrowEnter(source: number, target: number | null, type: string, fieldAddress: number | undefined) {
   hoveredArrow.value = { source, target, type, fieldAddress: fieldAddress ?? 0 }
   if (fieldAddress)
@@ -227,84 +232,181 @@ function handleArrowLeave() {
   hoveredArrow.value = null
   emit('hoverField', null)
 }
+
+// ---- Pannable canvas ----
+
+const canvasRef = shallowRef<HTMLElement | null>(null)
+const panOffset = reactive({ x: 0, y: 0 })
+const isPanning = shallowRef(false)
+const panStart = reactive({ x: 0, y: 0, ox: 0, oy: 0 })
+
+function isInteractive(el: HTMLElement): boolean {
+  const tag = el.tagName
+  if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT')
+    return true
+  if (el.classList.contains('cursor-pointer') || el.closest('[data-testid^="ds-node-"]'))
+    return true
+  return false
+}
+
+function onPointerDown(e: PointerEvent) {
+  // Pan on middle-click anywhere, or left-click on non-interactive areas
+  if (e.button === 1 || (e.button === 0 && !isInteractive(e.target as HTMLElement))) {
+    isPanning.value = true
+    panStart.x = e.clientX
+    panStart.y = e.clientY
+    panStart.ox = panOffset.x
+    panStart.oy = panOffset.y
+    canvasRef.value?.setPointerCapture(e.pointerId)
+    e.preventDefault()
+  }
+}
+
+function onPointerMove(e: PointerEvent) {
+  if (!isPanning.value)
+    return
+  panOffset.x = panStart.ox + (e.clientX - panStart.x)
+  panOffset.y = panStart.oy + (e.clientY - panStart.y)
+}
+
+function onPointerUp() {
+  isPanning.value = false
+}
+
+// Auto-pan to selected node — only if it won't be fully visible.
+// Prefer X-axis adjustment first, then Y if still clipped.
+watch(() => props.selectedAddress, (addr) => {
+  if (addr === null || !canvasRef.value)
+    return
+  // Use two nextTicks: first for the detail panel to render (shrinking container), second to measure
+  nextTick(() => nextTick(() => {
+    const el = canvasRef.value?.querySelector(`[data-testid="ds-node-${addr}"]`) as HTMLElement | null
+    if (!el || !canvasRef.value)
+      return
+    const container = canvasRef.value.getBoundingClientRect()
+    const node = el.getBoundingClientRect()
+
+    const margin = 16
+    const clippedLeft = node.left < container.left + margin
+    const clippedRight = node.right > container.right - margin
+    const clippedTop = node.top < container.top + margin
+    const clippedBottom = node.bottom > container.bottom - margin
+
+    if (!clippedLeft && !clippedRight && !clippedTop && !clippedBottom)
+      return // fully visible, no pan needed
+
+    // Adjust X first
+    if (clippedLeft || clippedRight) {
+      const nodeXInContent = node.left - container.left - panOffset.x
+      panOffset.x = -(nodeXInContent - container.width / 2 + node.width / 2)
+    }
+
+    // Re-check Y after X adjustment (node position is unchanged, container is same)
+    if (clippedTop || clippedBottom) {
+      const nodeYInContent = node.top - container.top - panOffset.y
+      panOffset.y = -(nodeYInContent - container.height / 2 + node.height / 2)
+    }
+  }))
+})
 </script>
 
 <template>
-  <div data-testid="linked-list-view" class="flex flex-col gap-3 p-2">
-    <div v-if="chains.length === 0" class="text-sm text-gray-500 italic">
-      No linked lists detected
-    </div>
-    <div v-for="(chain, chainIdx) in chains" :key="chain.id" :data-testid="`chain-${chain.id}`" class="relative flex items-center gap-0 overflow-x-auto py-3 pl-2">
-      <!-- First node's prev pointer (show actual value, not hardcoded NULL) -->
-      <template v-if="hasPrev && chain.nodes.length > 0">
-        <span
-          class="shrink-0 cursor-pointer px-1 text-xs font-mono hover:underline"
-          :class="chain.nodes[0].prevAddr === null ? 'text-red-400 opacity-60' : 'text-orange-400'"
-          @pointerenter="handleArrowEnter(chain.nodes[0].address, chain.nodes[0].prevAddr, 'prev', chain.nodes[0].prevFieldAddress)"
-          @pointerleave="handleArrowLeave()"
-        >{{ chain.nodes[0].prevAddr === null ? 'NULL' : `0x${chain.nodes[0].prevAddr.toString(16).padStart(2, '0')}` }}</span>
-        <span
-          class="shrink-0 cursor-pointer px-0.5 py-1 text-sm text-orange-400 hover:text-orange-300"
-          @pointerenter="handleArrowEnter(chain.nodes[0].address, chain.nodes[0].prevAddr, 'prev', chain.nodes[0].prevFieldAddress)"
-          @pointerleave="handleArrowLeave()"
-        >&#8592;</span>
-      </template>
-
-      <template v-for="(node, i) in chain.nodes" :key="node.address">
-        <!-- Arrows between nodes -->
-        <div v-if="i > 0" class="flex shrink-0 flex-col items-center">
-          <!-- Next arrow (top) -->
+  <div
+    ref="canvasRef"
+    data-testid="linked-list-view"
+    class="h-full overflow-hidden p-2"
+    :class="isPanning ? 'cursor-grabbing' : 'cursor-grab'"
+    @pointerdown="onPointerDown"
+    @pointermove="onPointerMove"
+    @pointerup="onPointerUp"
+    @pointercancel="onPointerUp"
+  >
+    <div :style="{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }" class="inline-flex flex-col gap-3">
+      <div v-if="chains.length === 0" class="text-sm text-gray-500 italic">
+        No linked lists detected
+      </div>
+      <div v-for="(chain, chainIdx) in chains" :key="chain.id" :data-testid="`chain-${chain.id}`" class="relative flex items-center gap-0 py-3 pl-2">
+        <!-- First node's prev pointer (show actual value, not hardcoded NULL) -->
+        <template v-if="hasPrev && chain.nodes.length > 0">
           <span
-            class="shrink-0 cursor-pointer px-1 py-0.5 text-sm transition-opacity hover:opacity-100"
-            :class="{
-              'text-green-400': !isNodeInDifferentChain(node.address, chainIdx),
-              'text-green-400/30': isNodeInDifferentChain(node.address, chainIdx),
-            }"
-            @pointerenter="handleArrowEnter(chain.nodes[i - 1].address, node.address, 'next', chain.nodes[i - 1].nextFieldAddress)"
+            class="shrink-0 cursor-pointer px-1 text-xs font-mono hover:underline"
+            :class="chain.nodes[0].prevAddr === null ? 'text-red-400 opacity-60' : 'text-orange-400'"
+            @pointerenter="handleArrowEnter(chain.nodes[0].address, chain.nodes[0].prevAddr, 'prev', chain.nodes[0].prevFieldAddress)"
             @pointerleave="handleArrowLeave()"
-          >&#8594;</span>
-          <!-- Prev arrow (bottom) -->
+          >{{ chain.nodes[0].prevAddr === null ? 'NULL' : `0x${chain.nodes[0].prevAddr.toString(16).padStart(2, '0')}` }}</span>
           <span
-            v-if="hasPrev"
-            class="shrink-0 cursor-pointer px-1 py-0.5 text-sm transition-opacity hover:opacity-100"
-            :class="{
-              'text-orange-400': !isNodeInDifferentChain(chain.nodes[i - 1].address, chainIdx),
-              'text-orange-400/30': isNodeInDifferentChain(chain.nodes[i - 1].address, chainIdx),
-            }"
-            @pointerenter="handleArrowEnter(node.address, chain.nodes[i - 1].address, 'prev', node.prevFieldAddress)"
+            class="shrink-0 cursor-pointer px-0.5 py-1 text-sm text-orange-400 hover:text-orange-300"
+            @pointerenter="handleArrowEnter(chain.nodes[0].address, chain.nodes[0].prevAddr, 'prev', chain.nodes[0].prevFieldAddress)"
             @pointerleave="handleArrowLeave()"
           >&#8592;</span>
-        </div>
+        </template>
 
-        <!-- Node box -->
-        <div
-          :data-testid="`ds-node-${node.address}`"
-          class="shrink-0 cursor-pointer border rounded px-3 py-2 text-center font-mono transition-all"
-          :class="{
-            'border-blue-400 bg-blue-500/10': isNodeHighlighted(node.address),
-            'border-gray-300 hover:border-blue-400 dark:border-gray-600': !isNodeHighlighted(node.address),
-          }"
-          @click="emit('selectNode', node.address)"
-          @pointerenter="emit('hoverNode', node.address)"
-          @pointerleave="emit('hoverNode', null)"
-        >
-          <div class="text-sm text-orange-600 dark:text-orange-300">
-            {{ node.data }}
+        <template v-for="(node, i) in chain.nodes" :key="node.address">
+          <!-- Arrows between nodes -->
+          <div v-if="i > 0" class="flex shrink-0 flex-col items-center">
+            <!-- Next arrow (top) -->
+            <span
+              class="shrink-0 cursor-pointer px-1 py-0.5 text-sm transition-opacity hover:opacity-100"
+              :class="{
+                'text-green-400': !isNodeInDifferentChain(node.address, chainIdx),
+                'text-green-400/30': isNodeInDifferentChain(node.address, chainIdx),
+              }"
+              @pointerenter="handleArrowEnter(chain.nodes[i - 1].address, node.address, 'next', chain.nodes[i - 1].nextFieldAddress)"
+              @pointerleave="handleArrowLeave()"
+            >&#8594;</span>
+            <!-- Prev arrow (bottom) -->
+            <span
+              v-if="hasPrev"
+              class="shrink-0 cursor-pointer px-1 py-0.5 text-sm transition-opacity hover:opacity-100"
+              :class="{
+                'text-orange-400': !isNodeInDifferentChain(chain.nodes[i - 1].address, chainIdx),
+                'text-orange-400/30': isNodeInDifferentChain(chain.nodes[i - 1].address, chainIdx),
+              }"
+              @pointerenter="handleArrowEnter(node.address, chain.nodes[i - 1].address, 'prev', node.prevFieldAddress)"
+              @pointerleave="handleArrowLeave()"
+            >&#8592;</span>
           </div>
-          <div class="text-[9px] text-gray-500">
-            0x{{ node.address.toString(16).padStart(2, '0') }}
-          </div>
-        </div>
-      </template>
 
-      <!-- Last node's next pointer -->
-      <span
-        v-if="chain.nodes.length > 0"
-        class="shrink-0 cursor-pointer px-0.5 py-1 text-sm text-green-400 hover:text-green-300"
-        @pointerenter="chain.nodes.at(-1)!.nextFieldAddress && handleArrowEnter(chain.nodes.at(-1)!.address, null, 'next', chain.nodes.at(-1)!.nextFieldAddress)"
-        @pointerleave="handleArrowLeave()"
-      >&#8594;</span>
-      <span class="shrink-0 px-1 text-xs text-red-400">NULL</span>
+          <!-- Node box -->
+          <div
+            :data-testid="`ds-node-${node.address}`"
+            class="shrink-0 cursor-pointer border rounded px-3 py-2 text-center font-mono transition-all"
+            :class="{
+              'border-blue-400 bg-blue-500/20 outline outline-2 outline-blue-400': isNodeSelected(node.address),
+              'border-blue-400 bg-blue-500/10': isNodeHighlighted(node.address) && !isNodeSelected(node.address),
+              'border-gray-300 hover:border-blue-400 dark:border-gray-600': !isNodeHighlighted(node.address) && !isNodeSelected(node.address),
+            }"
+            @click="emit('selectNode', node.address)"
+            @pointerenter="emit('hoverNode', node.address)"
+            @pointerleave="emit('hoverNode', null)"
+          >
+            <div class="text-sm text-orange-600 dark:text-orange-300">
+              {{ node.data }}
+            </div>
+            <div class="text-[9px] text-gray-500">
+              0x{{ node.address.toString(16).padStart(2, '0') }}
+            </div>
+          </div>
+        </template>
+
+        <!-- Last node's next pointer -->
+        <template v-if="chain.nodes.length > 0">
+          <span
+            class="shrink-0 cursor-pointer px-0.5 py-1 text-sm text-green-400 hover:text-green-300"
+            @pointerenter="chain.nodes.at(-1)!.nextFieldAddress && handleArrowEnter(chain.nodes.at(-1)!.address, chain.nodes.at(-1)!.nextAddr, 'next', chain.nodes.at(-1)!.nextFieldAddress)"
+            @pointerleave="handleArrowLeave()"
+          >&#8594;</span>
+          <span
+            v-if="chain.nodes.at(-1)!.nextAddr === null"
+            class="shrink-0 px-1 text-xs text-red-400"
+          >NULL</span>
+          <span
+            v-else
+            class="shrink-0 cursor-pointer px-1 text-xs text-green-400 font-mono hover:underline"
+            @click="emit('selectNode', chain.nodes.at(-1)!.nextAddr!)"
+          >0x{{ chain.nodes.at(-1)!.nextAddr!.toString(16).padStart(2, '0') }} &#x21A9;</span>
+        </template>
+      </div>
     </div>
   </div>
 </template>
