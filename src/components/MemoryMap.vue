@@ -241,7 +241,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
 <template>
   <div ref="memory-map-container" data-testid="memory-map" class="h-full flex gap-2 overflow-hidden p-2">
     <!-- Stack column -->
-    <div data-testid="stack-column" class="flex flex-1 flex-col gap-0.5 overflow-y-auto">
+    <div data-testid="stack-column" class="flex flex-1 flex-col gap-0.5 overflow-y-auto" style="scrollbar-gutter: stable">
       <div class="mb-1 text-[10px] text-gray-500 tracking-wide uppercase">
         Stack
       </div>
@@ -325,7 +325,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
     </div>
 
     <!-- Heap column -->
-    <div data-testid="heap-column" class="flex flex-1 flex-col gap-0.5 overflow-y-auto">
+    <div data-testid="heap-column" class="flex flex-1 flex-col gap-0.5 overflow-y-auto" style="scrollbar-gutter: stable">
       <div class="mb-1 text-[10px] text-gray-500 tracking-wide uppercase">
         Heap
       </div>

@@ -316,7 +316,7 @@ const speedLabel = computed(() => {
         <!-- Right: playback controls -->
         <div class="flex items-center gap-2">
           <!-- Speed slider -->
-          <div v-if="running || isActive" class="flex items-center gap-1.5">
+          <div class="flex items-center gap-1.5">
             <span class="text-[10px] text-gray-500 font-mono uppercase">{{ speedLabel }}</span>
             <input
               :value="520 - speedMs"
