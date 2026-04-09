@@ -21,7 +21,7 @@ function formatValue(value: CppValue): string {
     return String(value)
   if (typeof value === 'object') {
     if (value.type === 'pointer')
-      return value.address === NULL_ADDRESS ? 'NULL' : `0x${value.address.toString(16).padStart(2, '0')}`
+      return value.address === NULL_ADDRESS ? 'NULL' : `0x${value.address.toString(16).padStart(3, '0')}`
     if (value.type === 'struct')
       return `${value.name} {...}`
     if (value.type === 'array')
@@ -67,7 +67,7 @@ const structName = computed(() => {
         <span v-if="structName" class="text-sm text-purple-600 font-bold dark:text-purple-400">{{ structName }}</span>
         <span v-else class="text-sm text-gray-600 dark:text-gray-400">{{ formatType(cell.type) }}</span>
       </div>
-      <span class="text-[10px] text-gray-500 font-mono">{{ `0x${cell.address.toString(16).padStart(2, '0')}` }}</span>
+      <span class="text-[10px] text-gray-500 font-mono">{{ `0x${cell.address.toString(16).padStart(3, '0')}` }}</span>
     </div>
 
     <!-- Struct with fields -->

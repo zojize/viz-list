@@ -66,14 +66,18 @@ function runProgram(code: string) {
         break
       }
       case 'declaration': {
-        const { type, name, value } = getGeneratorReturn(processDeclaration(
-          node.childForFieldName('type')!,
-          node.childForFieldName('declarator')!,
-          context,
-          mem,
-        ))
-        const address = mem.alloc(type, value!, 'global')
-        context.globalEnv[name] = { type, address }
+        const typeNode = node.childForFieldName('type')!
+        const declarators = node.namedChildren.filter(c => c.id !== typeNode.id)
+        for (const declarator of declarators) {
+          const { type, name, value } = getGeneratorReturn(processDeclaration(
+            typeNode,
+            declarator,
+            context,
+            mem,
+          ))
+          const address = mem.alloc(type, value!, 'global')
+          context.globalEnv[name] = { type, address }
+        }
         break
       }
       case 'comment':

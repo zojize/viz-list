@@ -1,5 +1,5 @@
 import type { AddressSpace, CppType, CppValue, MemoryCell, MemoryRegion } from './types'
-import { NULL_ADDRESS } from './types'
+import { MEMORY_SIZE, NULL_ADDRESS, StackOverflowError } from './types'
 
 function defaultValue(type: CppType): CppValue {
   if (typeof type === 'string') {
@@ -61,14 +61,41 @@ function makeNullCell(): MemoryCell {
 export function createAddressSpace(): MemoryManager {
   const space: AddressSpace = {
     cells: new Map(),
-    nextAddress: 1,
+    stackTop: 1,
+    heapBottom: MEMORY_SIZE - 1,
   }
 
   // Install NULL cell at address 0
   space.cells.set(NULL_ADDRESS, makeNullCell())
 
+  function checkCollision(stackNeed: number, heapNeed: number) {
+    // stackTop is the next free stack address (grows up).
+    // heapBottom is the next free heap address (grows down).
+    // Available space = heapBottom - stackTop + 1. Collision when need > available.
+    const available = space.heapBottom - space.stackTop + 1
+    if (stackNeed + heapNeed > available)
+      throw new StackOverflowError(`Out of memory: stack (${space.stackTop}) collided with heap (${space.heapBottom})`)
+  }
+
+  /** Allocate N contiguous addresses from the stack (growing up) or heap (growing down). */
+  function allocRegion(count: number, region: MemoryRegion): number {
+    if (region === 'heap') {
+      checkCollision(0, count)
+      const base = space.heapBottom
+      space.heapBottom -= count
+      return base - count + 1 // lowest address of the block
+    }
+    else {
+      // stack or global — grow upward
+      checkCollision(count, 0)
+      const base = space.stackTop
+      space.stackTop += count
+      return base
+    }
+  }
+
   function alloc(type: CppType, value: CppValue, region: MemoryRegion): number {
-    const address = space.nextAddress++
+    const address = allocRegion(1, region)
     space.cells.set(address, { address, type, value, region, dead: false })
     return address
   }
@@ -78,7 +105,10 @@ export function createAddressSpace(): MemoryManager {
     fieldDefs: Record<string, CppType>,
     region: MemoryRegion,
   ): number {
-    const base = space.nextAddress++
+    const fields = Object.entries(fieldDefs)
+    const totalSize = 1 + fields.length // header + fields
+    const base = allocRegion(totalSize, region)
+
     // Header cell
     space.cells.set(base, {
       address: base,
@@ -88,7 +118,6 @@ export function createAddressSpace(): MemoryManager {
       dead: false,
     })
     // Field cells at base+1, base+2, ...
-    const fields = Object.entries(fieldDefs)
     for (let i = 0; i < fields.length; i++) {
       const [, fieldType] = fields[i]
       const fieldAddress = base + 1 + i
@@ -100,7 +129,6 @@ export function createAddressSpace(): MemoryManager {
         dead: false,
       })
     }
-    space.nextAddress = base + 1 + fields.length
     return base
   }
 
@@ -109,7 +137,9 @@ export function createAddressSpace(): MemoryManager {
     size: number,
     region: MemoryRegion,
   ): number {
-    const base = space.nextAddress++
+    const totalSize = 1 + size // header + elements
+    const base = allocRegion(totalSize, region)
+
     // Header cell
     space.cells.set(base, {
       address: base,
@@ -129,7 +159,6 @@ export function createAddressSpace(): MemoryManager {
         dead: false,
       })
     }
-    space.nextAddress = base + 1 + size
     return base
   }
 
@@ -169,7 +198,8 @@ export function createAddressSpace(): MemoryManager {
 
   function reset(): void {
     space.cells.clear()
-    space.nextAddress = 1
+    space.stackTop = 1
+    space.heapBottom = MEMORY_SIZE - 1
     space.cells.set(NULL_ADDRESS, makeNullCell())
   }
 

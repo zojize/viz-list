@@ -66,14 +66,18 @@ function runProgram(code: string) {
         break
       }
       case 'declaration': {
-        const { type, name, value } = getGeneratorReturn(processDeclaration(
-          node.childForFieldName('type')!,
-          node.childForFieldName('declarator')!,
-          context,
-          mem,
-        ))
-        const address = mem.alloc(type, value!, 'global')
-        context.globalEnv[name] = { type, address }
+        const typeNode = node.childForFieldName('type')!
+        const declarators = node.namedChildren.filter(c => c.id !== typeNode.id)
+        for (const declarator of declarators) {
+          const { type, name, value } = getGeneratorReturn(processDeclaration(
+            typeNode,
+            declarator,
+            context,
+            mem,
+          ))
+          const address = mem.alloc(type, value!, 'global')
+          context.globalEnv[name] = { type, address }
+        }
         break
       }
       case 'comment':
@@ -996,6 +1000,59 @@ describe('castIfNull numeric types', () => {
       void main() { float *p = nullptr; r = p; }
     `)
     expect(readGlobal(context, mem, 'r')).toEqual({ type: 'pointer', address: NULL_ADDRESS })
+  })
+})
+
+// ── Declaration lists ─────────────────────────────────────────────
+
+describe('declaration lists', () => {
+  it('int a, b, c declares three variables', () => {
+    const { context, mem } = safeRunProgram(`
+      int r = 0;
+      void main() {
+        int a, b, c;
+        a = 1;
+        b = 2;
+        c = 3;
+        r = a + b + c;
+      }
+    `)
+    expect(readGlobal(context, mem, 'r')).toBe(6)
+  })
+
+  it('mixed declaration list with init', () => {
+    const { context, mem } = safeRunProgram(`
+      int r = 0;
+      void main() {
+        int a = 10, b = 20;
+        r = a + b;
+      }
+    `)
+    expect(readGlobal(context, mem, 'r')).toBe(30)
+  })
+})
+
+// ── Heap vs stack address separation ──────────────────────────────
+
+describe('address separation', () => {
+  it('new int allocates on heap, stack vars on stack', () => {
+    const { mem } = safeRunProgram(`
+      void main() {
+        int a;
+        int *b = new int;
+        int c;
+      }
+    `)
+    // Include dead cells (locals are dead after main exits)
+    const heapCells = [...mem.space.cells.values()].filter(c => c.region === 'heap')
+    const stackCells = [...mem.space.cells.values()].filter(c => c.region === 'stack')
+    expect(heapCells.length).toBe(1)
+    expect(stackCells.length).toBeGreaterThanOrEqual(3) // a, b (pointer), c
+
+    // Heap addresses should be higher than stack addresses
+    const maxStack = Math.max(...stackCells.map(c => c.address))
+    const minHeap = Math.min(...heapCells.map(c => c.address))
+    expect(minHeap).toBeGreaterThan(maxStack)
   })
 })
 

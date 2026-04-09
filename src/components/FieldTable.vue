@@ -17,7 +17,7 @@ function formatValue(value: CppValue): string {
     return String(value)
   if (typeof value === 'object') {
     if (value.type === 'pointer')
-      return value.address === NULL_ADDRESS ? 'NULL' : `0x${value.address.toString(16).padStart(2, '0')}`
+      return value.address === NULL_ADDRESS ? 'NULL' : `0x${value.address.toString(16).padStart(3, '0')}`
   }
   return String(value)
 }
@@ -85,7 +85,7 @@ const fields = computed((): FieldRow[] => {
   <div data-testid="field-table" class="flex flex-col gap-2">
     <div class="flex items-center gap-2">
       <span v-if="structName" class="text-purple-600 font-bold dark:text-purple-400">{{ structName }}</span>
-      <span class="text-xs text-gray-500 font-mono">at 0x{{ cell.address.toString(16).padStart(2, '0') }}</span>
+      <span class="text-xs text-gray-500 font-mono">at 0x{{ cell.address.toString(16).padStart(3, '0') }}</span>
       <span
         class="rounded px-1.5 py-0.5 text-[10px]"
         :class="{

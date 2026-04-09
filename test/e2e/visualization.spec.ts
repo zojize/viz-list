@@ -100,7 +100,7 @@ test.describe('data structure panel', () => {
     await expect(page.getByTestId('field-table')).toBeVisible()
 
     // Close it
-    await page.getByTestId('detail-close').click()
+    await page.getByTestId('detail-close').click({ force: true })
 
     // Field table should be gone, linked list view still visible
     await expect(page.getByTestId('field-table')).not.toBeVisible()

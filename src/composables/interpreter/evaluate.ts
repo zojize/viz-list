@@ -327,21 +327,27 @@ export function* evaluate(
       throw new UnsupportedError(operator.text, node)
     }
     case 'declaration': {
-      const { type, name, value } = yield* processDeclaration(
-        node.childForFieldName('type')!,
-        node.childForFieldName('declarator')!,
-        context,
-        mem,
-      )
-      asserts(!(name in context.envStack.at(-1)!), `Variable ${name} already declared`)
-      const addr = mem.alloc(type, value!, 'stack')
-      context.envStack.at(-1)![name] = { type, address: addr }
+      const typeNode = node.childForFieldName('type')!
+      // Support declaration lists: `int a, b, c;` has multiple declarators
+      // Filter by id since Tree-sitter creates new wrapper objects per access
+      const declarators = node.namedChildren.filter(c => c.id !== typeNode.id)
+      for (const declarator of declarators) {
+        const { type, name, value } = yield* processDeclaration(
+          typeNode,
+          declarator,
+          context,
+          mem,
+        )
+        asserts(!(name in context.envStack.at(-1)!), `Variable ${name} already declared`)
+        const addr = mem.alloc(type, value!, 'stack')
+        context.envStack.at(-1)![name] = { type, address: addr }
+      }
       setCurrentNode(node)
       return yield
     }
     case 'call_expression': {
       if (context.callStack.length >= MAX_CALL_DEPTH)
-        throw new StackOverflowError(MAX_CALL_DEPTH, node)
+        throw new StackOverflowError(`Stack overflow: call depth exceeded ${MAX_CALL_DEPTH}`, node)
       const func = node.childForFieldName('function')!
       asserts(func.type === 'identifier')
       asserts(func.text in context.functions)

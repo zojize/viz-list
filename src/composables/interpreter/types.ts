@@ -29,9 +29,15 @@ export interface MemoryCell {
   dead: boolean
 }
 
+/** Stack grows up from 1, heap grows down from MEMORY_SIZE-1. */
+export const MEMORY_SIZE = 4096
+
 export interface AddressSpace {
   cells: Map<number, MemoryCell>
-  nextAddress: number
+  /** Next stack/global address (grows upward from 1) */
+  stackTop: number
+  /** Next heap address (grows downward from MEMORY_SIZE-1) */
+  heapBottom: number
 }
 
 export interface EnvEntry {
@@ -89,8 +95,8 @@ export class UseAfterFreeError extends InterpreterError {
 }
 
 export class StackOverflowError extends InterpreterError {
-  constructor(depth: number, node?: SyntaxNode) {
-    super(`Stack overflow: call depth exceeded ${depth}`, node, 'runtime')
+  constructor(message: string, node?: SyntaxNode) {
+    super(message, node, 'runtime')
     this.name = 'StackOverflowError'
   }
 }

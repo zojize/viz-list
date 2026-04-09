@@ -333,7 +333,7 @@ watch(() => props.selectedAddress, (addr) => {
             :class="chain.nodes[0].prevAddr === null ? 'text-red-400 opacity-60' : 'text-orange-400'"
             @pointerenter="handleArrowEnter(chain.nodes[0].address, chain.nodes[0].prevAddr, 'prev', chain.nodes[0].prevFieldAddress)"
             @pointerleave="handleArrowLeave()"
-          >{{ chain.nodes[0].prevAddr === null ? 'NULL' : `0x${chain.nodes[0].prevAddr.toString(16).padStart(2, '0')}` }}</span>
+          >{{ chain.nodes[0].prevAddr === null ? 'NULL' : `0x${chain.nodes[0].prevAddr.toString(16).padStart(3, '0')}` }}</span>
           <span
             class="shrink-0 cursor-pointer px-0.5 py-1 text-sm text-orange-400 hover:text-orange-300"
             @pointerenter="handleArrowEnter(chain.nodes[0].address, chain.nodes[0].prevAddr, 'prev', chain.nodes[0].prevFieldAddress)"
@@ -384,7 +384,7 @@ watch(() => props.selectedAddress, (addr) => {
               {{ node.data }}
             </div>
             <div class="text-[9px] text-gray-500">
-              0x{{ node.address.toString(16).padStart(2, '0') }}
+              0x{{ node.address.toString(16).padStart(3, '0') }}
             </div>
           </div>
         </template>
@@ -404,7 +404,7 @@ watch(() => props.selectedAddress, (addr) => {
             v-else
             class="shrink-0 cursor-pointer px-1 text-xs text-green-400 font-mono hover:underline"
             @click="emit('selectNode', chain.nodes.at(-1)!.nextAddr!)"
-          >0x{{ chain.nodes.at(-1)!.nextAddr!.toString(16).padStart(2, '0') }} &#x21A9;</span>
+          >0x{{ chain.nodes.at(-1)!.nextAddr!.toString(16).padStart(3, '0') }} &#x21A9;</span>
         </template>
       </div>
     </div>

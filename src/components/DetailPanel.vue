@@ -51,7 +51,7 @@ const showDetail = computed(() => selectedCell.value !== null && !props.simulati
           <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
           <button
             data-testid="detail-close"
-            class="i-mdi-close text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             title="Close"
             @click="emit('clearSelection')"
           />

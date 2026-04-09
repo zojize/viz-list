@@ -60,7 +60,7 @@ function formatType(type: CppType): string {
 }
 
 function formatAddr(addr: number): string {
-  return `0x${addr.toString(16).padStart(2, '0')}`
+  return `0x${addr.toString(16).padStart(3, '0')}`
 }
 
 function formatValue(value: CppValue): string {
@@ -193,10 +193,31 @@ interface HeapEntry {
 
 const heapEntries = computed(() => {
   const entries: HeapEntry[] = []
+  const structFieldAddresses = new Set<number>()
+
+  // First pass: collect all struct/array field addresses so we skip them
   for (const cell of props.context.memory.cells.values()) {
     if (cell.dead || cell.region !== 'heap')
       continue
-    if (typeof cell.type !== 'object' || cell.type.type !== 'struct')
+    const v = cell.value
+    if (typeof v === 'object' && v.type === 'struct') {
+      const structDef = props.context.structs[v.name]
+      if (structDef) {
+        for (let i = 0; i < Object.keys(structDef).length; i++)
+          structFieldAddresses.add(v.base + 1 + i)
+      }
+    }
+    else if (typeof v === 'object' && v.type === 'array') {
+      for (let i = 0; i < v.length; i++)
+        structFieldAddresses.add(v.base + 1 + i)
+    }
+  }
+
+  // Second pass: add all top-level heap cells (structs, arrays, and standalone primitives)
+  for (const cell of props.context.memory.cells.values()) {
+    if (cell.dead || cell.region !== 'heap')
+      continue
+    if (structFieldAddresses.has(cell.address))
       continue
     entries.push({ cell, fields: getFieldValues(cell) })
   }
