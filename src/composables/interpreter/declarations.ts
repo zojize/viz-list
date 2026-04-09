@@ -51,8 +51,13 @@ export function* processDeclaration(
     value?: CppValue
   }> {
     switch (declarator.type) {
-      case 'identifier':
       case 'field_identifier':
+        // Struct field declarations only need type and name, no allocation
+        return {
+          type: baseType,
+          name: declarator.text,
+        }
+      case 'identifier':
         return {
           type: baseType,
           name: declarator.text,
@@ -135,7 +140,17 @@ export function* initializeValue(
           }
           case 'struct': {
             asserts(type.name in context.structs, `Struct ${type.name} not found`)
-            const base = mem.allocStruct(type.name, context.structs[type.name], 'stack')
+            const fieldDefs = context.structs[type.name]
+            const base = mem.allocStruct(type.name, fieldDefs, 'stack')
+            // Recursively initialize nested struct/array fields
+            const fieldNames = Object.keys(fieldDefs)
+            for (let i = 0; i < fieldNames.length; i++) {
+              const fieldType = fieldDefs[fieldNames[i]]
+              if (typeof fieldType === 'object' && (fieldType.type === 'struct' || fieldType.type === 'array')) {
+                const fieldValue = yield* initializeValue(fieldType, context, mem)
+                mem.write(base + 1 + i, fieldValue)
+              }
+            }
             return { type: 'struct', name: type.name, base }
           }
         }

@@ -129,7 +129,7 @@ const arrayElements = computed((): ArrayEntry[] => {
         />
       </template>
       <!-- Leaf element -->
-      <div v-else class="flex items-baseline justify-between gap-2 py-0.5">
+      <div v-else class="flex items-baseline justify-between gap-2 rounded px-1 py-0.5 odd:bg-gray-100 dark:odd:bg-gray-800/50">
         <span class="text-gray-500 font-mono">{{ elem.prefix }}</span>
         <DSValue
           v-if="elem.cell"
@@ -151,7 +151,7 @@ const arrayElements = computed((): ArrayEntry[] => {
     <div
       v-for="field in structFields"
       :key="field.name"
-      class="flex items-baseline justify-between gap-2 py-0.5 pl-3"
+      class="flex items-baseline justify-between gap-2 rounded px-1 py-0.5 pl-3 odd:bg-gray-100 dark:odd:bg-gray-800/50"
     >
       <span class="text-gray-500 font-mono">{{ field.name }}:</span>
       <DSValue

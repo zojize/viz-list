@@ -308,11 +308,11 @@ watch(() => props.highlightedFieldAddress, (addr) => {
                 v-for="[name, field] in entry.fields"
                 :key="name"
                 :data-field-address="field.address"
-                class="flex items-baseline justify-between py-0.5 transition-colors"
+                class="flex items-baseline justify-between rounded py-0.5 transition-colors odd:bg-gray-200/50 dark:odd:bg-gray-700/30"
                 :class="{
-                  'bg-blue-500/15 rounded px-1 -mx-1': isFieldHighlighted(field.address),
-                  'bg-blue-500/10 rounded px-1 -mx-1': isStatementLhs(field.address),
-                  'bg-green-500/10 rounded px-1 -mx-1': isStatementRhs(field.address),
+                  'bg-blue-500/15! px-1 -mx-1': isFieldHighlighted(field.address),
+                  'bg-blue-500/10! px-1 -mx-1': isStatementLhs(field.address),
+                  'bg-green-500/10! px-1 -mx-1': isStatementRhs(field.address),
                 }"
               >
                 <span class="text-gray-500">{{ name }}</span>
@@ -321,6 +321,13 @@ watch(() => props.highlightedFieldAddress, (addr) => {
                   :address="field.value.address"
                   @navigate="handleClickPointer"
                   @hover="handleHoverPointerStack"
+                />
+                <DSValue
+                  v-else-if="typeof field.value === 'object' && (field.value.type === 'struct' || field.value.type === 'array')"
+                  :cell="context.memory.cells.get(field.address)!"
+                  :context="context"
+                  @navigate="handleClickPointer"
+                  @hover-node="handleHoverPointerStack"
                 />
                 <span v-else class="text-orange-600 font-semibold dark:text-orange-300">{{ formatValue(field.value) }}</span>
               </div>

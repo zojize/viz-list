@@ -76,8 +76,8 @@ const structName = computed(() => {
         v-for="[name, field] in fieldValues"
         :key="name"
         :data-field-address="field.address"
-        class="flex items-baseline justify-between border-b border-gray-200 py-1 font-mono transition-colors last:border-b-0 dark:border-gray-200/10"
-        :class="{ 'bg-blue-500/15 rounded px-1 -mx-1': highlightedFieldAddress === field.address }"
+        class="flex items-baseline justify-between border-b border-gray-200 py-1 font-mono transition-colors last:border-b-0 dark:border-gray-200/10 odd:bg-gray-200/30 dark:odd:bg-gray-700/20"
+        :class="{ 'bg-blue-500/15! rounded px-1 -mx-1': highlightedFieldAddress === field.address }"
       >
         <div class="flex items-baseline gap-1.5">
           <span class="text-gray-500">{{ name }}</span>
