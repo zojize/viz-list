@@ -1,5 +1,5 @@
 import type { ShallowRef } from 'vue'
-import { useEventListener } from '@vueuse/core'
+import { useEventListener, useResizeObserver } from '@vueuse/core'
 import { nextTick, reactive, readonly, shallowRef } from 'vue'
 
 interface PanState {
@@ -12,6 +12,15 @@ interface DragState {
   pointerId: number
 }
 
+interface ContentBounds {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+  maxItemW: number
+  maxItemH: number
+}
+
 interface UsePannableCanvasOptions {
   /** Ref to the canvas container element */
   canvasRef: ShallowRef<HTMLElement | null>
@@ -19,6 +28,8 @@ interface UsePannableCanvasOptions {
   hasContent: () => boolean
   /** Called when a drag ends. Receives the key and the total drag delta (dx, dy). */
   onDragEnd?: (key: string, dx: number, dy: number) => void
+  /** Returns the bounding box of all content for pan clamping. Null = no content. */
+  contentBounds?: () => ContentBounds | null
 }
 
 export function usePannableCanvas(options: UsePannableCanvasOptions) {
@@ -95,6 +106,7 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
     if (isPanning.value) {
       panOffset.x = panStart.ox + (e.clientX - panStart.x)
       panOffset.y = panStart.oy + (e.clientY - panStart.y)
+      clampPan()
     }
   }
 
@@ -149,10 +161,38 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
     }))
   }
 
+  /** Clamp panOffset so content stays partially visible. */
+  function clampPan() {
+    const bounds = options.contentBounds?.()
+    const canvas = canvasRef.value
+    if (!bounds || !canvas)
+      return
+    const cw = canvas.clientWidth
+    const ch = canvas.clientHeight
+    const marginX = Math.max(bounds.maxItemW / 2, 50)
+    const marginY = Math.max(bounds.maxItemH / 2, 50)
+
+    const minPanX = marginX - bounds.maxX
+    const maxPanX = cw - marginX - bounds.minX
+    const minPanY = marginY - bounds.maxY
+    const maxPanY = ch - marginY - bounds.minY
+
+    if (minPanX <= maxPanX)
+      panOffset.x = Math.max(minPanX, Math.min(maxPanX, panOffset.x))
+    if (minPanY <= maxPanY)
+      panOffset.y = Math.max(minPanY, Math.min(maxPanY, panOffset.y))
+  }
+
+  function resetPan() {
+    panOffset.x = 0
+    panOffset.y = 0
+  }
+
   function onWheel(e: WheelEvent) {
     e.preventDefault()
     panOffset.x -= e.deltaX
     panOffset.y -= e.deltaY
+    clampPan()
   }
 
   // Wire all events to the canvas element
@@ -162,11 +202,16 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
   useEventListener(canvasRef, 'pointercancel', onPointerUp)
   useEventListener(canvasRef, 'wheel', onWheel, { passive: false })
 
+  // Re-clamp when the canvas resizes (splitpane drag, detail panel toggle)
+  useResizeObserver(canvasRef, () => clampPan())
+
   return {
     panOffset,
     isPanning: readonly(isPanning),
     didDrag: readonly(didDrag),
     getDragDelta,
     panToElement,
+    resetPan,
+    clampPan,
   }
 }
