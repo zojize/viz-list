@@ -1,3 +1,14 @@
+struct Node {
+  int data;
+  Node *next;
+  Node *prev;
+};
+
+struct LinkedList {
+  Node *head;
+  Node *tail;
+};
+
 void insertFront(LinkedList *list, int data) {
   Node *newNode = new Node;
   newNode->data = data;
@@ -6,13 +17,10 @@ void insertFront(LinkedList *list, int data) {
 
   if (list->head != nullptr) {
     list->head->prev = newNode;
-  }
-
-  list->head = newNode;
-
-  if (list->tail == nullptr) {
+  } else {
     list->tail = newNode;
   }
+  list->head = newNode;
 }
 
 int main() {

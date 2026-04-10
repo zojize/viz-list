@@ -1,3 +1,14 @@
+struct Node {
+  int data;
+  Node *next;
+  Node *prev;
+};
+
+struct LinkedList {
+  Node *head;
+  Node *tail;
+};
+
 void insertBack(LinkedList *list, int data) {
   Node *newNode = new Node;
   newNode->data = data;
@@ -19,11 +30,6 @@ int main() {
   insertBack(&list, 1);
   insertBack(&list, 2);
   insertBack(&list, 3);
-  insertBack(&list, 4);
-
-  // Create a loop: last node's next points back to second node
-  list.tail->next = list.head->next;
-  list.head->next->prev = list.tail;
 
   return 0;
 }
