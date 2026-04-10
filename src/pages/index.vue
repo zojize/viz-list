@@ -2,6 +2,7 @@
 import { useHead } from '@unhead/vue'
 import { useIntervalFn, useLocalStorage } from '@vueuse/core'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
+import { Pane, Splitpanes } from 'splitpanes'
 import { computed, markRaw, onMounted, onUnmounted, shallowRef, useTemplateRef, watch } from 'vue'
 import { Language, Parser } from 'web-tree-sitter'
 import DataStructureView from '~/components/DataStructureView.vue'
@@ -12,6 +13,7 @@ import { provideInterpreterContext } from '~/composables/useInterpreterContext'
 import { useMemoryDiff } from '~/composables/useMemoryDiff'
 import { useMonacoEditor } from '~/composables/useMonacoEditor'
 import { useStatementAddresses } from '~/composables/useStatementAddresses'
+import 'splitpanes/dist/splitpanes.css'
 
 useHead({
   title: 'Viz List',
@@ -217,7 +219,10 @@ function handleReset() {
 }
 
 function handleRun() {
-  editedWhileActive.value = false
+  if (!isActive.value || editedWhileActive.value) {
+    editedWhileActive.value = false
+    init()
+  }
   executionError.value = null
   selectedAddress.value = null
   resume()
@@ -250,14 +255,12 @@ function runStep() {
 
 function handleStep() {
   executionError.value = null
+  selectedAddress.value = null
   if (!isActive.value || editedWhileActive.value) {
     editedWhileActive.value = false
     init()
-    runStep()
   }
-  else {
-    runStep()
-  }
+  runStep()
 }
 
 const speedLabel = computed(() => {
@@ -273,9 +276,9 @@ const speedLabel = computed(() => {
 </script>
 
 <template>
-  <div class="h-full w-full flex flex-col gap-0 lg:flex-row lg:gap-1 lg:p-1">
+  <Splitpanes class="h-full w-full">
     <!-- Left: Editor + controls -->
-    <div class="min-h-0 flex flex-1 flex-col">
+    <Pane :size="50" :min-size="20" class="flex flex-col">
       <!-- Controls toolbar -->
       <div class="flex items-center justify-between gap-2 px-2 py-1.5">
         <!-- Left: template picker + doubly toggle -->
@@ -409,59 +412,61 @@ const speedLabel = computed(() => {
           </button>
         </div>
       </Transition>
-    </div>
+    </Pane>
 
     <!-- Right: Visualization -->
-    <div data-testid="viz-panel" class="min-h-0 flex flex-1 flex-col gap-1">
-      <div class="min-h-0 flex-[3] overflow-hidden panel-border">
-        <MemoryMap
-          :changed-addresses="changedAddresses"
-          :highlighted-address="hoveredNodeAddress"
-          :highlighted-field-address="hoveredFieldAddress"
-          :statement-lhs-addresses="lhsAddresses"
-          :statement-rhs-addresses="rhsAddresses"
-          :selected-address="selectedAddress"
-          @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
-          @hover-pointer="hoveredNodeAddress = $event"
-          @hover-variable="highlightVariable($event, context.currentNode)"
-        />
-      </div>
-      <div class="min-h-0 flex flex-[2] gap-1">
-        <!-- Data structure view -->
-        <div class="min-w-0 flex-1 overflow-hidden panel-border">
-          <DataStructureView
-            :highlighted-address="hoveredNodeAddress"
-            :selected-address="selectedAddress"
-            @select-node="selectedAddress = $event"
-            @hover-node="hoveredNodeAddress = $event"
-            @hover-field="hoveredFieldAddress = $event"
-          />
-        </div>
-        <!-- Detail panel (slides in when selected) -->
-        <Transition
-          enter-active-class="transition-all duration-200 ease-out"
-          enter-from-class="translate-x-3 opacity-0"
-          leave-active-class="transition-all duration-150 ease-in"
-          leave-to-class="translate-x-3 opacity-0"
-        >
-          <div v-if="selectedCell && !running" class="w-64 shrink-0 overflow-auto panel-border p-2">
-            <div class="mb-1.5 flex items-center justify-between">
-              <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
-              <button
-                data-testid="detail-close"
-                class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                title="Close"
-                @click="selectedAddress = null"
-              />
-            </div>
-            <FieldTable
-              :cell="selectedCell"
+    <Pane :size="50" :min-size="20" class="h-full" data-testid="viz-panel">
+      <Splitpanes horizontal class="h-full">
+        <!-- Memory map -->
+        <Pane :size="50" :min-size="15">
+          <div class="h-full overflow-hidden panel-border">
+            <MemoryMap
               :changed-addresses="changedAddresses"
-              @navigate="selectedAddress = $event"
+              :highlighted-address="hoveredNodeAddress"
+              :highlighted-field-address="hoveredFieldAddress"
+              :statement-lhs-addresses="lhsAddresses"
+              :statement-rhs-addresses="rhsAddresses"
+              :selected-address="selectedAddress"
+              @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
+              @hover-pointer="hoveredNodeAddress = $event"
+              @hover-variable="highlightVariable($event, context.currentNode)"
             />
           </div>
-        </Transition>
-      </div>
-    </div>
-  </div>
+        </Pane>
+        <!-- Data structure + detail -->
+        <Pane :size="50" :min-size="15">
+          <Splitpanes class="h-full">
+            <Pane :min-size="30">
+              <div class="h-full overflow-hidden panel-border">
+                <DataStructureView
+                  :highlighted-address="hoveredNodeAddress"
+                  :selected-address="selectedAddress"
+                  @select-node="selectedAddress = $event"
+                  @hover-node="hoveredNodeAddress = $event"
+                  @hover-field="hoveredFieldAddress = $event"
+                  @hover-variable="highlightVariable($event, context.currentNode)"
+                />
+              </div>
+            </Pane>
+            <Pane v-if="selectedCell && !running" :size="35" :min-size="15" class="overflow-auto p-2">
+              <div class="mb-1.5 flex items-center justify-between">
+                <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
+                <button
+                  data-testid="detail-close"
+                  class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  title="Close"
+                  @click="selectedAddress = null"
+                />
+              </div>
+              <FieldTable
+                :cell="selectedCell"
+                :changed-addresses="changedAddresses"
+                @navigate="selectedAddress = $event"
+              />
+            </Pane>
+          </Splitpanes>
+        </Pane>
+      </Splitpanes>
+    </Pane>
+  </Splitpanes>
 </template>

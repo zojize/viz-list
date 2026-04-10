@@ -133,7 +133,7 @@ const arrayElements = computed((): ArrayEntry[] => {
         />
       </template>
       <!-- Leaf element -->
-      <div v-else class="flex items-baseline justify-between gap-2 rounded px-1 py-0.5 odd:bg-gray-100 dark:odd:bg-gray-800/50">
+      <div v-else class="flex items-baseline justify-between gap-2 rounded px-1 py-0.5">
         <span class="text-gray-500 font-mono">{{ elem.prefix }}</span>
         <DSValue
           v-if="elem.cell"
@@ -149,7 +149,7 @@ const arrayElements = computed((): ArrayEntry[] => {
 
   <!-- Struct: render fields -->
   <div v-else-if="isStruct && structFields.length > 0" class="flex flex-col">
-    <div class="text-purple-600 font-semibold dark:text-purple-400">
+    <div class="text-accent-cyan font-semibold">
       {{ structName }} {
     </div>
     <template v-for="field in structFields" :key="field.name">
@@ -168,7 +168,7 @@ const arrayElements = computed((): ArrayEntry[] => {
         </div>
       </template>
       <!-- Simple value: inline row -->
-      <div v-else class="flex items-baseline justify-between gap-4 rounded px-1 py-0.5 pl-3 odd:bg-gray-100 dark:odd:bg-gray-800/50">
+      <div v-else class="flex items-baseline justify-between gap-4 rounded px-1 py-0.5 pl-3">
         <span class="shrink-0 text-gray-500 font-mono">{{ field.name }}:</span>
         <DSValue
           v-if="field.cell"
@@ -180,7 +180,7 @@ const arrayElements = computed((): ArrayEntry[] => {
         <span v-else class="text-gray-500">?</span>
       </div>
     </template>
-    <div class="text-purple-600 font-semibold dark:text-purple-400">
+    <div class="text-accent-cyan font-semibold">
       }
     </div>
   </div>

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/types'
-import { computed, shallowRef, watch } from 'vue'
+import { computed, nextTick, onUpdated, shallowRef, watch } from 'vue'
 import DSValue from '~/components/DSValue.vue'
 import LinkedListChain from '~/components/LinkedListChain.vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { usePannableCanvas } from '~/composables/usePannableCanvas'
+import { usePlacementEngine } from '~/composables/usePlacementEngine'
 
 const props = defineProps<{
   highlightedAddress?: number | null
@@ -16,6 +17,7 @@ const emit = defineEmits<{
   selectNode: [address: number]
   hoverNode: [address: number | null]
   hoverField: [address: number | null]
+  hoverVariable: [name: string | null]
 }>()
 
 const context = useInterpreterContext()
@@ -229,6 +231,8 @@ interface DataItem {
   kind: 'int' | 'float' | 'char' | 'bool' | 'pointer' | 'struct' | 'array'
   display: string
   dimmed: boolean
+  /** Variable name for editor highlighting (only for stack variables) */
+  varName: string | null
 }
 
 /** Addresses already shown as part of a linked list chain */
@@ -286,7 +290,7 @@ const standaloneItems = computed((): DataItem[] => {
   const subCells = getSubCellAddresses()
   const seen = new Set<number>()
 
-  function addItem(name: string, cell: MemoryCell, dimmed: boolean) {
+  function addItem(name: string, cell: MemoryCell, dimmed: boolean, varName: string | null = null) {
     if (cell.dead || seen.has(cell.address))
       return
     if (chainAddresses.value.has(cell.address))
@@ -301,6 +305,7 @@ const standaloneItems = computed((): DataItem[] => {
       kind: getKind(cell),
       display: formatValue(cell.value),
       dimmed,
+      varName,
     })
   }
 
@@ -310,7 +315,7 @@ const standaloneItems = computed((): DataItem[] => {
     for (const [name, entry] of Object.entries(env)) {
       const cell = context.memory.cells.get(entry.address)
       if (cell)
-        addItem(name, cell, false)
+        addItem(name, cell, false, name)
     }
   }
 
@@ -322,7 +327,7 @@ const standaloneItems = computed((): DataItem[] => {
       for (const [name, entry] of Object.entries(env)) {
         const cell = context.memory.cells.get(entry.address)
         if (cell)
-          addItem(name, cell, true)
+          addItem(name, cell, true, name)
       }
     }
   }
@@ -349,23 +354,79 @@ function isNodeSelected(address: number): boolean {
   return props.selectedAddress === address
 }
 
-// ---- Pannable canvas + draggable items ----
+// ---- Placement engine ----
+
+// ---- Pannable canvas (declared first so panOffset is available to placement) ----
 
 const canvasRef = shallowRef<HTMLElement | null>(null)
+const contentRef = shallowRef<HTMLElement | null>(null)
+
+// Forward-declare placement so onDragEnd can reference it
+let placementRef: ReturnType<typeof usePlacementEngine> | undefined
 
 const {
   panOffset,
   isPanning,
   didDrag,
-  getDragOffset,
-  onPointerDown,
-  onPointerMove,
-  onPointerUp,
+  getDragDelta,
   panToElement,
 } = usePannableCanvas({
   canvasRef,
   hasContent: () => hasContent.value,
+  onDragEnd(key, dx, dy) {
+    const pos = placementRef?.getPosition(key)
+    if (pos)
+      placementRef?.setPosition(key, pos.x + dx, pos.y + dy)
+  },
 })
+
+// ---- Placement engine (uses panOffset for viewport-aware placement) ----
+
+const placement = usePlacementEngine({
+  gap: 16,
+  containerSize: () => {
+    if (!canvasRef.value)
+      return null
+    return { w: canvasRef.value.clientWidth, h: canvasRef.value.clientHeight }
+  },
+  panOffset: () => ({ x: panOffset.x, y: panOffset.y }),
+})
+placementRef = placement
+
+/** Chain keys for isChain detection */
+const chainKeys = computed(() => new Set(chains.value.map(c => c.id)))
+
+/** Measure and place all visible items after render */
+function measureAndPlace() {
+  if (!contentRef.value)
+    return
+  const els = contentRef.value.querySelectorAll<HTMLElement>('[data-place-key]')
+  for (const el of els) {
+    const key = el.dataset.placeKey!
+    placement.setSize(key, el.offsetWidth, el.offsetHeight)
+    placement.placeNew(key, el.offsetWidth, el.offsetHeight, chainKeys.value.has(key))
+  }
+  const activeKeys = new Set<string>()
+  for (const el of els)
+    activeKeys.add(el.dataset.placeKey!)
+  placement.retainOnly(activeKeys)
+}
+
+onUpdated(() => nextTick(measureAndPlace))
+
+/** Get the final visual position of an item: placement + transient drag delta.
+ *  Uses transform (GPU-accelerated) instead of left/top (triggers layout). */
+function getItemStyle(key: string) {
+  const pos = placement.getPosition(key) ?? { x: 0, y: 0 }
+  const delta = getDragDelta(key)
+  const isDragging = delta.x !== 0 || delta.y !== 0
+  return {
+    position: 'absolute' as const,
+    transform: `translate(${pos.x + delta.x}px, ${pos.y + delta.y}px)`,
+    willChange: isDragging ? 'transform' : 'auto',
+    transition: isDragging ? 'none' : undefined,
+  }
+}
 
 // Auto-pan to selected node
 watch(() => props.selectedAddress, (addr) => {
@@ -403,12 +464,8 @@ const kindBg: Record<DataItem['kind'], string> = {
     data-testid="ds-view"
     class="h-full select-none overflow-hidden p-2"
     :class="hasContent ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''"
-    @pointerdown="onPointerDown"
-    @pointermove="onPointerMove"
-    @pointerup="onPointerUp"
-    @pointercancel="onPointerUp"
   >
-    <div :style="{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }" class="inline-flex flex-col gap-3">
+    <div ref="contentRef" :style="{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }" class="relative">
       <div v-if="!hasContent" class="text-sm text-gray-500 italic">
         No data to display
       </div>
@@ -419,51 +476,47 @@ const kindBg: Record<DataItem['kind'], string> = {
         :key="chain.id"
         :data-testid="`chain-${chain.id}`"
         :data-drag-key="chain.id"
+        :data-place-key="chain.id"
         :nodes="chain.nodes"
         :has-prev="hasPrev"
         :highlighted-address="highlightedAddress"
         :selected-address="selectedAddress"
         :did-drag="didDrag"
-        :style="{
-          transform: `translate(${getDragOffset(chain.id).x}px, ${getDragOffset(chain.id).y}px)`,
-        }"
+        :style="getItemStyle(chain.id)"
         @select-node="emit('selectNode', $event)"
         @hover-node="emit('hoverNode', $event)"
         @hover-field="emit('hoverField', $event)"
       />
 
       <!-- Standalone data items -->
-      <div v-if="standaloneItems.length > 0" class="flex flex-wrap items-start gap-2 py-2">
-        <template v-for="item in standaloneItems" :key="item.address">
-          <div
-            :data-testid="`ds-item-${item.address}`"
-            :data-drag-key="`item-${item.address}`"
-            class="cursor-pointer border-2 rounded p-1.5 text-xs font-mono transition-all"
-            :class="[
-              kindColors[item.kind],
-              kindBg[item.kind],
-              isNodeSelected(item.address) ? 'outline outline-2 outline-blue-400' : '',
-              isNodeHighlighted(item.address) ? 'bg-blue-500/10!' : '',
-              item.dimmed ? 'opacity-40' : '',
-            ]"
-            :style="{
-              transform: `translate(${getDragOffset(`item-${item.address}`).x}px, ${getDragOffset(`item-${item.address}`).y}px)`,
-            }"
-            @click="!didDrag && emit('selectNode', item.address)"
-            @pointerenter="emit('hoverNode', item.address)"
-            @pointerleave="emit('hoverNode', null)"
-          >
-            <div class="mb-0.5 flex items-baseline gap-1.5 text-[10px]">
-              <span class="text-gray-600 font-semibold dark:text-gray-400">{{ item.label }}</span>
-              <span class="text-gray-400">{{ formatAddr(item.address) }}</span>
-            </div>
-            <DSValue
-              :cell="item.cell"
-              @navigate="emit('selectNode', $event)"
-              @hover-node="emit('hoverNode', $event)"
-            />
-          </div>
-        </template>
+      <div
+        v-for="item in standaloneItems"
+        :key="item.address"
+        :data-testid="`ds-item-${item.address}`"
+        :data-drag-key="`item-${item.address}`"
+        :data-place-key="`item-${item.address}`"
+        class="cursor-pointer border-2 rounded p-1.5 text-xs font-mono transition-colors"
+        :class="[
+          kindColors[item.kind],
+          kindBg[item.kind],
+          isNodeSelected(item.address) ? 'outline outline-2 outline-blue-400' : '',
+          isNodeHighlighted(item.address) ? 'bg-blue-500/10!' : '',
+          item.dimmed ? 'opacity-40' : '',
+        ]"
+        :style="getItemStyle(`item-${item.address}`)"
+        @click="!didDrag && emit('selectNode', item.address)"
+        @pointerenter="emit('hoverNode', item.address); item.varName && emit('hoverVariable', item.varName)"
+        @pointerleave="emit('hoverNode', null); emit('hoverVariable', null)"
+      >
+        <div class="mb-0.5 flex items-baseline gap-1.5 text-[10px]">
+          <span class="text-gray-600 font-semibold dark:text-gray-400">{{ item.label }}</span>
+          <span class="text-gray-400">{{ formatAddr(item.address) }}</span>
+        </div>
+        <DSValue
+          :cell="item.cell"
+          @navigate="emit('selectNode', $event)"
+          @hover-node="emit('hoverNode', $event)"
+        />
       </div>
     </div>
   </div>

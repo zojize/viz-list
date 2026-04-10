@@ -121,12 +121,13 @@ function handleArrowLeave() {
         class="shrink-0 text-xs"
         @hover="(addr) => handleArrowEnter(nodes.at(-1)!.address, null, 'next', nodes.at(-1)!.nextFieldAddress)"
       />
-      <AddressLink
-        v-else
-        :address="nodes.at(-1)!.nextAddr!"
-        class="shrink-0 text-xs"
-        @navigate="emit('selectNode', $event)"
-      />
+      <span v-else class="flex shrink-0 items-center gap-0.5 text-xs">
+        <AddressLink
+          :address="nodes.at(-1)!.nextAddr!"
+          @navigate="emit('selectNode', $event)"
+        />
+        <span class="text-green-400">&#x21A9;</span>
+      </span>
     </template>
   </div>
 </template>

@@ -70,3 +70,25 @@ input[type='range']::-moz-range-thumb {
 .error-toast-enter {
   animation: slide-up 0.25s ease-out;
 }
+
+/* Splitpanes theme overrides */
+.splitpanes--vertical > .splitpanes__splitter {
+  width: 4px;
+  background: transparent;
+  border: none;
+}
+
+.splitpanes--horizontal > .splitpanes__splitter {
+  height: 4px;
+  background: transparent;
+  border: none;
+}
+
+.splitpanes__splitter:hover {
+  background: #4d937540;
+}
+
+.splitpanes__splitter::before,
+.splitpanes__splitter::after {
+  display: none;
+}

@@ -66,7 +66,7 @@ const structName = computed(() => {
     <!-- Header: struct name prominent, address + type subtle -->
     <div class="mb-1.5 flex items-baseline justify-between gap-2">
       <div class="flex items-baseline gap-1.5">
-        <span v-if="structName" class="text-sm text-purple-600 font-bold dark:text-purple-400">{{ structName }}</span>
+        <span v-if="structName" class="text-sm text-accent-cyan font-bold">{{ structName }}</span>
         <span v-else class="text-sm text-gray-600 dark:text-gray-400">{{ formatType(cell.type) }}</span>
       </div>
       <span class="text-[10px] text-gray-500 font-mono">{{ `0x${cell.address.toString(16).padStart(3, '0')}` }}</span>

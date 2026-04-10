@@ -97,7 +97,7 @@ const fields = computed((): FieldRow[] => {
 <template>
   <div data-testid="field-table" class="flex flex-col gap-2">
     <div class="flex items-center gap-2">
-      <span v-if="structName" class="text-purple-600 font-bold dark:text-purple-400">{{ structName }}</span>
+      <span v-if="structName" class="text-accent-cyan font-bold">{{ structName }}</span>
       <span class="text-xs text-gray-500 font-mono">at 0x{{ cell.address.toString(16).padStart(3, '0') }}</span>
       <span
         class="rounded px-1.5 py-0.5 text-[10px]"

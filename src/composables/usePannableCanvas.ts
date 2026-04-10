@@ -1,5 +1,5 @@
 import type { ShallowRef } from 'vue'
-import { refThrottled } from '@vueuse/core'
+import { useEventListener } from '@vueuse/core'
 import { nextTick, reactive, readonly, shallowRef } from 'vue'
 
 interface PanState {
@@ -17,6 +17,8 @@ interface UsePannableCanvasOptions {
   canvasRef: ShallowRef<HTMLElement | null>
   /** Whether the canvas has content (disable pan when empty) */
   hasContent: () => boolean
+  /** Called when a drag ends. Receives the key and the total drag delta (dx, dy). */
+  onDragEnd?: (key: string, dx: number, dy: number) => void
 }
 
 export function usePannableCanvas(options: UsePannableCanvasOptions) {
@@ -27,25 +29,20 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
   const panStart = reactive({ x: 0, y: 0, ox: 0, oy: 0 })
 
   // ---- Draggable items ----
-  // Committed offsets are plain (non-reactive) — only read on mount or after drop.
-  // The actively-dragging item's offset is tracked separately so only that item re-renders.
+  // During drag, activeDelta tracks the visual offset from the item's base position.
+  // On drop, the delta is reported via onDragEnd so the caller can commit it.
 
-  const committedOffsets = new Map<string, PanState>()
   const activeKey = shallowRef<string | null>(null)
   const activeDelta = shallowRef<PanState>({ x: 0, y: 0 })
-  const debouncedDelta = refThrottled(activeDelta, 50)
   const dragging = shallowRef<DragState | null>(null)
-  const dragStart = reactive({ x: 0, y: 0, ox: 0, oy: 0 })
+  const dragStart = reactive({ x: 0, y: 0 })
   const didDrag = shallowRef(false)
-  /** Bumped on drop to trigger a one-time re-read of committed offsets */
-  const offsetVersion = shallowRef(0)
 
-  function getDragOffset(key: string): PanState {
+  /** Returns the transient drag offset for an item (non-zero only while dragging that item). */
+  function getDragDelta(key: string): PanState {
     if (activeKey.value === key)
-      return debouncedDelta.value
-    // eslint-disable-next-line ts/no-unused-expressions
-    offsetVersion.value // track dependency — re-read when version bumps on drop
-    return committedOffsets.get(key) ?? { x: 0, y: 0 }
+      return activeDelta.value
+    return { x: 0, y: 0 }
   }
 
   /** Find the drag key for an element via data-drag-key attribute */
@@ -63,11 +60,8 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
       const dragKey = getDragKey(e.target as HTMLElement)
       if (dragKey) {
         dragging.value = { key: dragKey, pointerId: e.pointerId }
-        const offset = committedOffsets.get(dragKey) ?? { x: 0, y: 0 }
         dragStart.x = e.clientX
         dragStart.y = e.clientY
-        dragStart.ox = offset.x
-        dragStart.oy = offset.y
         return
       }
     }
@@ -94,8 +88,7 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
           activeKey.value = dragging.value.key
           canvasRef.value?.setPointerCapture(e.pointerId)
         }
-        // Only update activeDelta — only the dragging item re-renders
-        activeDelta.value = { x: dragStart.ox + dx, y: dragStart.oy + dy }
+        activeDelta.value = { x: dx, y: dy }
       }
       return
     }
@@ -106,12 +99,12 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
   }
 
   function onPointerUp() {
-    // Commit drag offset to the plain map
-    if (activeKey.value) {
-      committedOffsets.set(activeKey.value, { ...activeDelta.value })
-      activeKey.value = null
-      offsetVersion.value++
+    if (activeKey.value && didDrag.value) {
+      const delta = activeDelta.value
+      options.onDragEnd?.(activeKey.value, delta.x, delta.y)
     }
+    activeKey.value = null
+    activeDelta.value = { x: 0, y: 0 }
     isPanning.value = false
     dragging.value = null
     nextTick(() => {
@@ -119,11 +112,15 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
     })
   }
 
-  /** Auto-pan to make a target element visible. Only moves if clipped. X-axis first, then Y. */
+  /**
+   * Auto-pan to make a target element visible. Only moves if clipped. X-axis first, then Y.
+   *  Waits for layout to settle (e.g. sibling splitpanes resizing) before measuring.
+   */
   function panToElement(selector: string) {
     if (!canvasRef.value)
       return
-    nextTick(() => nextTick(() => {
+    // Wait for Vue updates + browser layout (sibling panels may resize)
+    nextTick(() => requestAnimationFrame(() => {
       const el = canvasRef.value?.querySelector(selector) as HTMLElement | null
       if (!el || !canvasRef.value)
         return
@@ -139,25 +136,37 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
       if (!clippedLeft && !clippedRight && !clippedTop && !clippedBottom)
         return
 
-      if (clippedLeft || clippedRight) {
-        const nodeXInContent = node.left - container.left - panOffset.x
-        panOffset.x = -(nodeXInContent - container.width / 2 + node.width / 2)
-      }
-      if (clippedTop || clippedBottom) {
-        const nodeYInContent = node.top - container.top - panOffset.y
-        panOffset.y = -(nodeYInContent - container.height / 2 + node.height / 2)
-      }
+      // Nudge just enough to bring the element within the margin
+      if (clippedLeft)
+        panOffset.x += (container.left + margin) - node.left
+      else if (clippedRight)
+        panOffset.x -= node.right - (container.right - margin)
+
+      if (clippedTop)
+        panOffset.y += (container.top + margin) - node.top
+      else if (clippedBottom)
+        panOffset.y -= node.bottom - (container.bottom - margin)
     }))
   }
+
+  function onWheel(e: WheelEvent) {
+    e.preventDefault()
+    panOffset.x -= e.deltaX
+    panOffset.y -= e.deltaY
+  }
+
+  // Wire all events to the canvas element
+  useEventListener(canvasRef, 'pointerdown', onPointerDown)
+  useEventListener(canvasRef, 'pointermove', onPointerMove)
+  useEventListener(canvasRef, 'pointerup', onPointerUp)
+  useEventListener(canvasRef, 'pointercancel', onPointerUp)
+  useEventListener(canvasRef, 'wheel', onWheel, { passive: false })
 
   return {
     panOffset,
     isPanning: readonly(isPanning),
     didDrag: readonly(didDrag),
-    getDragOffset,
-    onPointerDown,
-    onPointerMove,
-    onPointerUp,
+    getDragDelta,
     panToElement,
   }
 }
