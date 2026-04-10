@@ -1,19 +1,13 @@
-// Doubly linked list using @position annotations for arrow direction.
-// Uses ListNode (not Node) to avoid the LinkedListChain special-case renderer
-// and demonstrate the generic tree placement + arrow system.
 struct ListNode {
   int data;
-  /** @position right */
+  /** @position right @color #4ade80 @style horizontal */
   ListNode *next;
-  /** @position left */
-  ListNode *prev;
 };
 
 void insertBack(ListNode **head, int data) {
   ListNode *node = new ListNode;
   node->data = data;
   node->next = nullptr;
-  node->prev = nullptr;
 
   if (*head == nullptr) {
     *head = node;
@@ -25,7 +19,21 @@ void insertBack(ListNode **head, int data) {
     cur = cur->next;
   }
   cur->next = node;
-  node->prev = cur;
+}
+
+void reverse(ListNode **head) {
+  ListNode *prev = nullptr;
+  ListNode *current = *head;
+  ListNode *next = nullptr;
+
+  while (current != nullptr) {
+    next = current->next;
+    current->next = prev;
+    prev = current;
+    current = next;
+  }
+
+  *head = prev;
 }
 
 int main() {
@@ -33,6 +41,9 @@ int main() {
   insertBack(&head, 1);
   insertBack(&head, 2);
   insertBack(&head, 3);
+  insertBack(&head, 4);
+  insertBack(&head, 5);
+  reverse(&head);
 
   return 0;
 }

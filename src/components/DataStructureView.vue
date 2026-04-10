@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { CppType, CppValue, FieldDirection, MemoryCell } from '~/composables/interpreter/types'
+import type { ArrowStyle, CppType, CppValue, FieldDirection, MemoryCell } from '~/composables/interpreter/types'
 import { computed, nextTick, onUpdated, shallowRef, watch } from 'vue'
 import CanvasArrow from '~/components/CanvasArrow.vue'
 import DSValue from '~/components/DSValue.vue'
@@ -571,12 +571,13 @@ function placeTreeChildren(
   if (childEdges.length === 0)
     return
 
-  // Collect children with their direction
+  // Collect children with their direction, skipping already-placed nodes
+  // (left/prev edges can point back to the parent — must not recurse into them)
   interface ChildInfo { key: string, address: number, h: number, direction: FieldDirection }
   const children: ChildInfo[] = []
   for (const edge of childEdges) {
     const childKey = addressToKey(edge.toAddress)
-    if (!childKey || !measured.has(childKey))
+    if (!childKey || !measured.has(childKey) || placedKeys.has(childKey))
       continue
     children.push({ key: childKey, address: edge.toAddress, h: measured.get(childKey)!.h, direction: edge.direction })
   }
@@ -670,6 +671,8 @@ interface ArrowEdge {
   isCycle: boolean
   isDangling: false
   direction: FieldDirection
+  color?: string
+  arrowStyle?: ArrowStyle
 }
 
 interface DanglingArrowEdge {
@@ -681,6 +684,8 @@ interface DanglingArrowEdge {
   isDangling: true
   danglingLabel: string
   direction: FieldDirection
+  color?: string
+  arrowStyle?: ArrowStyle
 }
 
 const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
@@ -700,6 +705,8 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
           isCycle: false,
           isDangling: false,
           direction: edge.direction,
+          color: edge.color,
+          arrowStyle: edge.style,
         })
       }
     }
@@ -715,6 +722,8 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
           isCycle: true,
           isDangling: false,
           direction: edge.direction,
+          color: edge.color,
+          arrowStyle: edge.style,
         })
       }
     }
@@ -732,6 +741,8 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
         isDangling: true,
         danglingLabel: formatAddr(edge.toAddress),
         direction: edge.direction,
+        color: edge.color,
+        arrowStyle: edge.style,
       })
     }
   }
@@ -775,6 +786,12 @@ function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
   // Dynamic arrows don't use field-aligned Y — they use nearest border
   const fromFieldY = edge.direction !== 'dynamic' ? measureFieldY(edge.fromKey, edge.fieldAddress) : undefined
 
+  const common = {
+    direction: edge.direction,
+    color: edge.color,
+    arrowStyle: edge.arrowStyle,
+  }
+
   if (edge.isDangling) {
     return {
       fieldAddress: edge.fieldAddress,
@@ -784,7 +801,7 @@ function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
       fromSize: adjustedFromSize,
       fromFieldY,
       danglingLabel: (edge as DanglingArrowEdge).danglingLabel,
-      direction: edge.direction,
+      ...common,
     }
   }
 
@@ -801,7 +818,7 @@ function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
     fromFieldY,
     toPos: toPos ? { x: toPos.x + toDelta.x, y: toPos.y + toDelta.y } : undefined,
     toSize: toSize ?? undefined,
-    direction: edge.direction,
+    ...common,
   }
 }
 

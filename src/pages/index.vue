@@ -253,7 +253,7 @@ const speedLabel = computed(() => {
             >
               <div
                 v-if="templatePickerOpen"
-                class="absolute left-0 top-full z-20 mt-1 min-w-40 border border-gray-200 rounded-lg bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800"
+                class="absolute left-0 top-full z-20 mt-1 max-h-80 min-w-40 overflow-y-auto border border-gray-200 rounded-lg bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800"
               >
                 <button
                   v-for="name in templateNames"

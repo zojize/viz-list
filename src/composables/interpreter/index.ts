@@ -11,8 +11,37 @@ export { NULL_ADDRESS } from './types'
 export type { AddressSpace, CppType, CppValue, InterpreterContext, MemoryCell, MemoryRegion } from './types'
 export { InterpreterError, NullPointerError, UnsupportedError, UseAfterFreeError } from './types'
 
-/** Matches `@position right|left|dynamic` in JSDoc or line comments */
-const directionRe = /\/\*\*?\s*@position\s+(right|left|dynamic)\s*\*\/|\/\/\s*@position\s+(right|left|dynamic)/
+const positionRe = /@position\s+(right|left|dynamic)/
+const colorRe = /@color\s+([^\s*]+)/
+const styleRe = /@style\s+(bezier|straight|horizontal|orthogonal)/
+
+/** Extract all `@tag value` pairs from a comment string */
+function parseFieldAnnotations(comment: string): import('./types').FieldMeta | null {
+  const meta: Partial<import('./types').FieldMeta> = {}
+  let found = false
+
+  const posMatch = comment.match(positionRe)
+  if (posMatch) {
+    meta.direction = posMatch[1] as import('./types').FieldDirection
+    found = true
+  }
+
+  const colorMatch = comment.match(colorRe)
+  if (colorMatch) {
+    meta.color = colorMatch[1]
+    found = true
+  }
+
+  const styleMatch = comment.match(styleRe)
+  if (styleMatch) {
+    meta.style = styleMatch[1] as import('./types').ArrowStyle
+    found = true
+  }
+
+  if (!found)
+    return null
+  return { direction: meta.direction ?? 'right', ...meta.color && { color: meta.color }, ...meta.style && { style: meta.style } }
+}
 
 export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
   const mem = createAddressSpace()
@@ -82,13 +111,13 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
             ))
             fields[fieldName] = type
 
-            // Walk backwards from this field to find a preceding comment with @position
+            // Walk backwards from this field to find a preceding comment with annotations
             let prev = field.previousSibling
             while (prev) {
               if (prev.type === 'comment') {
-                const match = prev.text.match(directionRe)
-                if (match)
-                  fieldMeta[fieldName] = { direction: (match[1] || match[2]) as import('./types').FieldDirection }
+                const parsed = parseFieldAnnotations(prev.text)
+                if (parsed)
+                  fieldMeta[fieldName] = parsed
                 break
               }
               if (prev.type === 'field_declaration')
