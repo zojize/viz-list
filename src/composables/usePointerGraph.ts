@@ -143,10 +143,13 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
     const trees: TreeInfo[] = []
     const claimed = new Set<number>() // addresses claimed by a tree
 
-    // Find roots: nodes with in-degree 0 (no other struct points to them)
+    // Find roots: nodes with in-degree 0 from forward edges (right/dynamic).
+    // Left-direction edges are back-links (e.g. prev pointers in doubly linked lists)
+    // and don't count toward tree structure — they're just rendered as arrows.
     const roots: number[] = []
     for (const [addr, node] of nodes) {
-      if (node.inEdges.length === 0)
+      const forwardInDegree = node.inEdges.filter(e => e.direction !== 'left').length
+      if (forwardInDegree === 0)
         roots.push(addr)
     }
 
@@ -206,18 +209,20 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
         const node = nodes.get(addr)
         if (node) {
           for (const edge of node.outEdges) {
+            // Left-direction edges are back-links (e.g. prev pointers) — skip
+            // during DFS traversal but include as regular tree edges for rendering.
+            if (edge.direction === 'left') {
+              treeEdges.push(edge)
+              continue
+            }
+
             if (dfsPath.has(edge.toAddress)) {
-              // Back-edge: cycle detected
               cycleEdges.push(edge)
             }
             else if (claimed.has(edge.toAddress)) {
               // Shared node: skip but don't mark invalid
-              // The edge can still be drawn but the target stays in its own tree
             }
             else if (visited.has(edge.toAddress)) {
-              // Already visited via another path within this DFS
-              // Multiple parents within the same tree — node has in-degree > 1
-              // This makes it not a tree
               isValidTree = false
             }
             else {
@@ -240,8 +245,8 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
           const node = nodes.get(addr)
           if (!node)
             continue
-          const inEdgesFromTree = node.inEdges.filter(e => treeNodes.has(e.fromAddress))
-          if (inEdgesFromTree.length !== 1) {
+          const forwardInEdgesFromTree = node.inEdges.filter(e => treeNodes.has(e.fromAddress) && e.direction !== 'left')
+          if (forwardInEdgesFromTree.length !== 1) {
             isValidTree = false
             break
           }
