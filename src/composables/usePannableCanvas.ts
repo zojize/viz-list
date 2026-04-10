@@ -188,6 +188,19 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
     panOffset.y = 0
   }
 
+  /** Cancel any active drag without committing the delta. */
+  function cancelDrag() {
+    activeKey.value = null
+    activeDelta.value = { x: 0, y: 0 }
+    dragging.value = null
+    didDrag.value = false
+  }
+
+  /** Returns the key of the item currently being dragged, or null. */
+  function getActiveDragKey(): string | null {
+    return activeKey.value
+  }
+
   function onWheel(e: WheelEvent) {
     e.preventDefault()
     panOffset.x -= e.deltaX
@@ -213,5 +226,7 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
     panToElement,
     resetPan,
     clampPan,
+    cancelDrag,
+    getActiveDragKey,
   }
 }

@@ -70,6 +70,27 @@ const structBase = computed(() => {
   return props.cell.address
 })
 
+// ---- Referenced-by: find all pointer cells pointing to this cell's address ----
+
+interface RefEntry {
+  address: number
+  label: string
+}
+
+const referencedBy = computed((): RefEntry[] => {
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memory.version // reactive dependency
+  const targetAddr = props.cell.address
+  const refs: RefEntry[] = []
+  for (const cell of context.memory.cells.values()) {
+    if (cell.dead)
+      continue
+    if (typeof cell.value === 'object' && cell.value.type === 'pointer' && cell.value.address === targetAddr)
+      refs.push({ address: cell.address, label: `0x${cell.address.toString(16).padStart(3, '0')}` })
+  }
+  return refs
+})
+
 const fields = computed((): FieldRow[] => {
   if (!structName.value)
     return []
@@ -162,6 +183,22 @@ const fields = computed((): FieldRow[] => {
     <div v-else class="rounded bg-gray-100 px-3 py-2 text-xs font-mono dark:bg-gray-800">
       <span class="text-[10px] text-gray-600">{{ formatType(cell.type) }}</span>
       <span class="ml-2 text-orange-600 font-bold dark:text-orange-300">{{ formatValue(cell.value) }}</span>
+    </div>
+
+    <!-- Referenced by -->
+    <div v-if="referencedBy.length > 0" class="mt-2 border-t border-gray-200 pt-2 dark:border-gray-700">
+      <div class="mb-1 text-[10px] text-gray-500 tracking-wide uppercase">
+        Referenced by
+      </div>
+      <div class="flex flex-wrap gap-1">
+        <AddressLink
+          v-for="ref in referencedBy"
+          :key="ref.address"
+          :address="ref.address"
+          class="text-xs"
+          @navigate="emit('navigate', $event)"
+        />
+      </div>
     </div>
   </div>
 </template>

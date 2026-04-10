@@ -52,7 +52,7 @@ function handleArrowLeave() {
 </script>
 
 <template>
-  <div class="relative flex items-center gap-0 py-3 pl-2">
+  <div class="relative flex items-center gap-0 px-2 py-3">
     <!-- First node's prev pointer -->
     <template v-if="hasPrev && nodes.length > 0">
       <AddressLink
