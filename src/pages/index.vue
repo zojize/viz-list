@@ -22,60 +22,20 @@ useHead({
 
 const queryParams = new URLSearchParams(window.location.search)
 
-// ---- Struct prefix code ----
-
-const doublyCode = `struct Node {
-  int data;
-  Node *next;
-  Node *prev;
-};
-
-struct LinkedList {
-  Node *head;
-  Node *tail;
-};\n\n`
-
-const singlyCode = `struct Node {
-  int data;
-  Node *next;
-};
-
-struct LinkedList {
-  Node *head;
-};\n\n`
-
-// ---- Templates (singly/doubly variants) ----
+// ---- Templates (all self-contained with their own struct definitions) ----
 
 const templateFileRe = /([^/]+)\.cpp$/
 
-const singlyTemplates = Object.fromEntries(Object.entries(
-  import.meta.glob('~/templates/singly/*.cpp', { eager: true, import: 'default', query: '?raw' }),
-).map(([path, code]) => [path.match(templateFileRe)![1], code] as [string, string]))
-
-const doublyTemplates = Object.fromEntries(Object.entries(
-  import.meta.glob('~/templates/doubly/*.cpp', { eager: true, import: 'default', query: '?raw' }),
-).map(([path, code]) => [path.match(templateFileRe)![1], code] as [string, string]))
-
-const generalTemplates = Object.fromEntries(Object.entries(
+const templates = Object.fromEntries(Object.entries(
   import.meta.glob('~/templates/general/*.cpp', { eager: true, import: 'default', query: '?raw' }),
 ).map(([path, code]) => [path.match(templateFileRe)![1], code] as [string, string]))
 
-const isDoubly = useLocalStorage('is-doubly', true)
-if (queryParams.has('doubly'))
-  isDoubly.value = queryParams.get('doubly') === 'true'
+const templateNames = Object.keys(templates)
+const selectedTemplateName = useLocalStorage('selected-template', 'singly-insertBack')
 
-const linkedListTemplates = computed(() => isDoubly.value ? doublyTemplates : singlyTemplates)
-const templates = computed(() => ({ ...linkedListTemplates.value, ...generalTemplates }))
-const templateNames = computed(() => Object.keys(templates.value))
-const selectedTemplateName = useLocalStorage('selected-template', 'insertBack')
-
-const isGeneralTemplate = computed(() => selectedTemplateName.value in generalTemplates)
-const prefixCode = computed(() => {
-  if (isGeneralTemplate.value)
-    return ''
-  return isDoubly.value ? doublyCode : singlyCode
-})
-const code = useLocalStorage('code', templates.value[selectedTemplateName.value] ?? '')
+// No prefix code — all templates include their own struct definitions
+const prefixCode = computed(() => '')
+const code = useLocalStorage('code', templates[selectedTemplateName.value] ?? '')
 if (queryParams.has('code')) {
   const queryCode = queryParams.get('code')!
   let userCode = decompressFromEncodedURIComponent(queryCode)
@@ -155,15 +115,7 @@ watch(running, r => setReadOnly(r))
 
 watch(selectedTemplateName, (name) => {
   pause()
-  const tmpl = templates.value[name]
-  if (tmpl)
-    setTemplateCode(tmpl)
-})
-
-// When switching singly ↔ doubly, reload the current template
-watch(isDoubly, () => {
-  pause()
-  const tmpl = templates.value[selectedTemplateName.value]
+  const tmpl = templates[name]
   if (tmpl)
     setTemplateCode(tmpl)
 })
@@ -199,7 +151,6 @@ function saveToUrl() {
   const savedCode = compressToEncodedURIComponent(code.value)
   const url = new URL(window.location.href)
   url.searchParams.set('code', savedCode)
-  url.searchParams.set('doubly', isDoubly.value ? 'true' : 'false')
   window.history.replaceState(null, '', url)
   navigator.clipboard.writeText(window.location.href)
   playingShareAnimation.value = true
@@ -323,21 +274,6 @@ const speedLabel = computed(() => {
               </div>
             </Transition>
           </div>
-
-          <!-- Doubly toggle -->
-          <label data-testid="checkbox-doubly" class="flex cursor-pointer select-none items-center gap-1.5">
-            <div
-              class="h-4 w-7 rounded-full p-0.5 transition-colors duration-150"
-              :class="isDoubly ? 'bg-vitesse' : 'bg-gray-300 dark:bg-gray-600'"
-              @click="isDoubly = !isDoubly"
-            >
-              <div
-                class="h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-150"
-                :class="isDoubly ? 'translate-x-3' : 'translate-x-0'"
-              />
-            </div>
-            <span class="text-xs text-gray-500">doubly</span>
-          </label>
         </div>
 
         <!-- Right: playback controls -->

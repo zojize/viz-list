@@ -1,3 +1,14 @@
+struct Node {
+  int data;
+  Node *next;
+  Node *prev;
+};
+
+struct LinkedList {
+  Node *head;
+  Node *tail;
+};
+
 void insertBack(LinkedList *list, int data) {
   Node *newNode = new Node;
   newNode->data = data;
@@ -17,7 +28,6 @@ void insertBack(LinkedList *list, int data) {
 void reverse(LinkedList *list) {
   Node *temp = nullptr;
   Node *current = list->head;
-  Node *oldHead = list->head;
 
   while (current != nullptr) {
     temp = current->prev;
@@ -26,10 +36,10 @@ void reverse(LinkedList *list) {
     current = current->prev;
   }
 
+  list->tail = list->head;
   if (temp != nullptr) {
     list->head = temp->prev;
   }
-  list->tail = oldHead;
 }
 
 int main() {

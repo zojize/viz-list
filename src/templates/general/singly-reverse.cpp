@@ -1,3 +1,12 @@
+struct Node {
+  int data;
+  Node *next;
+};
+
+struct LinkedList {
+  Node *head;
+};
+
 void insertBack(LinkedList *list, int data) {
   Node *newNode = new Node;
   newNode->data = data;

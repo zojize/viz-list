@@ -1,3 +1,14 @@
+struct Node {
+  int data;
+  Node *next;
+  Node *prev;
+};
+
+struct LinkedList {
+  Node *head;
+  Node *tail;
+};
+
 void insertBack(LinkedList *list, int data) {
   Node *newNode = new Node;
   newNode->data = data;
@@ -20,14 +31,12 @@ void deleteNode(LinkedList *list, int data) {
     if (curr->data == data) {
       if (curr->prev != nullptr) {
         curr->prev->next = curr->next;
+      } else {
+        list->head = curr->next;
       }
       if (curr->next != nullptr) {
         curr->next->prev = curr->prev;
-      }
-      if (curr == list->head) {
-        list->head = curr->next;
-      }
-      if (curr == list->tail) {
+      } else {
         list->tail = curr->prev;
       }
       delete curr;
@@ -44,6 +53,7 @@ int main() {
   insertBack(&list, 3);
   insertBack(&list, 4);
   deleteNode(&list, 3);
+  deleteNode(&list, 1);
 
   return 0;
 }
