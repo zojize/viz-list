@@ -370,6 +370,8 @@ const {
   didDrag,
   getDragDelta,
   panToElement,
+  resetPan,
+  clampPan,
 } = usePannableCanvas({
   canvasRef,
   hasContent: () => hasContent.value,
@@ -378,6 +380,7 @@ const {
     if (pos)
       placementRef?.setPosition(key, pos.x + dx, pos.y + dy)
   },
+  contentBounds: () => placementRef?.getContentBounds() ?? null,
 })
 
 // ---- Placement engine (uses panOffset for viewport-aware placement) ----
@@ -412,7 +415,16 @@ function measureAndPlace() {
   placement.retainOnly(activeKeys)
 }
 
-onUpdated(() => nextTick(measureAndPlace))
+onUpdated(() => nextTick(() => {
+  measureAndPlace()
+  clampPan()
+}))
+
+// Reset pan when DS view becomes empty
+watch(hasContent, (has) => {
+  if (!has)
+    resetPan()
+})
 
 /** Get the final visual position of an item: placement + transient drag delta.
  *  Uses transform (GPU-accelerated) instead of left/top (triggers layout). */

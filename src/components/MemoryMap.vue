@@ -91,12 +91,25 @@ function isArrayValue(value: CppValue): value is { type: 'array', base: number, 
   return typeof value === 'object' && value.type === 'array'
 }
 
-function isCellHighlighted(address: number): boolean {
-  return props.highlightedAddress === address
-}
-
 function isFieldHighlighted(fieldAddress: number): boolean {
   return props.highlightedFieldAddress === fieldAddress
+}
+
+/** Whether this cell is being hovered from DS view or pointer hover */
+function isHoverTarget(address: number): boolean {
+  return hoveredTarget.value === address || props.highlightedAddress === address
+}
+
+/** Whether this cell has a code execution highlight (LHS/RHS/changed) */
+function hasCodeHighlight(address: number): boolean {
+  return isStatementLhs(address) || isStatementRhs(address) || props.changedAddresses.has(address)
+}
+
+/** Intensity 2: hover overlaps with existing code execution highlight */
+function isHoverBoosted(address: number): boolean {
+  if (props.selectedAddress === address)
+    return false
+  return isHoverTarget(address) && hasCodeHighlight(address)
 }
 
 function handleHoverPointerStack(address: number | null) {
@@ -290,7 +303,8 @@ watch(() => props.highlightedFieldAddress, (addr) => {
             'border-l-blue-500!': isStatementLhs(entry.address),
             'border-l-green-500!': isStatementRhs(entry.address),
             'border-l-yellow-400!': changedAddresses.has(entry.address) && !isStatementLhs(entry.address) && !isStatementRhs(entry.address),
-            'border-l-blue-400!': (hoveredTarget === entry.address || isCellHighlighted(entry.address)) && !isStatementLhs(entry.address) && !isStatementRhs(entry.address) && selectedAddress !== entry.address,
+            'border-l-blue-400!': isHoverTarget(entry.address) && !hasCodeHighlight(entry.address) && selectedAddress !== entry.address,
+            'ring-2 ring-blue-400/40': isHoverBoosted(entry.address),
             'opacity-40': !entry.inScope,
           }"
           @click="emit('selectCell', entry.address)"
@@ -400,7 +414,8 @@ watch(() => props.highlightedFieldAddress, (addr) => {
             'outline outline-2 outline-blue-400': selectedAddress === entry.cell.address,
             'border-l-blue-500!': isStatementLhs(entry.cell.address),
             'border-l-green-500!': isStatementRhs(entry.cell.address),
-            'border-l-blue-400!': (hoveredTarget === entry.cell.address || isCellHighlighted(entry.cell.address)) && !isStatementLhs(entry.cell.address) && !isStatementRhs(entry.cell.address) && selectedAddress !== entry.cell.address,
+            'border-l-blue-400!': isHoverTarget(entry.cell.address) && !hasCodeHighlight(entry.cell.address) && selectedAddress !== entry.cell.address,
+            'ring-2 ring-blue-400/40': isHoverBoosted(entry.cell.address),
           }"
           @click-pointer="handleClickPointer"
           @hover-pointer="handleHoverPointerHeap"
