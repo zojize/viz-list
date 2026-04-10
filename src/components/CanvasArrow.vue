@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { FieldDirection } from '~/composables/interpreter/types'
+import type { ArrowStyle, FieldDirection } from '~/composables/interpreter/types'
 import { computed, shallowRef } from 'vue'
 
 const props = defineProps<{
@@ -13,6 +13,10 @@ const props = defineProps<{
   isDangling?: boolean
   danglingLabel?: string
   direction?: FieldDirection
+  /** Custom arrow color from @color annotation */
+  color?: string
+  /** Arrow path style from @style annotation */
+  arrowStyle?: ArrowStyle
 }>()
 
 const emit = defineEmits<{
@@ -69,6 +73,8 @@ const pathData = computed(() => {
     return { startX, startY, endX, endY, path: `M ${startX} ${startY} L ${endX} ${endY}` }
   }
 
+  const isStraight = props.arrowStyle === 'straight'
+
   // ---- Dynamic: nearest border ----
   if (d === 'dynamic') {
     const fromRect = { ...props.fromPos, w: props.fromSize.w, h: props.fromSize.h }
@@ -79,15 +85,19 @@ const pathData = computed(() => {
     const start = nearestBorderPoint(fromRect, toCenter)
     const end = nearestBorderPoint(toRect, fromCenter)
 
-    const dx = end.x - start.x
-    const dy = end.y - start.y
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    const cpDist = Math.max(dist * 0.4, 20)
-    // Control points pushed along the direction from start to end
-    const nx = dist > 0 ? dx / dist : 1
-    const ny = dist > 0 ? dy / dist : 0
-
-    const path = `M ${start.x} ${start.y} C ${start.x + nx * cpDist} ${start.y + ny * cpDist}, ${end.x - nx * cpDist} ${end.y - ny * cpDist}, ${end.x} ${end.y}`
+    let path: string
+    if (isStraight) {
+      path = `M ${start.x} ${start.y} L ${end.x} ${end.y}`
+    }
+    else {
+      const dx = end.x - start.x
+      const dy = end.y - start.y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      const cpDist = Math.max(dist * 0.4, 20)
+      const nx = dist > 0 ? dx / dist : 1
+      const ny = dist > 0 ? dy / dist : 0
+      path = `M ${start.x} ${start.y} C ${start.x + nx * cpDist} ${start.y + ny * cpDist}, ${end.x - nx * cpDist} ${end.y - ny * cpDist}, ${end.x} ${end.y}`
+    }
     return { startX: start.x, startY: start.y, endX: end.x, endY: end.y, path }
   }
 
@@ -108,44 +118,69 @@ const pathData = computed(() => {
     startY = Math.max(parentTop + margin, Math.min(parentBottom - margin, endY))
   }
 
-  const dx = endX - startX
-  const cpOffset = Math.max(Math.abs(dx) * 0.6, 30)
-  // For left: control points go leftward; for right: rightward
-  const sign = isLeft ? -1 : 1
-  const path = `M ${startX} ${startY} C ${startX + sign * cpOffset} ${startY}, ${endX - sign * cpOffset} ${endY}, ${endX} ${endY}`
+  let path: string
+  let actualEndX = endX
+  let actualEndY = endY
 
-  return { startX, startY, endX, endY, path }
+  if (isStraight) {
+    path = `M ${startX} ${startY} L ${endX} ${endY}`
+  }
+  else if (props.arrowStyle === 'horizontal') {
+    // Pure horizontal line from start to the target's border at startY.
+    // End point is where the horizontal line hits the target rect's edge.
+    const targetLeft = props.toPos!.x
+    const targetRight = props.toPos!.x + props.toSize!.w
+    actualEndX = isLeft ? targetRight : targetLeft
+    actualEndY = startY
+    path = `M ${startX} ${startY} L ${actualEndX} ${actualEndY}`
+  }
+  else if (props.arrowStyle === 'orthogonal') {
+    // H-V-H step line: horizontal, vertical, horizontal into endpoint
+    const midX = (startX + endX) / 2
+    path = `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX} ${endY}`
+  }
+  else {
+    const dx = endX - startX
+    const cpOffset = Math.max(Math.abs(dx) * 0.6, 30)
+    const sign = isLeft ? -1 : 1
+    path = `M ${startX} ${startY} C ${startX + sign * cpOffset} ${startY}, ${endX - sign * cpOffset} ${endY}, ${endX} ${endY}`
+  }
+
+  return { startX, startY, endX: actualEndX, endY: actualEndY, path }
 })
 
+/** Compute arrowhead triangle aligned to the approach direction of the path. */
 const arrowHeadPoints = computed(() => {
-  const { endX, endY, startX } = pathData.value
+  const { endX, endY, startX, startY } = pathData.value
   if (props.isDangling)
     return null
 
-  if (dir.value === 'dynamic') {
-    // Point arrowhead in the approach direction
+  // For bezier/horizontal right/left, the path arrives horizontally into the endpoint,
+  // so the approach direction is purely horizontal.
+  // For straight/dynamic, the approach matches the actual line angle.
+  const useLineAngle = props.arrowStyle === 'straight' || dir.value === 'dynamic'
+
+  let nx: number, ny: number
+  if (useLineAngle) {
     const dx = endX - startX
-    const dy = endY - pathData.value.startY
+    const dy = endY - startY
     const len = Math.sqrt(dx * dx + dy * dy) || 1
-    const nx = dx / len
-    const ny = dy / len
-    // Perpendicular
-    const px = -ny
-    const py = nx
-    return [
-      `${endX},${endY}`,
-      `${endX - nx * ARROW_SIZE + px * ARROW_SIZE / 2},${endY - ny * ARROW_SIZE + py * ARROW_SIZE / 2}`,
-      `${endX - nx * ARROW_SIZE - px * ARROW_SIZE / 2},${endY - ny * ARROW_SIZE - py * ARROW_SIZE / 2}`,
-    ].join(' ')
+    nx = dx / len
+    ny = dy / len
+  }
+  else {
+    // Bezier arrives horizontally
+    nx = dir.value === 'left' ? -1 : 1
+    ny = 0
   }
 
-  if (dir.value === 'left') {
-    // Triangle pointing left
-    return `${endX},${endY} ${endX + ARROW_SIZE},${endY - ARROW_SIZE / 2} ${endX + ARROW_SIZE},${endY + ARROW_SIZE / 2}`
-  }
-
-  // Triangle pointing right (default)
-  return `${endX},${endY} ${endX - ARROW_SIZE},${endY - ARROW_SIZE / 2} ${endX - ARROW_SIZE},${endY + ARROW_SIZE / 2}`
+  const px = -ny
+  const py = nx
+  return [
+    `${endX},${endY}`,
+    `${endX - nx * ARROW_SIZE + px * ARROW_SIZE / 2},${endY - ny * ARROW_SIZE + py * ARROW_SIZE / 2}`,
+    `${endX - nx * ARROW_SIZE - px * ARROW_SIZE / 2},${endY - ny * ARROW_SIZE - py * ARROW_SIZE / 2}`,
+  ].join(' ')
 })
 
 const danglingX = computed(() => {
@@ -166,6 +201,9 @@ const danglingX = computed(() => {
 })
 
 const strokeColor = computed(() => {
+  // Custom color from @color annotation (no hover variant — use as-is)
+  if (props.color)
+    return props.color
   if (props.isDangling)
     return hovered.value ? '#fca5a5' : '#f87171'
   if (props.isCycle)

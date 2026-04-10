@@ -55,9 +55,12 @@ export interface FunctionDef {
 }
 
 export type FieldDirection = 'right' | 'left' | 'dynamic'
+export type ArrowStyle = 'bezier' | 'straight' | 'horizontal' | 'orthogonal'
 
 export interface FieldMeta {
   direction: FieldDirection
+  color?: string
+  style?: ArrowStyle
 }
 
 export interface InterpreterContext {

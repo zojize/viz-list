@@ -1,4 +1,4 @@
-import type { FieldDirection, InterpreterContext } from '../../src/composables/interpreter/types'
+import type { ArrowStyle, FieldDirection, FieldMeta, InterpreterContext } from '../../src/composables/interpreter/types'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Language, Parser } from 'web-tree-sitter'
 import { processDeclaration } from '../../src/composables/interpreter/declarations'
@@ -7,7 +7,37 @@ import { asserts, getGeneratorReturn } from '../../src/composables/interpreter/h
 import { createAddressSpace } from '../../src/composables/interpreter/memory'
 import { NULL_ADDRESS, UnsupportedError } from '../../src/composables/interpreter/types'
 
-const directionRe = /\/\*\*?\s*@position\s+(right|left|dynamic)\s*\*\/|\/\/\s*@position\s+(right|left|dynamic)/
+const positionRe = /@position\s+(right|left|dynamic)/
+const colorRe = /@color\s+([^\s*]+)/
+const styleRe = /@style\s+(bezier|straight|horizontal|orthogonal)/
+
+/** Parse field annotations from a comment string (mirrors interpreter/index.ts) */
+function parseFieldAnnotations(comment: string): FieldMeta | null {
+  const meta: Partial<FieldMeta> = {}
+  let found = false
+  const posMatch = comment.match(positionRe)
+  if (posMatch) {
+    meta.direction = posMatch[1] as FieldDirection
+    found = true
+  }
+  const colorMatch = comment.match(colorRe)
+  if (colorMatch) {
+    meta.color = colorMatch[1]
+    found = true
+  }
+  const styleMatch = comment.match(styleRe)
+  if (styleMatch) {
+    meta.style = styleMatch[1] as ArrowStyle
+    found = true
+  }
+  if (!found)
+    return null
+  return {
+    direction: meta.direction ?? 'right',
+    ...meta.color && { color: meta.color },
+    ...meta.style && { style: meta.style },
+  }
+}
 
 let parser: Parser
 
@@ -52,13 +82,13 @@ function runProgram(code: string) {
             mem,
           ))
           fields[fieldName] = type
-          // Extract @position annotation from preceding comment
+          // Extract annotations from preceding comment
           let prev = field.previousSibling
           while (prev) {
             if (prev.type === 'comment') {
-              const match = prev.text.match(directionRe)
-              if (match)
-                fieldMeta[fieldName] = { direction: (match[1] || match[2]) as FieldDirection }
+              const parsed = parseFieldAnnotations(prev.text)
+              if (parsed)
+                fieldMeta[fieldName] = parsed
               break
             }
             if (prev.type === 'field_declaration')
@@ -1193,5 +1223,53 @@ describe('field annotations (@position)', () => {
     // @position left is on int data, not on Node *next
     expect(context.structFieldMeta.Node.data).toEqual({ direction: 'left' })
     expect(context.structFieldMeta.Node.next).toBeUndefined()
+  })
+
+  it('parses @color annotation', () => {
+    const { context } = safeRunProgram(`
+      struct Node {
+        /** @position right @color #4ade80 */
+        Node *next;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.Node.next).toEqual({ direction: 'right', color: '#4ade80' })
+  })
+
+  it('parses @style annotation', () => {
+    const { context } = safeRunProgram(`
+      struct Node {
+        /** @position right @style straight */
+        Node *next;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.Node.next).toEqual({ direction: 'right', style: 'straight' })
+  })
+
+  it('parses all annotations together', () => {
+    const { context } = safeRunProgram(`
+      struct ListNode {
+        int data;
+        /** @position right @color #4ade80 @style straight */
+        ListNode *next;
+        /** @position left @color #fb923c @style straight */
+        ListNode *prev;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.ListNode.next).toEqual({ direction: 'right', color: '#4ade80', style: 'straight' })
+    expect(context.structFieldMeta.ListNode.prev).toEqual({ direction: 'left', color: '#fb923c', style: 'straight' })
+  })
+
+  it('parses @color with named CSS colors', () => {
+    const { context } = safeRunProgram(`
+      struct G {
+        /** @color red */
+        G *link;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.G.link).toEqual({ direction: 'right', color: 'red' })
   })
 })

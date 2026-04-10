@@ -1,21 +1,25 @@
-import type { FieldDirection, InterpreterContext } from '~/composables/interpreter/types'
+import type { ArrowStyle, FieldDirection, InterpreterContext } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 interface PointerEdge {
-  fromAddress: number // struct base that owns the pointer field
-  fromFieldAddress: number // address of the field cell holding the pointer
-  fieldName: string // e.g. "left", "right", "next"
-  toAddress: number // target struct base address
-  direction: FieldDirection // placement/arrow direction from @position annotation
+  fromAddress: number
+  fromFieldAddress: number
+  fieldName: string
+  toAddress: number
+  direction: FieldDirection
+  color?: string
+  style?: ArrowStyle
 }
 
 interface DanglingEdge {
   fromAddress: number
   fromFieldAddress: number
   fieldName: string
-  toAddress: number // stale address (cell is dead or missing)
+  toAddress: number
   direction: FieldDirection
+  color?: string
+  style?: ArrowStyle
 }
 
 interface GraphNode {
@@ -104,17 +108,20 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
           continue
 
         const targetAddr = val.address
-        const direction: FieldDirection = context.structFieldMeta[info.structName]?.[fieldNames[i]]?.direction ?? 'right'
+        const meta = context.structFieldMeta[info.structName]?.[fieldNames[i]]
+        const direction: FieldDirection = meta?.direction ?? 'right'
+        const color = meta?.color
+        const style = meta?.style
 
         // Resolve target to struct base
         const targetCell = context.memory.cells.get(targetAddr)
         if (!targetCell) {
-          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction })
+          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction, color, style })
           continue
         }
 
         if (targetCell.dead) {
-          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction })
+          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction, color, style })
           continue
         }
 
@@ -132,6 +139,8 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
           fieldName: fieldNames[i],
           toAddress: targetBase,
           direction,
+          color,
+          style,
         }
 
         nodes.get(base)!.outEdges.push(edge)
