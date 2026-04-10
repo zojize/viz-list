@@ -132,7 +132,7 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
 
   /**
    * Place a child item relative to its parent for tree layout.
-   * Children are placed to the right of the parent with arrow gap.
+   * Children are placed to the right or left of the parent with arrow gap.
    * Multiple siblings are centered vertically relative to the parent.
    * TODO: support 'down' and 'up' directions
    */
@@ -143,8 +143,7 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     h: number,
     childIndex: number,
     siblingHeights: number[],
-    // TODO: implement 'down' and 'up' directions
-    _direction: 'right' | 'down' = 'right',
+    direction: 'right' | 'left' | 'down' = 'right',
   ): { x: number, y: number } {
     // Already placed (user-dragged or from a prior layout pass) — keep position.
     // Auto-layout calls clear() first, so positions will be empty and this is skipped.
@@ -155,14 +154,15 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     const parentPos = positions.get(parentKey)
     const parentSize = sizes.get(parentKey)
     if (!parentPos || !parentSize) {
-      // Parent not placed yet — fall back to normal placement
       return placeNew(key, w, h)
     }
 
     sizes.set(key, { w, h })
 
-    // Compute ideal position: right of parent
-    const idealX = parentPos.x + parentSize.w + arrowGap
+    // Compute ideal X based on direction
+    const idealX = direction === 'left'
+      ? parentPos.x - w - arrowGap
+      : parentPos.x + parentSize.w + arrowGap
 
     // Compute Y: center siblings block on parent's vertical center
     const totalHeight = siblingHeights.reduce((sum, sh) => sum + sh, 0) + (siblingHeights.length - 1) * gap

@@ -54,8 +54,16 @@ export interface FunctionDef {
   body: SyntaxNode
 }
 
+export type FieldDirection = 'right' | 'left' | 'dynamic'
+
+export interface FieldMeta {
+  direction: FieldDirection
+}
+
 export interface InterpreterContext {
   structs: Record<string, Record<string, CppType>>
+  /** Per-field metadata parsed from JSDoc annotations (e.g. `@position right`) */
+  structFieldMeta: Record<string, Record<string, FieldMeta>>
   functions: Record<string, FunctionDef>
   globalEnv: Record<string, EnvEntry>
   envStack: Record<string, EnvEntry>[]

@@ -1,4 +1,4 @@
-import type { InterpreterContext } from '~/composables/interpreter/types'
+import type { FieldDirection, InterpreterContext } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
@@ -7,6 +7,7 @@ interface PointerEdge {
   fromFieldAddress: number // address of the field cell holding the pointer
   fieldName: string // e.g. "left", "right", "next"
   toAddress: number // target struct base address
+  direction: FieldDirection // placement/arrow direction from @position annotation
 }
 
 interface DanglingEdge {
@@ -14,6 +15,7 @@ interface DanglingEdge {
   fromFieldAddress: number
   fieldName: string
   toAddress: number // stale address (cell is dead or missing)
+  direction: FieldDirection
 }
 
 interface GraphNode {
@@ -102,17 +104,17 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
           continue
 
         const targetAddr = val.address
+        const direction: FieldDirection = context.structFieldMeta[info.structName]?.[fieldNames[i]]?.direction ?? 'right'
+
         // Resolve target to struct base
         const targetCell = context.memory.cells.get(targetAddr)
         if (!targetCell) {
-          // Target doesn't exist at all
-          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr })
+          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction })
           continue
         }
 
         if (targetCell.dead) {
-          // Target is freed or out of scope
-          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr })
+          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction })
           continue
         }
 
@@ -129,6 +131,7 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
           fromFieldAddress: fieldAddr,
           fieldName: fieldNames[i],
           toAddress: targetBase,
+          direction,
         }
 
         nodes.get(base)!.outEdges.push(edge)

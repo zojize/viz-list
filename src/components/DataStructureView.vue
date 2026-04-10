@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/types'
+import type { CppType, CppValue, FieldDirection, MemoryCell } from '~/composables/interpreter/types'
 import { computed, nextTick, onUpdated, shallowRef, watch } from 'vue'
 import CanvasArrow from '~/components/CanvasArrow.vue'
 import DSValue from '~/components/DSValue.vue'
@@ -567,32 +567,47 @@ function placeTreeChildren(
   if (!parentNode)
     return
 
-  // Get children: out-edges within this tree (not cycle edges)
   const childEdges = tree.edges.filter(e => e.fromAddress === parentAddress)
   if (childEdges.length === 0)
     return
 
-  // Collect child keys and sizes
-  const children: { key: string, address: number, h: number }[] = []
+  // Collect children with their direction
+  interface ChildInfo { key: string, address: number, h: number, direction: FieldDirection }
+  const children: ChildInfo[] = []
   for (const edge of childEdges) {
     const childKey = addressToKey(edge.toAddress)
     if (!childKey || !measured.has(childKey))
       continue
-    children.push({ key: childKey, address: edge.toAddress, h: measured.get(childKey)!.h })
+    children.push({ key: childKey, address: edge.toAddress, h: measured.get(childKey)!.h, direction: edge.direction })
   }
 
   if (children.length === 0)
     return
 
-  const siblingHeights = children.map(c => c.h)
+  // Split children by direction — each direction group is centered independently
+  const rightChildren = children.filter(c => c.direction === 'right')
+  const leftChildren = children.filter(c => c.direction === 'left')
+  const dynamicChildren = children.filter(c => c.direction === 'dynamic')
 
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i]
+  function placeGroup(group: ChildInfo[], dir: 'right' | 'left') {
+    const heights = group.map(c => c.h)
+    for (let i = 0; i < group.length; i++) {
+      const child = group[i]
+      const size = measured.get(child.key)!
+      placement.placeRelative(child.key, parentKey, size.w, size.h, i, heights, dir)
+      placedKeys.add(child.key)
+      placeTreeChildren(child.address, child.key, tree, measured, placedKeys)
+    }
+  }
+
+  placeGroup(rightChildren, 'right')
+  placeGroup(leftChildren, 'left')
+
+  // Dynamic children: no preferred placement — use standalone positioning
+  for (const child of dynamicChildren) {
     const size = measured.get(child.key)!
-    placement.placeRelative(child.key, parentKey, size.w, size.h, i, siblingHeights)
+    placement.placeNew(child.key, size.w, size.h)
     placedKeys.add(child.key)
-
-    // Recurse for this child's children
     placeTreeChildren(child.address, child.key, tree, measured, placedKeys)
   }
 }
@@ -654,6 +669,7 @@ interface ArrowEdge {
   fieldAddress: number
   isCycle: boolean
   isDangling: false
+  direction: FieldDirection
 }
 
 interface DanglingArrowEdge {
@@ -664,6 +680,7 @@ interface DanglingArrowEdge {
   isCycle: false
   isDangling: true
   danglingLabel: string
+  direction: FieldDirection
 }
 
 const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
@@ -671,7 +688,6 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
   const graph = pointerGraph.value
 
   for (const tree of graph.trees) {
-    // Normal tree edges
     for (const edge of tree.edges) {
       const fromKey = addressToKey(edge.fromAddress)
       const toKey = addressToKey(edge.toAddress)
@@ -683,10 +699,10 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
           fieldAddress: edge.fromFieldAddress,
           isCycle: false,
           isDangling: false,
+          direction: edge.direction,
         })
       }
     }
-    // Cycle edges (back-arrows)
     for (const edge of tree.cycleEdges) {
       const fromKey = addressToKey(edge.fromAddress)
       const toKey = addressToKey(edge.toAddress)
@@ -698,12 +714,12 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
           fieldAddress: edge.fromFieldAddress,
           isCycle: true,
           isDangling: false,
+          direction: edge.direction,
         })
       }
     }
   }
 
-  // Dangling edges
   for (const edge of graph.danglingEdges) {
     const fromKey = addressToKey(edge.fromAddress)
     if (fromKey) {
@@ -715,6 +731,7 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
         isCycle: false,
         isDangling: true,
         danglingLabel: formatAddr(edge.toAddress),
+        direction: edge.direction,
       })
     }
   }
@@ -755,7 +772,8 @@ function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
 
   const adjustedFromPos = fromPos ? { x: fromPos.x + fromDelta.x, y: fromPos.y + fromDelta.y } : { x: 0, y: 0 }
   const adjustedFromSize = fromSize ?? { w: 0, h: 0 }
-  const fromFieldY = measureFieldY(edge.fromKey, edge.fieldAddress)
+  // Dynamic arrows don't use field-aligned Y — they use nearest border
+  const fromFieldY = edge.direction !== 'dynamic' ? measureFieldY(edge.fromKey, edge.fieldAddress) : undefined
 
   if (edge.isDangling) {
     return {
@@ -766,6 +784,7 @@ function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
       fromSize: adjustedFromSize,
       fromFieldY,
       danglingLabel: (edge as DanglingArrowEdge).danglingLabel,
+      direction: edge.direction,
     }
   }
 
@@ -782,6 +801,7 @@ function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
     fromFieldY,
     toPos: toPos ? { x: toPos.x + toDelta.x, y: toPos.y + toDelta.y } : undefined,
     toSize: toSize ?? undefined,
+    direction: edge.direction,
   }
 }
 

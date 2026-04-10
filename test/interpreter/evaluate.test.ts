@@ -1,4 +1,4 @@
-import type { InterpreterContext } from '../../src/composables/interpreter/types'
+import type { FieldDirection, InterpreterContext } from '../../src/composables/interpreter/types'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Language, Parser } from 'web-tree-sitter'
 import { processDeclaration } from '../../src/composables/interpreter/declarations'
@@ -6,6 +6,8 @@ import { evaluate } from '../../src/composables/interpreter/evaluate'
 import { asserts, getGeneratorReturn } from '../../src/composables/interpreter/helpers'
 import { createAddressSpace } from '../../src/composables/interpreter/memory'
 import { NULL_ADDRESS, UnsupportedError } from '../../src/composables/interpreter/types'
+
+const directionRe = /\/\*\*?\s*@position\s+(right|left|dynamic)\s*\*\/|\/\/\s*@position\s+(right|left|dynamic)/
 
 let parser: Parser
 
@@ -22,6 +24,7 @@ function runProgram(code: string) {
 
   const context: InterpreterContext = {
     structs: {},
+    structFieldMeta: {},
     functions: {},
     globalEnv: {},
     envStack: [],
@@ -38,16 +41,33 @@ function runProgram(code: string) {
       case 'struct_specifier': {
         const name = node.childForFieldName('name')!.text
         const fields: Record<string, import('../../src/composables/interpreter/types').CppType> = {}
+        const fieldMeta: Record<string, import('../../src/composables/interpreter/types').FieldMeta> = {}
         for (const field of node.childForFieldName('body')!.namedChildren) {
-          const { type, name } = getGeneratorReturn(processDeclaration(
+          if (field.type !== 'field_declaration')
+            continue
+          const { type, name: fieldName } = getGeneratorReturn(processDeclaration(
             field.childForFieldName('type')!,
             field.childForFieldName('declarator')!,
             context,
             mem,
           ))
-          fields[name] = type
+          fields[fieldName] = type
+          // Extract @position annotation from preceding comment
+          let prev = field.previousSibling
+          while (prev) {
+            if (prev.type === 'comment') {
+              const match = prev.text.match(directionRe)
+              if (match)
+                fieldMeta[fieldName] = { direction: (match[1] || match[2]) as FieldDirection }
+              break
+            }
+            if (prev.type === 'field_declaration')
+              break
+            prev = prev.previousSibling
+          }
         }
         context.structs[name] = fields
+        context.structFieldMeta[name] = fieldMeta
         break
       }
       case 'function_definition': {
@@ -1090,5 +1110,88 @@ describe('comments', () => {
       }
     `)
     expect(readGlobal(context, mem, 'r')).toBe(42)
+  })
+})
+
+describe('field annotations (@position)', () => {
+  it('parses /** @position right */ on pointer field', () => {
+    const { context } = safeRunProgram(`
+      struct Node {
+        int data;
+        /** @position right */
+        Node *next;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.Node).toBeDefined()
+    expect(context.structFieldMeta.Node.next).toEqual({ direction: 'right' })
+    expect(context.structFieldMeta.Node.data).toBeUndefined()
+  })
+
+  it('parses // @position left on pointer field', () => {
+    const { context } = safeRunProgram(`
+      struct ListNode {
+        int data;
+        // @position left
+        ListNode *prev;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.ListNode.prev).toEqual({ direction: 'left' })
+  })
+
+  it('parses @position dynamic', () => {
+    const { context } = safeRunProgram(`
+      struct GraphNode {
+        int id;
+        /** @position dynamic */
+        GraphNode *neighbor;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.GraphNode.neighbor).toEqual({ direction: 'dynamic' })
+  })
+
+  it('handles multiple annotated fields', () => {
+    const { context } = safeRunProgram(`
+      struct DNode {
+        int data;
+        /** @position right */
+        DNode *next;
+        /** @position left */
+        DNode *prev;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.DNode.next).toEqual({ direction: 'right' })
+    expect(context.structFieldMeta.DNode.prev).toEqual({ direction: 'left' })
+    expect(context.structFieldMeta.DNode.data).toBeUndefined()
+  })
+
+  it('produces empty metadata for unannotated structs', () => {
+    const { context } = safeRunProgram(`
+      struct Plain {
+        int x;
+        Plain *child;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.Plain).toBeDefined()
+    expect(context.structFieldMeta.Plain.child).toBeUndefined()
+    expect(context.structFieldMeta.Plain.x).toBeUndefined()
+  })
+
+  it('ignores comments not immediately before a field', () => {
+    const { context } = safeRunProgram(`
+      struct Node {
+        /** @position left */
+        int data;
+        Node *next;
+      };
+      void main() {}
+    `)
+    // @position left is on int data, not on Node *next
+    expect(context.structFieldMeta.Node.data).toEqual({ direction: 'left' })
+    expect(context.structFieldMeta.Node.next).toBeUndefined()
   })
 })
