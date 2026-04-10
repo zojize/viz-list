@@ -155,7 +155,7 @@ const arrayElements = computed((): ArrayEntry[] => {
     <template v-for="field in structFields" :key="field.name">
       <!-- Complex value (struct/array): field name then value below, indented -->
       <template v-if="field.cell && typeof field.cell.value === 'object' && (field.cell.value.type === 'struct' || field.cell.value.type === 'array')">
-        <div class="py-0.5 pl-3">
+        <div class="py-0.5 pl-3" :data-field-addr="field.cell?.address">
           <span class="text-gray-500 font-mono">{{ field.name }}:</span>
           <div class="pl-2">
             <DSValue
@@ -168,7 +168,7 @@ const arrayElements = computed((): ArrayEntry[] => {
         </div>
       </template>
       <!-- Simple value: inline row -->
-      <div v-else class="flex items-baseline justify-between gap-4 rounded px-1 py-0.5 pl-3">
+      <div v-else class="flex items-baseline justify-between gap-4 rounded px-1 py-0.5 pl-3" :data-field-addr="field.cell?.address">
         <span class="shrink-0 text-gray-500 font-mono">{{ field.name }}:</span>
         <DSValue
           v-if="field.cell"

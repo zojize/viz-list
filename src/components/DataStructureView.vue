@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/types'
 import { computed, nextTick, onUpdated, shallowRef, watch } from 'vue'
+import CanvasArrow from '~/components/CanvasArrow.vue'
 import DSValue from '~/components/DSValue.vue'
 import LinkedListChain from '~/components/LinkedListChain.vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { usePannableCanvas } from '~/composables/usePannableCanvas'
 import { usePlacementEngine } from '~/composables/usePlacementEngine'
+import { usePointerGraph } from '~/composables/usePointerGraph'
 
 const props = defineProps<{
   highlightedAddress?: number | null
@@ -21,6 +23,7 @@ const emit = defineEmits<{
 }>()
 
 const context = useInterpreterContext()
+const pointerGraph = usePointerGraph(context)
 
 // ---- Format helpers ----
 
@@ -377,8 +380,10 @@ const {
   hasContent: () => hasContent.value,
   onDragEnd(key, dx, dy) {
     const pos = placementRef?.getPosition(key)
-    if (pos)
+    if (pos) {
       placementRef?.setPosition(key, pos.x + dx, pos.y + dy)
+      placementRef?.markUserDragged(key)
+    }
   },
   contentBounds: () => placementRef?.getContentBounds() ?? null,
 })
@@ -396,27 +401,227 @@ const placement = usePlacementEngine({
 })
 placementRef = placement
 
-/** Chain keys for isChain detection */
-const chainKeys = computed(() => new Set(chains.value.map(c => c.id)))
+/** Map from struct base address to placement key for tree items */
+function addressToKey(address: number): string | undefined {
+  // Check chains first
+  for (const chain of chains.value) {
+    for (const node of chain.nodes) {
+      if (node.address === address)
+        return chain.id
+    }
+  }
+  // Check standalone items
+  for (const item of standaloneItems.value) {
+    if (item.address === address)
+      return `item-${item.address}`
+  }
+  return undefined
+}
 
-/** Measure and place all visible items after render */
+/**
+ * Track tree structure for change detection:
+ * - childKey → parentKey (which parent a child belongs to)
+ * - parentKey → Set<childKey> (sibling groups)
+ * When a node's parent changes OR its sibling group changes, all affected
+ * siblings are invalidated so placeRelative recalculates them as a group.
+ */
+const prevChildToParent = new Map<string, string | null>()
+const prevParentToChildren = new Map<string, Set<string>>()
+
+/** Build current tree maps from the pointer graph */
+function buildTreeMaps(graph: typeof pointerGraph.value) {
+  const childToParent = new Map<string, string | null>()
+  const parentToChildren = new Map<string, Set<string>>()
+
+  for (const tree of graph.trees) {
+    const rootKey = addressToKey(tree.rootAddress)
+    if (rootKey)
+      childToParent.set(rootKey, null)
+    for (const edge of tree.edges) {
+      const childKey = addressToKey(edge.toAddress)
+      const parentKey = addressToKey(edge.fromAddress)
+      if (childKey && parentKey) {
+        childToParent.set(childKey, parentKey)
+        if (!parentToChildren.has(parentKey))
+          parentToChildren.set(parentKey, new Set())
+        parentToChildren.get(parentKey)!.add(childKey)
+      }
+    }
+  }
+  return { childToParent, parentToChildren }
+}
+
+/** Invalidate positions for items whose tree parent or sibling group changed */
+function invalidateStaleTreePositions(
+  newChildToParent: Map<string, string | null>,
+  newParentToChildren: Map<string, Set<string>>,
+) {
+  const toInvalidate = new Set<string>()
+
+  // 1. Items whose parent changed or that newly entered a tree
+  for (const [key, newParent] of newChildToParent) {
+    const oldParent = prevChildToParent.get(key)
+    if (oldParent === undefined) {
+      // Newly entered a tree → invalidate standalone position
+      toInvalidate.add(key)
+    }
+    else if (oldParent !== newParent) {
+      // Parent changed
+      toInvalidate.add(key)
+    }
+  }
+
+  // 2. Sibling groups that changed → invalidate ALL siblings of that parent
+  for (const [parentKey, newChildren] of newParentToChildren) {
+    const oldChildren = prevParentToChildren.get(parentKey)
+    // Compare sets: different size or different members
+    if (!oldChildren || oldChildren.size !== newChildren.size
+      || [...newChildren].some(k => !oldChildren.has(k))) {
+      for (const childKey of newChildren)
+        toInvalidate.add(childKey)
+      // Also invalidate old siblings that may have been removed from the group
+      if (oldChildren) {
+        for (const childKey of oldChildren)
+          toInvalidate.add(childKey)
+      }
+    }
+  }
+
+  // Apply invalidation (skip user-dragged items)
+  for (const key of toInvalidate) {
+    if (!placement.isUserDragged(key))
+      placement.remove(key)
+  }
+
+  // Update stored maps
+  prevChildToParent.clear()
+  for (const [k, v] of newChildToParent)
+    prevChildToParent.set(k, v)
+  prevParentToChildren.clear()
+  for (const [k, v] of newParentToChildren)
+    prevParentToChildren.set(k, new Set(v))
+}
+
+/** Measure and place all visible items with tree-aware layout */
 function measureAndPlace() {
   if (!contentRef.value)
     return
+  // Step 1: Measure all DOM elements
   const els = contentRef.value.querySelectorAll<HTMLElement>('[data-place-key]')
+  const measured = new Map<string, { w: number, h: number }>()
   for (const el of els) {
     const key = el.dataset.placeKey!
-    placement.setSize(key, el.offsetWidth, el.offsetHeight)
-    placement.placeNew(key, el.offsetWidth, el.offsetHeight, chainKeys.value.has(key))
+    const w = el.offsetWidth
+    const h = el.offsetHeight
+    placement.setSize(key, w, h)
+    measured.set(key, { w, h })
   }
+
+  // Step 1.5: Detect tree structure changes and invalidate stale positions
+  const graph = pointerGraph.value
+  const { childToParent, parentToChildren } = buildTreeMaps(graph)
+  invalidateStaleTreePositions(childToParent, parentToChildren)
+
+  // Step 2: Place tree roots first, then their children via placeRelative
+  const treePlacedKeys = new Set<string>()
+
+  for (const tree of graph.trees) {
+    const rootKey = addressToKey(tree.rootAddress)
+    if (!rootKey || !measured.has(rootKey))
+      continue
+
+    // Place root normally
+    const rootSize = measured.get(rootKey)!
+    placement.placeNew(rootKey, rootSize.w, rootSize.h)
+    treePlacedKeys.add(rootKey)
+
+    // Recursively place children
+    placeTreeChildren(tree.rootAddress, rootKey, tree, measured, treePlacedKeys)
+  }
+
+  // Step 3: Place remaining items (chains not in trees, standalone items)
+  for (const el of els) {
+    const key = el.dataset.placeKey!
+    if (treePlacedKeys.has(key))
+      continue
+    const size = measured.get(key)!
+    placement.placeNew(key, size.w, size.h)
+  }
+
+  // Step 4: Retain only active keys
   const activeKeys = new Set<string>()
   for (const el of els)
     activeKeys.add(el.dataset.placeKey!)
   placement.retainOnly(activeKeys)
 }
 
+/** Recursively place children of a tree node via placeRelative */
+function placeTreeChildren(
+  parentAddress: number,
+  parentKey: string,
+  tree: typeof pointerGraph.value.trees[number],
+  measured: Map<string, { w: number, h: number }>,
+  placedKeys: Set<string>,
+) {
+  const parentNode = pointerGraph.value.nodes.get(parentAddress)
+  if (!parentNode)
+    return
+
+  // Get children: out-edges within this tree (not cycle edges)
+  const childEdges = tree.edges.filter(e => e.fromAddress === parentAddress)
+  if (childEdges.length === 0)
+    return
+
+  // Collect child keys and sizes
+  const children: { key: string, address: number, h: number }[] = []
+  for (const edge of childEdges) {
+    const childKey = addressToKey(edge.toAddress)
+    if (!childKey || !measured.has(childKey))
+      continue
+    children.push({ key: childKey, address: edge.toAddress, h: measured.get(childKey)!.h })
+  }
+
+  if (children.length === 0)
+    return
+
+  const siblingHeights = children.map(c => c.h)
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]
+    const size = measured.get(child.key)!
+    placement.placeRelative(child.key, parentKey, size.w, size.h, i, siblingHeights)
+    placedKeys.add(child.key)
+
+    // Recurse for this child's children
+    placeTreeChildren(child.address, child.key, tree, measured, placedKeys)
+  }
+}
+
+/** Snapshot of content bounds before placement, used to detect layout shifts */
+let prevBoundsKey = ''
+
 onUpdated(() => nextTick(() => {
   measureAndPlace()
+
+  // Auto-pan when content bounds changed and items are outside the visible viewport
+  const bounds = placement.getContentBounds()
+  const canvas = canvasRef.value
+  if (bounds && canvas) {
+    const boundsKey = `${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}`
+    if (boundsKey !== prevBoundsKey) {
+      prevBoundsKey = boundsKey
+      // Check if any content is outside the current viewport
+      const viewLeft = -panOffset.x
+      const viewTop = -panOffset.y
+      const viewRight = viewLeft + canvas.clientWidth
+      const viewBottom = viewTop + canvas.clientHeight
+      if (bounds.minX < viewLeft || bounds.minY < viewTop
+        || bounds.maxX > viewRight || bounds.maxY > viewBottom) {
+        autoPanToContent()
+      }
+    }
+  }
+
   clampPan()
 }))
 
@@ -438,6 +643,186 @@ function getItemStyle(key: string) {
     willChange: isDragging ? 'transform' : 'auto',
     transition: isDragging ? 'none' : undefined,
   }
+}
+
+// ---- Arrow edges (computed from pointer graph + placement positions) ----
+
+interface ArrowEdge {
+  id: string
+  fromKey: string
+  toKey: string | undefined
+  fieldAddress: number
+  isCycle: boolean
+  isDangling: false
+}
+
+interface DanglingArrowEdge {
+  id: string
+  fromKey: string
+  toKey: undefined
+  fieldAddress: number
+  isCycle: false
+  isDangling: true
+  danglingLabel: string
+}
+
+const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
+  const edges: (ArrowEdge | DanglingArrowEdge)[] = []
+  const graph = pointerGraph.value
+
+  for (const tree of graph.trees) {
+    // Normal tree edges
+    for (const edge of tree.edges) {
+      const fromKey = addressToKey(edge.fromAddress)
+      const toKey = addressToKey(edge.toAddress)
+      if (fromKey && toKey) {
+        edges.push({
+          id: `${edge.fromFieldAddress}->${edge.toAddress}`,
+          fromKey,
+          toKey,
+          fieldAddress: edge.fromFieldAddress,
+          isCycle: false,
+          isDangling: false,
+        })
+      }
+    }
+    // Cycle edges (back-arrows)
+    for (const edge of tree.cycleEdges) {
+      const fromKey = addressToKey(edge.fromAddress)
+      const toKey = addressToKey(edge.toAddress)
+      if (fromKey && toKey) {
+        edges.push({
+          id: `cycle-${edge.fromFieldAddress}->${edge.toAddress}`,
+          fromKey,
+          toKey,
+          fieldAddress: edge.fromFieldAddress,
+          isCycle: true,
+          isDangling: false,
+        })
+      }
+    }
+  }
+
+  // Dangling edges
+  for (const edge of graph.danglingEdges) {
+    const fromKey = addressToKey(edge.fromAddress)
+    if (fromKey) {
+      edges.push({
+        id: `dangling-${edge.fromFieldAddress}`,
+        fromKey,
+        toKey: undefined,
+        fieldAddress: edge.fromFieldAddress,
+        isCycle: false,
+        isDangling: true,
+        danglingLabel: formatAddr(edge.toAddress),
+      })
+    }
+  }
+
+  return edges
+})
+
+/**
+ * Measure the vertical center of a field element within a placed item,
+ * returning the Y position in content-coordinate space.
+ */
+function measureFieldY(parentKey: string, fieldAddress: number): number | undefined {
+  if (!contentRef.value)
+    return undefined
+  const parentEl = contentRef.value.querySelector<HTMLElement>(`[data-place-key="${parentKey}"]`)
+  if (!parentEl)
+    return undefined
+  const fieldEl = parentEl.querySelector<HTMLElement>(`[data-field-addr="${fieldAddress}"]`)
+  if (!fieldEl)
+    return undefined
+
+  const parentRect = parentEl.getBoundingClientRect()
+  const fieldRect = fieldEl.getBoundingClientRect()
+  // Offset within the parent + parent's content-space position
+  const pos = placement.getPosition(parentKey)
+  const delta = getDragDelta(parentKey)
+  if (!pos)
+    return undefined
+  const fieldCenterOffset = (fieldRect.top + fieldRect.height / 2) - parentRect.top
+  return pos.y + delta.y + fieldCenterOffset
+}
+
+/** Get arrow props from a computed edge */
+function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
+  const fromPos = placement.getPosition(edge.fromKey)
+  const fromSize = placement.getSize(edge.fromKey)
+  const fromDelta = getDragDelta(edge.fromKey)
+
+  const adjustedFromPos = fromPos ? { x: fromPos.x + fromDelta.x, y: fromPos.y + fromDelta.y } : { x: 0, y: 0 }
+  const adjustedFromSize = fromSize ?? { w: 0, h: 0 }
+  const fromFieldY = measureFieldY(edge.fromKey, edge.fieldAddress)
+
+  if (edge.isDangling) {
+    return {
+      fieldAddress: edge.fieldAddress,
+      isCycle: false as const,
+      isDangling: true as const,
+      fromPos: adjustedFromPos,
+      fromSize: adjustedFromSize,
+      fromFieldY,
+      danglingLabel: (edge as DanglingArrowEdge).danglingLabel,
+    }
+  }
+
+  const toPos = edge.toKey ? placement.getPosition(edge.toKey) : undefined
+  const toSize = edge.toKey ? placement.getSize(edge.toKey) : undefined
+  const toDelta = edge.toKey ? getDragDelta(edge.toKey) : { x: 0, y: 0 }
+
+  return {
+    fieldAddress: edge.fieldAddress,
+    isCycle: edge.isCycle,
+    isDangling: false as const,
+    fromPos: adjustedFromPos,
+    fromSize: adjustedFromSize,
+    fromFieldY,
+    toPos: toPos ? { x: toPos.x + toDelta.x, y: toPos.y + toDelta.y } : undefined,
+    toSize: toSize ?? undefined,
+  }
+}
+
+// ---- Auto-layout ----
+
+function autoLayout() {
+  // clear() wipes positions + sizes + userDragged, bumps version.
+  // The version bump triggers a Vue re-render → onUpdated → measureAndPlace,
+  // which re-places everything from scratch (no existing positions to skip).
+  placement.clear()
+  prevChildToParent.clear()
+  prevParentToChildren.clear()
+  resetPan()
+}
+
+// ---- Auto-pan to cover content after placement ----
+
+function autoPanToContent() {
+  const bounds = placement.getContentBounds()
+  const canvas = canvasRef.value
+  if (!bounds || !canvas)
+    return
+  const cw = canvas.clientWidth
+  const ch = canvas.clientHeight
+
+  // Center content in the viewport if it fits, otherwise align top-left with margin
+  const contentW = bounds.maxX - bounds.minX
+  const contentH = bounds.maxY - bounds.minY
+  const margin = 16
+
+  if (contentW <= cw && contentH <= ch) {
+    // Content fits: center it
+    panOffset.x = (cw - contentW) / 2 - bounds.minX
+    panOffset.y = (ch - contentH) / 2 - bounds.minY
+  }
+  else {
+    // Content overflows: align top-left with margin, prefer showing larger structures
+    panOffset.x = margin - bounds.minX
+    panOffset.y = margin - bounds.minY
+  }
+  clampPan()
 }
 
 // Auto-pan to selected node
@@ -474,9 +859,19 @@ const kindBg: Record<DataItem['kind'], string> = {
   <div
     ref="canvasRef"
     data-testid="ds-view"
-    class="h-full select-none overflow-hidden p-2"
+    class="relative h-full select-none overflow-hidden p-2"
     :class="hasContent ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''"
   >
+    <!-- Auto-layout button -->
+    <button
+      v-if="hasContent"
+      class="absolute right-2 top-2 z-10 rounded bg-gray-200/80 p-1 text-gray-500 transition-colors dark:bg-gray-700/80 hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
+      title="Auto-layout"
+      @click="autoLayout"
+    >
+      <div class="i-carbon-flow h-3.5 w-3.5" />
+    </button>
+
     <div ref="contentRef" :style="{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }" class="relative">
       <div v-if="!hasContent" class="text-sm text-gray-500 italic">
         No data to display
@@ -530,6 +925,17 @@ const kindBg: Record<DataItem['kind'], string> = {
           @hover-node="emit('hoverNode', $event)"
         />
       </div>
+
+      <!-- SVG arrow overlay (after items so it paints on top; h-[1px]/w-[1px] gives it
+           a non-zero paint area — browsers skip rendering 0×0 SVGs even with overflow-visible) -->
+      <svg v-if="arrowEdges.length > 0" class="pointer-events-none absolute left-0 top-0 z-10 h-[1px] w-[1px] overflow-visible">
+        <CanvasArrow
+          v-for="edge in arrowEdges"
+          :key="edge.id"
+          v-bind="getArrowProps(edge)"
+          @hover-field="emit('hoverField', $event)"
+        />
+      </svg>
     </div>
   </div>
 </template>
