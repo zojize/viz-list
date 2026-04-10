@@ -11,11 +11,15 @@ export { NULL_ADDRESS } from './types'
 export type { AddressSpace, CppType, CppValue, InterpreterContext, MemoryCell, MemoryRegion } from './types'
 export { InterpreterError, NullPointerError, UnsupportedError, UseAfterFreeError } from './types'
 
+/** Matches `@position right|left|dynamic` in JSDoc or line comments */
+const directionRe = /\/\*\*?\s*@position\s+(right|left|dynamic)\s*\*\/|\/\/\s*@position\s+(right|left|dynamic)/
+
 export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
   const mem = createAddressSpace()
 
   const context = reactive({
     structs: {} as Record<string, Record<string, import('./types').CppType>>,
+    structFieldMeta: {} as Record<string, Record<string, import('./types').FieldMeta>>,
     functions: {} as Record<string, import('./types').FunctionDef>,
     globalEnv: {} as Record<string, import('./types').EnvEntry>,
     envStack: [] as Record<string, import('./types').EnvEntry>[],
@@ -38,6 +42,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
 
   function reset() {
     context.structs = {}
+    context.structFieldMeta = {}
     context.functions = {}
     context.globalEnv = {}
     context.envStack = []
@@ -64,16 +69,35 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
         case 'struct_specifier': {
           const name = node.childForFieldName('name')!.text
           const fields: Record<string, import('./types').CppType> = {}
+          const fieldMeta: Record<string, import('./types').FieldMeta> = {}
+
           for (const field of node.childForFieldName('body')!.namedChildren) {
-            const { type, name } = getGeneratorReturn(processDeclaration(
+            if (field.type !== 'field_declaration')
+              continue
+            const { type, name: fieldName } = getGeneratorReturn(processDeclaration(
               field.childForFieldName('type')!,
               field.childForFieldName('declarator')!,
               context,
               mem,
             ))
-            fields[name] = type
+            fields[fieldName] = type
+
+            // Walk backwards from this field to find a preceding comment with @position
+            let prev = field.previousSibling
+            while (prev) {
+              if (prev.type === 'comment') {
+                const match = prev.text.match(directionRe)
+                if (match)
+                  fieldMeta[fieldName] = { direction: (match[1] || match[2]) as import('./types').FieldDirection }
+                break
+              }
+              if (prev.type === 'field_declaration')
+                break
+              prev = prev.previousSibling
+            }
           }
           context.structs[name] = fields
+          context.structFieldMeta[name] = fieldMeta
           break
         }
         case 'function_definition': {
