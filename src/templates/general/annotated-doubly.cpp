@@ -1,18 +1,21 @@
-// Doubly linked list using @position annotations for arrow direction.
+// Doubly linked list using @arrow-position annotations for arrow direction.
 // Uses ListNode (not Node) to avoid the LinkedListChain special-case renderer
 // and demonstrate the generic tree placement + arrow system.
+/** @arrow-anchor closest @arrow-size 30 */
 struct ListNode {
   int data;
   /**
-   * @position right
-   * @color #4ade80
-   * @style horizontal
+   * @arrow-position right
+   * @arrow-color #4ade80
+   * @arrow-style horizontal
+   * @arrow-fallback-style orthogonal
    */
   ListNode *next;
   /**
-   * @position left
-   * @color #fb923c
-   * @style horizontal
+   * @arrow-position left
+   * @arrow-color #fb923c
+   * @arrow-style horizontal
+   * @arrow-fallback-style orthogonal
    */
   ListNode *prev;
 };

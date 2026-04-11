@@ -11,11 +11,14 @@ export { NULL_ADDRESS } from './types'
 export type { AddressSpace, CppType, CppValue, InterpreterContext, MemoryCell, MemoryRegion } from './types'
 export { InterpreterError, NullPointerError, UnsupportedError, UseAfterFreeError } from './types'
 
-const positionRe = /@position\s+(right|left|dynamic)/
-const colorRe = /@color\s+([^\s*]+)/
-const styleRe = /@style\s+(bezier|straight|horizontal|orthogonal)/
+const positionRe = /@arrow-position\s+(right|left|dynamic)/
+const colorRe = /@arrow-color\s+([^\s*]+)/
+const styleRe = /@arrow-style\s+(bezier|straight|horizontal|orthogonal)/
+const fallbackStyleRe = /@arrow-fallback-style\s+(bezier|straight|orthogonal)/
+const anchorRe = /@arrow-anchor\s+(center|closest)/
+const sizeRe = /@arrow-size\s+(\d+)/
 
-/** Extract all `@tag value` pairs from a comment string */
+/** Extract field-level `@arrow-*` annotations from a comment string */
 function parseFieldAnnotations(comment: string): import('./types').FieldMeta | null {
   const meta: Partial<import('./types').FieldMeta> = {}
   let found = false
@@ -38,9 +41,40 @@ function parseFieldAnnotations(comment: string): import('./types').FieldMeta | n
     found = true
   }
 
+  const fallbackMatch = comment.match(fallbackStyleRe)
+  if (fallbackMatch) {
+    meta.fallbackStyle = fallbackMatch[1] as import('./types').ArrowStyle
+    found = true
+  }
+
   if (!found)
     return null
-  return { direction: meta.direction ?? 'right', ...meta.color && { color: meta.color }, ...meta.style && { style: meta.style } }
+  return {
+    direction: meta.direction ?? 'right',
+    ...meta.color && { color: meta.color },
+    ...meta.style && { style: meta.style },
+    ...meta.fallbackStyle && { fallbackStyle: meta.fallbackStyle },
+  }
+}
+
+/** Extract struct-level `@arrow-*` annotations from a comment string */
+function parseStructAnnotations(comment: string): import('./types').StructMeta | null {
+  const meta: import('./types').StructMeta = {}
+  let found = false
+
+  const anchorMatch = comment.match(anchorRe)
+  if (anchorMatch) {
+    meta.arrowAnchor = anchorMatch[1] as import('./types').ArrowAnchor
+    found = true
+  }
+
+  const sizeMatch = comment.match(sizeRe)
+  if (sizeMatch) {
+    meta.arrowSize = Number(sizeMatch[1])
+    found = true
+  }
+
+  return found ? meta : null
 }
 
 export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
@@ -49,6 +83,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
   const context = reactive({
     structs: {} as Record<string, Record<string, import('./types').CppType>>,
     structFieldMeta: {} as Record<string, Record<string, import('./types').FieldMeta>>,
+    structMeta: {} as Record<string, import('./types').StructMeta>,
     functions: {} as Record<string, import('./types').FunctionDef>,
     globalEnv: {} as Record<string, import('./types').EnvEntry>,
     envStack: [] as Record<string, import('./types').EnvEntry>[],
@@ -72,6 +107,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
   function reset() {
     context.structs = {}
     context.structFieldMeta = {}
+    context.structMeta = {}
     context.functions = {}
     context.globalEnv = {}
     context.envStack = []
@@ -127,6 +163,20 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
           }
           context.structs[name] = fields
           context.structFieldMeta[name] = fieldMeta
+
+          // Walk backwards from the struct to find a preceding comment with struct-level annotations
+          let structPrev = node.previousSibling
+          while (structPrev) {
+            if (structPrev.type === 'comment') {
+              const parsed = parseStructAnnotations(structPrev.text)
+              if (parsed)
+                context.structMeta[name] = parsed
+              break
+            }
+            if (structPrev.type !== 'comment')
+              break
+            structPrev = structPrev.previousSibling
+          }
           break
         }
         case 'function_definition': {

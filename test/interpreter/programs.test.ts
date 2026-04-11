@@ -23,6 +23,7 @@ function runProgram(code: string) {
   const context: InterpreterContext = {
     structs: {},
     structFieldMeta: {},
+    structMeta: {},
     functions: {},
     globalEnv: {},
     envStack: [],

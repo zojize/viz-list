@@ -10,6 +10,7 @@ interface PointerEdge {
   direction: FieldDirection
   color?: string
   style?: ArrowStyle
+  fallbackStyle?: ArrowStyle
 }
 
 interface DanglingEdge {
@@ -20,6 +21,7 @@ interface DanglingEdge {
   direction: FieldDirection
   color?: string
   style?: ArrowStyle
+  fallbackStyle?: ArrowStyle
 }
 
 interface GraphNode {
@@ -112,16 +114,17 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
         const direction: FieldDirection = meta?.direction ?? 'right'
         const color = meta?.color
         const style = meta?.style
+        const fallbackStyle = meta?.fallbackStyle
 
         // Resolve target to struct base
         const targetCell = context.memory.cells.get(targetAddr)
         if (!targetCell) {
-          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction, color, style })
+          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction, color, style, fallbackStyle })
           continue
         }
 
         if (targetCell.dead) {
-          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction, color, style })
+          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction, color, style, fallbackStyle })
           continue
         }
 
@@ -141,6 +144,7 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
           direction,
           color,
           style,
+          fallbackStyle,
         }
 
         nodes.get(base)!.outEdges.push(edge)
@@ -288,7 +292,9 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
 
       dfs(root)
 
-      // Validate: every non-root in this tree should have exactly 1 in-edge from within the tree
+      // Validate: every non-root in this tree should have exactly 1 tree in-edge
+      // (cycle back-edges don't count — they're already separated into cycleEdges)
+      const cycleTargets = new Set(cycleEdges.map(e => `${e.fromAddress}->${e.toAddress}`))
       if (isValidTree && treeNodes.size > 1) {
         for (const addr of treeNodes) {
           if (addr === root)
@@ -296,7 +302,9 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
           const node = nodes.get(addr)
           if (!node)
             continue
-          const forwardInEdgesFromTree = node.inEdges.filter(e => treeNodes.has(e.fromAddress) && e.direction !== 'left')
+          const forwardInEdgesFromTree = node.inEdges.filter(
+            e => treeNodes.has(e.fromAddress) && e.direction !== 'left' && !cycleTargets.has(`${e.fromAddress}->${e.toAddress}`),
+          )
           if (forwardInEdgesFromTree.length !== 1) {
             isValidTree = false
             break

@@ -56,17 +56,26 @@ export interface FunctionDef {
 
 export type FieldDirection = 'right' | 'left' | 'dynamic'
 export type ArrowStyle = 'bezier' | 'straight' | 'horizontal' | 'orthogonal'
+export type ArrowAnchor = 'center' | 'closest'
 
 export interface FieldMeta {
   direction: FieldDirection
   color?: string
   style?: ArrowStyle
+  fallbackStyle?: ArrowStyle
+}
+
+export interface StructMeta {
+  arrowAnchor?: ArrowAnchor
+  arrowSize?: number
 }
 
 export interface InterpreterContext {
   structs: Record<string, Record<string, CppType>>
-  /** Per-field metadata parsed from JSDoc annotations (e.g. `@position right`) */
+  /** Per-field metadata parsed from JSDoc annotations (e.g. `@arrow-position right`) */
   structFieldMeta: Record<string, Record<string, FieldMeta>>
+  /** Per-struct metadata parsed from JSDoc annotations (e.g. `@arrow-anchor closest`) */
+  structMeta: Record<string, StructMeta>
   functions: Record<string, FunctionDef>
   globalEnv: Record<string, EnvEntry>
   envStack: Record<string, EnvEntry>[]

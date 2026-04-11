@@ -144,6 +144,7 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     childIndex: number,
     siblingHeights: number[],
     direction: 'right' | 'left' | 'down' = 'right',
+    gapOverride?: number,
   ): { x: number, y: number } {
     // Already placed (user-dragged or from a prior layout pass) — keep position.
     // Auto-layout calls clear() first, so positions will be empty and this is skipped.
@@ -160,9 +161,10 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     sizes.set(key, { w, h })
 
     // Compute ideal X based on direction
+    const effectiveGap = gapOverride ?? arrowGap
     const idealX = direction === 'left'
-      ? parentPos.x - w - arrowGap
-      : parentPos.x + parentSize.w + arrowGap
+      ? parentPos.x - w - effectiveGap
+      : parentPos.x + parentSize.w + effectiveGap
 
     // Compute Y: center siblings block on parent's vertical center
     const totalHeight = siblingHeights.reduce((sum, sh) => sum + sh, 0) + (siblingHeights.length - 1) * gap
