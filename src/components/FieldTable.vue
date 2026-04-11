@@ -75,29 +75,41 @@ const fields = computed((): FieldRow[] => {
     return []
   const base = structBase.value
   const rows: FieldRow[] = []
+
+  /** Recursively flatten array elements with subscript prefix (handles n-d arrays) */
+  function flattenArray(prefix: string, elemType: CppType, arrValue: { base: number, length: number }) {
+    for (let i = 0; i < arrValue.length; i++) {
+      const elemAddr = arrValue.base + 1 + i
+      const elemCell = context.memory.cells.get(elemAddr)
+      const elemValue = elemCell?.value ?? 0
+      const subscript = `${prefix}[${i}]`
+      // Nested array: recurse
+      if (typeof elemType === 'object' && elemType.type === 'array'
+        && typeof elemValue === 'object' && elemValue.type === 'array') {
+        flattenArray(subscript, elemType.of, elemValue)
+        continue
+      }
+      rows.push({
+        name: subscript,
+        type: elemType,
+        value: elemValue,
+        address: elemAddr,
+        isPointer: typeof elemValue === 'object' && elemValue.type === 'pointer',
+        pointerAddress: (typeof elemValue === 'object' && elemValue.type === 'pointer') ? elemValue.address : 0,
+        changed: props.changedAddresses.has(elemAddr),
+      })
+    }
+  }
+
   for (const [name, fieldType] of Object.entries(structDef)) {
     const fieldIdx = Object.keys(structDef).indexOf(name)
     const addr = base + 1 + fieldIdx
     const fieldCell = context.memory.cells.get(addr)
     const value = fieldCell?.value ?? 0
 
-    // Flatten array fields into individual subscript entries
     if (typeof fieldType === 'object' && fieldType.type === 'array'
       && typeof value === 'object' && value.type === 'array') {
-      for (let i = 0; i < value.length; i++) {
-        const elemAddr = value.base + 1 + i
-        const elemCell = context.memory.cells.get(elemAddr)
-        const elemValue = elemCell?.value ?? 0
-        rows.push({
-          name: `${name}[${i}]`,
-          type: fieldType.of,
-          value: elemValue,
-          address: elemAddr,
-          isPointer: typeof elemValue === 'object' && elemValue.type === 'pointer',
-          pointerAddress: (typeof elemValue === 'object' && elemValue.type === 'pointer') ? elemValue.address : 0,
-          changed: props.changedAddresses.has(elemAddr),
-        })
-      }
+      flattenArray(name, fieldType.of, value)
       continue
     }
 

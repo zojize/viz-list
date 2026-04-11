@@ -295,3 +295,166 @@ describe('interpreter integration tests', () => {
     expect(mem.read(keysBase + 3).value).toBe(0)
   })
 })
+
+describe('scope cleanup', () => {
+  it('marks function parameters dead on return', () => {
+    const { context } = runProgram(`
+      void foo(int x, int y) {}
+      void main() {
+        foo(10, 20);
+      }
+    `)
+    const liveCells = [...context.memory.cells.values()].filter(c => !c.dead && c.region === 'stack')
+    expect(liveCells).toHaveLength(0)
+  })
+
+  it('marks struct field cells dead on delete', () => {
+    const { context } = runProgram(`
+      struct Node { int data; Node *next; };
+      void main() {
+        Node *n = new Node;
+        n->data = 42;
+        n->next = nullptr;
+        delete n;
+      }
+    `)
+    const liveHeap = [...context.memory.cells.values()].filter(c => !c.dead && c.region === 'heap')
+    expect(liveHeap).toHaveLength(0)
+  })
+
+  it('cleans up all locals after insertBack+freeAll', () => {
+    const { context } = runProgram(`
+      struct ListNode { int data; ListNode *next; };
+      void insertBack(ListNode **head, int data) {
+        ListNode *node = new ListNode;
+        node->data = data;
+        node->next = nullptr;
+        if (*head == nullptr) { *head = node; return; }
+        ListNode *cur = *head;
+        while (cur->next != nullptr) { cur = cur->next; }
+        cur->next = node;
+      }
+      void freeAll(ListNode **head) {
+        ListNode *curr = *head;
+        while (curr != nullptr) {
+          ListNode *next = curr->next;
+          delete curr;
+          curr = next;
+        }
+        *head = nullptr;
+      }
+      void main() {
+        ListNode *head = nullptr;
+        insertBack(&head, 10);
+        insertBack(&head, 20);
+        insertBack(&head, 30);
+        freeAll(&head);
+      }
+    `)
+    const liveCells = [...context.memory.cells.values()].filter(c => !c.dead && c.address !== 0)
+    expect(liveCells).toHaveLength(0)
+  })
+})
+
+describe('pointer arithmetic', () => {
+  it('ptr + int offsets the address', () => {
+    const { context, mem } = runProgram(`
+      int sum = 0;
+      void main() {
+        int arr[3];
+        arr[0] = 10;
+        arr[1] = 20;
+        arr[2] = 30;
+        int *p = &arr[0];
+        sum = *(p + 1);
+      }
+    `)
+    expect(mem.read(context.globalEnv.sum.address).value).toBe(20)
+  })
+
+  it('ptr - int offsets the address backwards', () => {
+    const { context, mem } = runProgram(`
+      int result = 0;
+      void main() {
+        int arr[3];
+        arr[0] = 100;
+        arr[1] = 200;
+        arr[2] = 300;
+        int *p = &arr[2];
+        result = *(p - 2);
+      }
+    `)
+    expect(mem.read(context.globalEnv.result.address).value).toBe(100)
+  })
+
+  it('ptr - ptr gives integer difference', () => {
+    const { context, mem } = runProgram(`
+      int diff = 0;
+      void main() {
+        int arr[5];
+        arr[0] = 0;
+        arr[1] = 0;
+        arr[2] = 0;
+        arr[3] = 0;
+        arr[4] = 0;
+        int *p1 = &arr[1];
+        int *p2 = &arr[4];
+        diff = p2 - p1;
+      }
+    `)
+    expect(mem.read(context.globalEnv.diff.address).value).toBe(3)
+  })
+
+  it('pointer comparison works', () => {
+    const { context, mem } = runProgram(`
+      int result = 0;
+      void main() {
+        int arr[3];
+        arr[0] = 0;
+        arr[1] = 0;
+        arr[2] = 0;
+        int *a = &arr[0];
+        int *b = &arr[2];
+        if (a < b) { result = 1; }
+      }
+    `)
+    expect(mem.read(context.globalEnv.result.address).value).toBe(1)
+  })
+
+  it('pointer increment and decrement work', () => {
+    const { context, mem } = runProgram(`
+      int val = 0;
+      void main() {
+        int arr[3];
+        arr[0] = 10;
+        arr[1] = 20;
+        arr[2] = 30;
+        int *p = &arr[0];
+        p++;
+        p++;
+        val = *p;
+      }
+    `)
+    expect(mem.read(context.globalEnv.val.address).value).toBe(30)
+  })
+
+  it('iterates array with pointer loop', () => {
+    const { context, mem } = runProgram(`
+      int sum = 0;
+      void main() {
+        int arr[4];
+        arr[0] = 1;
+        arr[1] = 2;
+        arr[2] = 3;
+        arr[3] = 4;
+        int *p = &arr[0];
+        int *end = &arr[3] + 1;
+        while (p < end) {
+          sum = sum + *p;
+          p++;
+        }
+      }
+    `)
+    expect(mem.read(context.globalEnv.sum.address).value).toBe(10)
+  })
+})
