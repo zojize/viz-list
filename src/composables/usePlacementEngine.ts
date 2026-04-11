@@ -310,6 +310,43 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
       && a.y + a.h + gap > b.y
   }
 
+  /**
+   * Remove positions of items that overlap with any item in the given set.
+   * Returns the keys that were evicted (so they can be re-placed later).
+   */
+  function evictOverlapping(protectedKeys: Set<string>): string[] {
+    const protectedRects: Rect[] = []
+    for (const k of protectedKeys) {
+      const pos = positions.get(k)
+      const size = sizes.get(k)
+      if (pos && size)
+        protectedRects.push({ x: pos.x, y: pos.y, w: size.w, h: size.h })
+    }
+    if (protectedRects.length === 0)
+      return []
+
+    const evicted: string[] = []
+    for (const [k, pos] of positions) {
+      if (protectedKeys.has(k))
+        continue
+      const size = sizes.get(k)
+      if (!size)
+        continue
+      const itemRect: Rect = { x: pos.x, y: pos.y, w: size.w, h: size.h }
+      if (overlapsAny(itemRect, protectedRects)) {
+        evicted.push(k)
+      }
+    }
+
+    for (const k of evicted)
+      positions.delete(k)
+
+    if (evicted.length > 0)
+      version.value++
+
+    return evicted
+  }
+
   // ---- Lifecycle ----
 
   function remove(key: string) {
@@ -380,6 +417,7 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     markUserDragged,
     clearUserDragged,
     isUserDragged,
+    evictOverlapping,
     version: readonly(version),
   }
 }
