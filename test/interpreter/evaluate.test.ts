@@ -1,4 +1,4 @@
-import type { ArrowStyle, FieldDirection, FieldMeta, InterpreterContext } from '../../src/composables/interpreter/types'
+import type { ArrowStyle, FieldDirection, FieldMeta, InterpreterContext, StructMeta } from '../../src/composables/interpreter/types'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Language, Parser } from 'web-tree-sitter'
 import { processDeclaration } from '../../src/composables/interpreter/declarations'
@@ -7,9 +7,11 @@ import { asserts, getGeneratorReturn } from '../../src/composables/interpreter/h
 import { createAddressSpace } from '../../src/composables/interpreter/memory'
 import { NULL_ADDRESS, UnsupportedError } from '../../src/composables/interpreter/types'
 
-const positionRe = /@position\s+(right|left|dynamic)/
-const colorRe = /@color\s+([^\s*]+)/
-const styleRe = /@style\s+(bezier|straight|horizontal|orthogonal)/
+const positionRe = /@arrow-position\s+(right|left|dynamic)/
+const colorRe = /@arrow-color\s+([^\s*]+)/
+const styleRe = /@arrow-style\s+(bezier|straight|horizontal|orthogonal)/
+const fallbackStyleRe = /@arrow-fallback-style\s+(bezier|straight|orthogonal)/
+const anchorRe = /@arrow-anchor\s+(center|closest)/
 
 /** Parse field annotations from a comment string (mirrors interpreter/index.ts) */
 function parseFieldAnnotations(comment: string): FieldMeta | null {
@@ -30,13 +32,41 @@ function parseFieldAnnotations(comment: string): FieldMeta | null {
     meta.style = styleMatch[1] as ArrowStyle
     found = true
   }
+  const fallbackMatch = comment.match(fallbackStyleRe)
+  if (fallbackMatch) {
+    meta.fallbackStyle = fallbackMatch[1] as ArrowStyle
+    found = true
+  }
   if (!found)
     return null
   return {
     direction: meta.direction ?? 'right',
     ...meta.color && { color: meta.color },
     ...meta.style && { style: meta.style },
+    ...meta.fallbackStyle && { fallbackStyle: meta.fallbackStyle },
   }
+}
+
+const sizeRe = /@arrow-size\s+(\d+)/
+
+/** Parse struct-level annotations from a comment string (mirrors interpreter/index.ts) */
+function parseStructAnnotations(comment: string): StructMeta | null {
+  const meta: StructMeta = {}
+  let found = false
+
+  const anchorMatch = comment.match(anchorRe)
+  if (anchorMatch) {
+    meta.arrowAnchor = anchorMatch[1] as import('../../src/composables/interpreter/types').ArrowAnchor
+    found = true
+  }
+
+  const sizeMatch = comment.match(sizeRe)
+  if (sizeMatch) {
+    meta.arrowSize = Number(sizeMatch[1])
+    found = true
+  }
+
+  return found ? meta : null
 }
 
 let parser: Parser
@@ -55,6 +85,7 @@ function runProgram(code: string) {
   const context: InterpreterContext = {
     structs: {},
     structFieldMeta: {},
+    structMeta: {},
     functions: {},
     globalEnv: {},
     envStack: [],
@@ -98,6 +129,19 @@ function runProgram(code: string) {
         }
         context.structs[name] = fields
         context.structFieldMeta[name] = fieldMeta
+        // Parse struct-level annotations from preceding comment
+        let structPrev = node.previousSibling
+        while (structPrev) {
+          if (structPrev.type === 'comment') {
+            const parsed = parseStructAnnotations(structPrev.text)
+            if (parsed)
+              context.structMeta[name] = parsed
+            break
+          }
+          if (structPrev.type !== 'comment')
+            break
+          structPrev = structPrev.previousSibling
+        }
         break
       }
       case 'function_definition': {
@@ -1143,12 +1187,12 @@ describe('comments', () => {
   })
 })
 
-describe('field annotations (@position)', () => {
-  it('parses /** @position right */ on pointer field', () => {
+describe('field annotations (@arrow-*)', () => {
+  it('parses /** @arrow-position right */ on pointer field', () => {
     const { context } = safeRunProgram(`
       struct Node {
         int data;
-        /** @position right */
+        /** @arrow-position right */
         Node *next;
       };
       void main() {}
@@ -1158,11 +1202,11 @@ describe('field annotations (@position)', () => {
     expect(context.structFieldMeta.Node.data).toBeUndefined()
   })
 
-  it('parses // @position left on pointer field', () => {
+  it('parses // @arrow-position left on pointer field', () => {
     const { context } = safeRunProgram(`
       struct ListNode {
         int data;
-        // @position left
+        // @arrow-position left
         ListNode *prev;
       };
       void main() {}
@@ -1170,11 +1214,11 @@ describe('field annotations (@position)', () => {
     expect(context.structFieldMeta.ListNode.prev).toEqual({ direction: 'left' })
   })
 
-  it('parses @position dynamic', () => {
+  it('parses @arrow-position dynamic', () => {
     const { context } = safeRunProgram(`
       struct GraphNode {
         int id;
-        /** @position dynamic */
+        /** @arrow-position dynamic */
         GraphNode *neighbor;
       };
       void main() {}
@@ -1186,9 +1230,9 @@ describe('field annotations (@position)', () => {
     const { context } = safeRunProgram(`
       struct DNode {
         int data;
-        /** @position right */
+        /** @arrow-position right */
         DNode *next;
-        /** @position left */
+        /** @arrow-position left */
         DNode *prev;
       };
       void main() {}
@@ -1214,21 +1258,21 @@ describe('field annotations (@position)', () => {
   it('ignores comments not immediately before a field', () => {
     const { context } = safeRunProgram(`
       struct Node {
-        /** @position left */
+        /** @arrow-position left */
         int data;
         Node *next;
       };
       void main() {}
     `)
-    // @position left is on int data, not on Node *next
+    // @arrow-position left is on int data, not on Node *next
     expect(context.structFieldMeta.Node.data).toEqual({ direction: 'left' })
     expect(context.structFieldMeta.Node.next).toBeUndefined()
   })
 
-  it('parses @color annotation', () => {
+  it('parses @arrow-color annotation', () => {
     const { context } = safeRunProgram(`
       struct Node {
-        /** @position right @color #4ade80 */
+        /** @arrow-position right @arrow-color #4ade80 */
         Node *next;
       };
       void main() {}
@@ -1236,10 +1280,10 @@ describe('field annotations (@position)', () => {
     expect(context.structFieldMeta.Node.next).toEqual({ direction: 'right', color: '#4ade80' })
   })
 
-  it('parses @style annotation', () => {
+  it('parses @arrow-style annotation', () => {
     const { context } = safeRunProgram(`
       struct Node {
-        /** @position right @style straight */
+        /** @arrow-position right @arrow-style straight */
         Node *next;
       };
       void main() {}
@@ -1251,9 +1295,9 @@ describe('field annotations (@position)', () => {
     const { context } = safeRunProgram(`
       struct ListNode {
         int data;
-        /** @position right @color #4ade80 @style straight */
+        /** @arrow-position right @arrow-color #4ade80 @arrow-style straight */
         ListNode *next;
-        /** @position left @color #fb923c @style straight */
+        /** @arrow-position left @arrow-color #fb923c @arrow-style straight */
         ListNode *prev;
       };
       void main() {}
@@ -1262,14 +1306,78 @@ describe('field annotations (@position)', () => {
     expect(context.structFieldMeta.ListNode.prev).toEqual({ direction: 'left', color: '#fb923c', style: 'straight' })
   })
 
-  it('parses @color with named CSS colors', () => {
+  it('parses @arrow-color with named CSS colors', () => {
     const { context } = safeRunProgram(`
       struct G {
-        /** @color red */
+        /** @arrow-color red */
         G *link;
       };
       void main() {}
     `)
     expect(context.structFieldMeta.G.link).toEqual({ direction: 'right', color: 'red' })
+  })
+
+  it('parses @arrow-fallback-style annotation', () => {
+    const { context } = safeRunProgram(`
+      struct Node {
+        /** @arrow-style horizontal @arrow-fallback-style orthogonal */
+        Node *next;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.Node.next).toEqual({ direction: 'right', style: 'horizontal', fallbackStyle: 'orthogonal' })
+  })
+
+  it('parses @arrow-anchor on struct definition', () => {
+    const { context } = safeRunProgram(`
+      /** @arrow-anchor closest */
+      struct ListNode {
+        int data;
+        ListNode *next;
+      };
+      void main() {}
+    `)
+    expect(context.structMeta.ListNode).toEqual({ arrowAnchor: 'closest' })
+  })
+
+  it('defaults to no structMeta for unannotated structs', () => {
+    const { context } = safeRunProgram(`
+      struct Plain {
+        int x;
+      };
+      void main() {}
+    `)
+    expect(context.structMeta.Plain).toBeUndefined()
+  })
+
+  it('parses all field + struct annotations together', () => {
+    const { context } = safeRunProgram(`
+      /** @arrow-anchor closest @arrow-size 30 */
+      struct ListNode {
+        int data;
+        /** @arrow-position right @arrow-color #4ade80 @arrow-style horizontal @arrow-fallback-style orthogonal */
+        ListNode *next;
+      };
+      void main() {}
+    `)
+    expect(context.structFieldMeta.ListNode.next).toEqual({
+      direction: 'right',
+      color: '#4ade80',
+      style: 'horizontal',
+      fallbackStyle: 'orthogonal',
+    })
+    expect(context.structMeta.ListNode).toEqual({ arrowAnchor: 'closest', arrowSize: 30 })
+  })
+
+  it('parses @arrow-size on struct definition', () => {
+    const { context } = safeRunProgram(`
+      /** @arrow-size 40 */
+      struct TreeNode {
+        TreeNode *left;
+        TreeNode *right;
+      };
+      void main() {}
+    `)
+    expect(context.structMeta.TreeNode).toEqual({ arrowSize: 40 })
   })
 })

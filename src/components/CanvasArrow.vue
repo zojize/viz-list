@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ArrowStyle, FieldDirection } from '~/composables/interpreter/types'
+import type { ArrowAnchor, ArrowStyle, FieldDirection } from '~/composables/interpreter/types'
 import { computed, shallowRef } from 'vue'
 
 const props = defineProps<{
@@ -13,10 +13,14 @@ const props = defineProps<{
   isDangling?: boolean
   danglingLabel?: string
   direction?: FieldDirection
-  /** Custom arrow color from @color annotation */
+  /** Custom arrow color from `@arrow-color` annotation */
   color?: string
-  /** Arrow path style from @style annotation */
+  /** Arrow path style from `@arrow-style` annotation */
   arrowStyle?: ArrowStyle
+  /** Fallback style when primary style can't connect (e.g. horizontal misalignment) */
+  fallbackStyle?: ArrowStyle
+  /** How arrows connect to this target: center of border or closest point */
+  arrowAnchor?: ArrowAnchor
 }>()
 
 const emit = defineEmits<{
@@ -105,7 +109,10 @@ const pathData = computed(() => {
   const isLeft = d === 'left'
   const startX = isLeft ? props.fromPos.x : props.fromPos.x + props.fromSize.w
   const endX = isLeft ? props.toPos.x + props.toSize.w : props.toPos.x
-  const endY = props.toPos.y + props.toSize.h / 2
+
+  // Compute endY based on anchor mode
+  const ANCHOR_PADDING = 6
+  const anchor = props.arrowAnchor ?? 'center'
 
   let startY: number
   if (props.fromFieldY != null) {
@@ -115,27 +122,44 @@ const pathData = computed(() => {
     const parentTop = props.fromPos.y
     const parentBottom = props.fromPos.y + props.fromSize.h
     const margin = Math.min(props.fromSize.h * 0.15, 8)
-    startY = Math.max(parentTop + margin, Math.min(parentBottom - margin, endY))
+    const targetCenterY = props.toPos.y + props.toSize.h / 2
+    startY = Math.max(parentTop + margin, Math.min(parentBottom - margin, targetCenterY))
+  }
+
+  let endY: number
+  if (anchor === 'closest') {
+    const minY = props.toPos.y + ANCHOR_PADDING
+    const maxY = props.toPos.y + props.toSize.h - ANCHOR_PADDING
+    endY = Math.max(minY, Math.min(maxY, startY))
+  }
+  else {
+    endY = props.toPos.y + props.toSize.h / 2
+  }
+
+  // Determine effective style — horizontal falls back when startY is outside the target rect
+  let effectiveStyle = props.arrowStyle
+  if (effectiveStyle === 'horizontal') {
+    const targetTop = props.toPos.y
+    const targetBottom = props.toPos.y + props.toSize.h
+    if (startY < targetTop || startY > targetBottom)
+      effectiveStyle = props.fallbackStyle
   }
 
   let path: string
   let actualEndX = endX
   let actualEndY = endY
 
-  if (isStraight) {
+  if (effectiveStyle === 'straight' || isStraight) {
     path = `M ${startX} ${startY} L ${endX} ${endY}`
   }
-  else if (props.arrowStyle === 'horizontal') {
-    // Pure horizontal line from start to the target's border at startY.
-    // End point is where the horizontal line hits the target rect's edge.
+  else if (effectiveStyle === 'horizontal') {
     const targetLeft = props.toPos!.x
     const targetRight = props.toPos!.x + props.toSize!.w
     actualEndX = isLeft ? targetRight : targetLeft
     actualEndY = startY
     path = `M ${startX} ${startY} L ${actualEndX} ${actualEndY}`
   }
-  else if (props.arrowStyle === 'orthogonal') {
-    // H-V-H step line: horizontal, vertical, horizontal into endpoint
+  else if (effectiveStyle === 'orthogonal') {
     const midX = (startX + endX) / 2
     path = `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX} ${endY}`
   }
@@ -158,6 +182,7 @@ const arrowHeadPoints = computed(() => {
   // For bezier/horizontal right/left, the path arrives horizontally into the endpoint,
   // so the approach direction is purely horizontal.
   // For straight/dynamic, the approach matches the actual line angle.
+  // Also use line angle for orthogonal (arrives horizontally, but endY may differ from startY).
   const useLineAngle = props.arrowStyle === 'straight' || dir.value === 'dynamic'
 
   let nx: number, ny: number

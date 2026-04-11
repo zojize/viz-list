@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ArrowStyle, CppType, CppValue, FieldDirection, MemoryCell } from '~/composables/interpreter/types'
+import type { ArrowAnchor, ArrowStyle, CppType, CppValue, FieldDirection, MemoryCell } from '~/composables/interpreter/types'
 import { computed, nextTick, onUpdated, shallowRef, watch } from 'vue'
 import CanvasArrow from '~/components/CanvasArrow.vue'
 import DSValue from '~/components/DSValue.vue'
@@ -614,12 +614,15 @@ function placeTreeChildren(
   const leftChildren = children.filter(c => c.direction === 'left')
   const dynamicChildren = children.filter(c => c.direction === 'dynamic')
 
+  // Look up struct-level arrowSize for the parent
+  const arrowSizeOverride = context.structMeta[parentNode.structName]?.arrowSize
+
   function placeGroup(group: ChildInfo[], dir: 'right' | 'left') {
     const heights = group.map(c => c.h)
     for (let i = 0; i < group.length; i++) {
       const child = group[i]
       const size = measured.get(child.key)!
-      placement.placeRelative(child.key, parentKey, size.w, size.h, i, heights, dir)
+      placement.placeRelative(child.key, parentKey, size.w, size.h, i, heights, dir, arrowSizeOverride)
       placedKeys.add(child.key)
       placeTreeChildren(child.address, child.key, tree, measured, placedKeys)
     }
@@ -697,6 +700,8 @@ interface ArrowEdge {
   direction: FieldDirection
   color?: string
   arrowStyle?: ArrowStyle
+  fallbackStyle?: ArrowStyle
+  arrowAnchor?: ArrowAnchor
 }
 
 interface DanglingArrowEdge {
@@ -710,11 +715,20 @@ interface DanglingArrowEdge {
   direction: FieldDirection
   color?: string
   arrowStyle?: ArrowStyle
+  fallbackStyle?: ArrowStyle
 }
 
 const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
   const edges: (ArrowEdge | DanglingArrowEdge)[] = []
   const graph = pointerGraph.value
+
+  /** Look up the target struct's arrow anchor from struct-level metadata */
+  function getTargetAnchor(targetAddress: number): ArrowAnchor | undefined {
+    const targetNode = graph.nodes.get(targetAddress)
+    if (!targetNode)
+      return undefined
+    return context.structMeta[targetNode.structName]?.arrowAnchor
+  }
 
   for (const tree of graph.trees) {
     for (const edge of tree.edges) {
@@ -731,6 +745,8 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
           direction: edge.direction,
           color: edge.color,
           arrowStyle: edge.style,
+          fallbackStyle: edge.fallbackStyle,
+          arrowAnchor: getTargetAnchor(edge.toAddress),
         })
       }
     }
@@ -746,8 +762,8 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
           isCycle: true,
           isDangling: false,
           direction: edge.direction,
-          color: edge.color,
-          arrowStyle: edge.style,
+          arrowStyle: 'bezier',
+          arrowAnchor: getTargetAnchor(edge.toAddress),
         })
       }
     }
@@ -767,6 +783,7 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
         direction: edge.direction,
         color: edge.color,
         arrowStyle: edge.style,
+        fallbackStyle: edge.fallbackStyle,
       })
     }
   }
@@ -814,6 +831,7 @@ function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
     direction: edge.direction,
     color: edge.color,
     arrowStyle: edge.arrowStyle,
+    fallbackStyle: edge.fallbackStyle,
   }
 
   if (edge.isDangling) {
@@ -842,6 +860,7 @@ function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
     fromFieldY,
     toPos: toPos ? { x: toPos.x + toDelta.x, y: toPos.y + toDelta.y } : undefined,
     toSize: toSize ?? undefined,
+    arrowAnchor: (edge as ArrowEdge).arrowAnchor,
     ...common,
   }
 }
