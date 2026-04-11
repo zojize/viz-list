@@ -111,11 +111,13 @@ automatically. Positioned AFTER items in DOM order with `z-10` to paint on top.
 ### Rendering modes
 
 **Direction** (from `@arrow-position`):
+
 - `right`: Start from parent's right edge, end at child's left edge
 - `left`: Start from parent's left edge, end at child's right edge
 - `dynamic`: Use nearest border points on both sides
 
 **Style** (from `@arrow-style`):
+
 - `bezier` (default): Cubic bezier curve bowing in the arrow direction
 - `straight`: Direct line from start to end
 - `horizontal`: Straight horizontal line (start Y = end Y)
@@ -125,10 +127,12 @@ automatically. Positioned AFTER items in DOM order with `z-10` to paint on top.
 (start Y is outside the target rect), falls back to the specified style.
 
 **Anchor** (from `@arrow-anchor` on struct): Controls where arrows land on the target:
+
 - `center` (default): Center of the receiving border
 - `closest`: Nearest point on the border to the source, clamped 6px from corners
 
 **Special cases**:
+
 - **Cycle edges**: Always rendered as dashed amber bezier (hardcoded, ignoring annotations)
 - **Dangling edges**: Dashed red stub with X mark and stale address label
 
