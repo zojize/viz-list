@@ -71,22 +71,33 @@ const structFields = computed((): FieldEntry[] => {
   if (!structDef)
     return []
   const entries: FieldEntry[] = []
+
+  /** Recursively flatten array elements with subscript prefix (handles n-d arrays) */
+  function flattenArray(prefix: string, elemType: CppType, cell: MemoryCell | undefined) {
+    if (!cell)
+      return
+    const arrVal = cell.value
+    if (typeof arrVal !== 'object' || arrVal.type !== 'array')
+      return
+    for (let i = 0; i < arrVal.length; i++) {
+      const elemCell = context.memory.cells.get(arrVal.base + 1 + i)
+      const subscript = `${prefix}[${i}]`
+      // Nested array: recurse
+      if (typeof elemType === 'object' && elemType.type === 'array' && elemCell) {
+        flattenArray(subscript, elemType.of, elemCell)
+      }
+      else {
+        entries.push({ name: subscript, cell: elemCell, type: elemType })
+      }
+    }
+  }
+
   for (const [name, fieldType] of Object.entries(structDef)) {
     const fieldIdx = Object.keys(structDef).indexOf(name)
     const fieldCell = context.memory.cells.get(v.base + 1 + fieldIdx)
-    // Flatten array fields into individual subscript entries
     if (typeof fieldType === 'object' && fieldType.type === 'array' && fieldCell) {
-      const arrVal = fieldCell.value
-      if (typeof arrVal === 'object' && arrVal.type === 'array') {
-        for (let i = 0; i < arrVal.length; i++) {
-          entries.push({
-            name: `${name}[${i}]`,
-            cell: context.memory.cells.get(arrVal.base + 1 + i),
-            type: fieldType.of,
-          })
-        }
-        continue
-      }
+      flattenArray(name, fieldType.of, fieldCell)
+      continue
     }
     entries.push({ name, cell: fieldCell, type: fieldType })
   }

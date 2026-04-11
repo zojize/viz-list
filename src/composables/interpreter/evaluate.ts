@@ -174,9 +174,19 @@ function* processAssignment(
   const currentValue = mem.read(addr).value
   if (op !== '=') {
     op = op.slice(0, -1)
-    asserts(op in binaryOps, `Unsupported assignment operator: ${op}`)
-    asserts(typeof currentValue !== 'object' && typeof value !== 'object')
-    value = binaryOps[op](currentValue, castIfNull(type, value) as number | boolean)
+    // Pointer compound assignment (ptr += n, ptr -= n)
+    if (typeof currentValue === 'object' && currentValue.type === 'pointer' && typeof value === 'number') {
+      if (op === '+')
+        value = { type: 'pointer', address: currentValue.address + value }
+      else if (op === '-')
+        value = { type: 'pointer', address: currentValue.address - value }
+      else
+        asserts(false, `Unsupported pointer operator: ${op}`)
+    }
+    else {
+      asserts(op in binaryOps, `Unsupported assignment operator: ${op}`)
+      value = binaryOps[op](currentValue, castIfNull(type, value) as number | boolean)
+    }
   }
   const newValue = castIfNull(type, value)
   mem.write(addr, newValue)
@@ -281,6 +291,37 @@ export function* evaluate(
 
       const lhs = checksDefined(yield* evaluate(node.childForFieldName('left')!, context, mem))
       const rhs = checksDefined(yield* evaluate(node.childForFieldName('right')!, context, mem))
+
+      // Pointer arithmetic: ptr + int, int + ptr, ptr - int, ptr - ptr
+      const lPtr = lhs !== null && typeof lhs === 'object' && lhs.type === 'pointer'
+      const rPtr = rhs !== null && typeof rhs === 'object' && rhs.type === 'pointer'
+      if (lPtr || rPtr) {
+        if (op === '+') {
+          if (lPtr && typeof rhs === 'number')
+            return { type: 'pointer', address: (lhs as { address: number }).address + rhs }
+          if (rPtr && typeof lhs === 'number')
+            return { type: 'pointer', address: (rhs as { address: number }).address + lhs }
+        }
+        if (op === '-') {
+          if (lPtr && typeof rhs === 'number')
+            return { type: 'pointer', address: (lhs as { address: number }).address - rhs }
+          if (lPtr && rPtr)
+            return (lhs as { address: number }).address - (rhs as { address: number }).address
+        }
+        // Pointer comparison
+        if (lPtr && rPtr && (op === '<' || op === '>' || op === '<=' || op === '>=')) {
+          const la = (lhs as { address: number }).address
+          const ra = (rhs as { address: number }).address
+          if (op === '<')
+            return la < ra
+          if (op === '>')
+            return la > ra
+          if (op === '<=')
+            return la <= ra
+          return la >= ra
+        }
+      }
+
       asserts(op in binaryOps, `Unsupported binary operator: ${op}`)
       return binaryOps[op](lhs, rhs)
     }
@@ -297,8 +338,14 @@ export function* evaluate(
       const isPostfix = node.firstChild!.isNamed
       const op = node.childForFieldName('operator')!.text
       asserts(op === '++' || op === '--')
-      asserts(typeof cell.value !== 'object')
       const old = cell.value
+      // Pointer increment/decrement
+      if (typeof old === 'object' && old.type === 'pointer') {
+        const delta = op === '++' ? 1 : -1
+        const newVal: CppValue = { type: 'pointer', address: old.address + delta }
+        mem.write(addr, newVal)
+        return isPostfix ? old : newVal
+      }
       const newVal = binaryOps[op[0]](old, 1)
       mem.write(addr, newVal)
       return isPostfix ? old : newVal
