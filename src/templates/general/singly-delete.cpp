@@ -54,5 +54,6 @@ int main() {
   insertBack(&head, 4);
   deleteNode(&head, 3);
 
+  breakpoint();
   return 0;
 }

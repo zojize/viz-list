@@ -29,5 +29,6 @@ int main() {
   // Introduce a cycle: c's left points back to a
   c->left = a;
 
+  breakpoint();
   return 0;
 }

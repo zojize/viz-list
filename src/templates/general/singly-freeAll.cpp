@@ -39,5 +39,6 @@ int main() {
   insertBack(&head, 30);
   freeAll(&head);
 
+  breakpoint();
   return 0;
 }

@@ -32,5 +32,6 @@ int main() {
   root = insert(root, 1);
   root = insert(root, 4);
 
+  breakpoint();
   return 0;
 }

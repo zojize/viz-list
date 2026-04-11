@@ -303,7 +303,9 @@ watch(() => props.highlightedFieldAddress, (addr) => {
                   <div class="pl-2">
                     <DSValue
                       :cell="context.memory.cells.get(field.address)!"
-
+                      :highlighted-field-address="highlightedFieldAddress"
+                      :statement-lhs-addresses="statementLhsAddresses"
+                      :statement-rhs-addresses="statementRhsAddresses"
                       @navigate="handleClickPointer"
                       @hover-node="handleHoverPointerStack"
                     />
@@ -336,6 +338,9 @@ watch(() => props.highlightedFieldAddress, (addr) => {
             <template v-else-if="isArrayValue(entry.cell.value) || (typeof entry.cell.value === 'object' && entry.cell.value.type === 'struct')">
               <DSValue
                 :cell="entry.cell"
+                :highlighted-field-address="highlightedFieldAddress"
+                :statement-lhs-addresses="statementLhsAddresses"
+                :statement-rhs-addresses="statementRhsAddresses"
                 @navigate="handleClickPointer"
                 @hover-node="handleHoverPointerStack"
               />

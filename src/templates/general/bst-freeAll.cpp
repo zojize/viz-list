@@ -45,5 +45,6 @@ int main() {
 
   freeTree(root);
 
+  breakpoint();
   return 0;
 }
