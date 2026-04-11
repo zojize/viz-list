@@ -5,13 +5,12 @@ import { expect, test } from '@playwright/test'
 async function stepN(page: import('@playwright/test').Page, n: number) {
   const btn = page.getByTestId('btn-step')
   for (let i = 0; i < n; i++) {
-    const before = await btn.getAttribute('data-step')
+    const before = Number(await btn.getAttribute('data-step')) || 0
     await btn.click()
     // Wait for version to increment (first step is slower due to init + parse)
-    await btn.waitFor({ state: 'attached', timeout: 10_000 })
     await expect(async () => {
-      const after = await btn.getAttribute('data-step')
-      expect(Number(after)).toBeGreaterThan(Number(before))
+      const after = Number(await btn.getAttribute('data-step')) || 0
+      expect(after).toBeGreaterThan(before)
     }).toPass({ timeout: 10_000 })
   }
 }

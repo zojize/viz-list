@@ -6,7 +6,7 @@ import VueMacros from 'unplugin-vue-macros/vite'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  base: process.env.NETLIFY ? '/' : '/structviz/',
+  base: process.env.NETLIFY ? '/' : '/StructViz/',
   resolve: {
     alias: {
       '~/': `${path.resolve(__dirname, 'src')}/`,
