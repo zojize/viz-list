@@ -662,17 +662,14 @@ function placeTreeChildren(
 /** Snapshot of content bounds before placement, used to detect layout shifts */
 let prevBoundsKey = ''
 
-/**
- * Track items that are still "settling" — they were just created and haven't
- * been placed at their real position yet. Suppress movement transition until
- * the item's position has been set by measureAndPlace (which runs in onUpdated,
- * one tick after the initial render at 0,0).
- */
+/** Items still settling — suppress movement transition until placed at real position. */
 const settlingKeys = new Set<string>()
+/** Previous set of active keys — used to detect enter/leave for animations. */
+let prevActiveKeys = new Set<string>()
 
 onUpdated(() => nextTick(() => {
   measureAndPlace()
-  settlingKeys.clear()
+  animateEnterLeave()
 
   // Auto-pan when content bounds changed and items are outside the visible viewport
   const bounds = placement.getContentBounds()
@@ -705,33 +702,61 @@ watch(hasContent, (has) => {
 /** Get the final visual position of an item: placement + transient drag delta.
  *  Uses transform (GPU-accelerated) instead of left/top (triggers layout). */
 function getItemStyle(key: string) {
-  const pos = placement.getPosition(key) ?? { x: 0, y: 0 }
+  const pos = placement.getPosition(key)
   const delta = getDragDelta(key)
   const anyDragActive = getActiveDragKey() !== null
   const isSettling = settlingKeys.has(key)
+  const noPosition = !pos
+  const effectivePos = pos ?? { x: 0, y: 0 }
   return {
     position: 'absolute' as const,
-    transform: `translate(${pos.x + delta.x}px, ${pos.y + delta.y}px)`,
+    transform: `translate(${effectivePos.x + delta.x}px, ${effectivePos.y + delta.y}px)`,
     willChange: anyDragActive ? 'transform' : 'auto',
-    // Movement transition only for re-placement (not drag, not settling new items)
-    transition: anyDragActive || isSettling ? 'none' : 'transform 100ms ease-out',
+    // No transition during drag, settling (newly placed), or before first position
+    transition: anyDragActive || isSettling || noPosition ? 'none' : 'transform 100ms ease-out',
+    // Hide items that don't have a position yet (before measureAndPlace runs)
+    ...(noPosition && { visibility: 'hidden' as const }),
   }
 }
 
-// ---- DS item enter/leave animations (Web Animations API — no conflict with inline transitions) ----
+// ---- DS item enter/leave animations (runs after placement in onUpdated) ----
 
-function onItemEnter(el: Element, done: () => void) {
-  const key = (el as HTMLElement).dataset.placeKey
-  if (key)
-    settlingKeys.add(key)
-  const anim = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: 'ease-out' })
-  anim.finished.then(done)
-}
+/** Animate fade-in for newly appeared items and fade-out for removed items. */
+function animateEnterLeave() {
+  if (!contentRef.value)
+    return
+  const els = contentRef.value.querySelectorAll<HTMLElement>('[data-place-key]')
+  const currentKeys = new Set<string>()
 
-function onItemLeave(el: Element, done: () => void) {
-  (el as HTMLElement).style.pointerEvents = 'none'
-  const anim = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: 'ease-out', fill: 'forwards' })
-  anim.finished.then(done)
+  for (const el of els) {
+    const key = el.dataset.placeKey!
+    currentKeys.add(key)
+    // New item: fade in and mark settling (suppress movement transition)
+    if (!prevActiveKeys.has(key)) {
+      settlingKeys.add(key)
+      el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: 'ease-out' })
+      requestAnimationFrame(() => requestAnimationFrame(() => settlingKeys.delete(key)))
+    }
+  }
+
+  // Removed items: clone at last position and fade out
+  for (const key of prevActiveKeys) {
+    if (currentKeys.has(key))
+      continue
+    const pos = placement.getPosition(key)
+    const size = placement.getSize(key)
+    if (!pos || !size || !contentRef.value)
+      continue
+    const ghost = document.createElement('div')
+    // Find the last rendered element to clone its innerHTML
+    // Use a minimal placeholder since the original DOM is gone
+    ghost.style.cssText = `position:absolute;transform:translate(${pos.x}px,${pos.y}px);width:${size.w}px;height:${size.h}px;pointer-events:none;`
+    contentRef.value.appendChild(ghost)
+    const anim = ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: 'ease-out', fill: 'forwards' })
+    anim.finished.then(() => ghost.remove())
+  }
+
+  prevActiveKeys = currentKeys
 }
 
 // ---- Arrow edges (computed from pointer graph + placement positions) ----
@@ -1005,7 +1030,7 @@ const kindBg: Record<DataItem['kind'], string> = {
       </div>
 
       <!-- Linked list chains -->
-      <TransitionGroup :css="false" tag="div" class="contents" @enter="onItemEnter" @leave="onItemLeave">
+      <div class="contents">
         <LinkedListChain
           v-for="chain in chains"
           :key="chain.id"
@@ -1024,10 +1049,10 @@ const kindBg: Record<DataItem['kind'], string> = {
           @hover-node="emit('hoverNode', $event)"
           @hover-field="emit('hoverField', $event)"
         />
-      </TransitionGroup>
+      </div>
 
       <!-- Standalone data items -->
-      <TransitionGroup :css="false" tag="div" class="contents" @enter="onItemEnter" @leave="onItemLeave">
+      <div class="contents">
         <div
           v-for="item in standaloneItems"
           :key="item.address"
@@ -1060,7 +1085,7 @@ const kindBg: Record<DataItem['kind'], string> = {
             @hover-node="emit('hoverNode', $event)"
           />
         </div>
-      </TransitionGroup>
+      </div>
 
       <!-- SVG arrow overlay (after items so it paints on top; h-[1px]/w-[1px] gives it
            a non-zero paint area — browsers skip rendering 0×0 SVGs even with overflow-visible) -->
