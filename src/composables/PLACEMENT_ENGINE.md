@@ -26,15 +26,18 @@ Runs as a `computed` reactive to `context.memory.version`. On each interpreter s
    `cell.address === value.base` for struct values.
 
 2. **Edge building**: For each struct, look up its definition in `context.structs`.
-   For each pointer-typed field pointing to another live struct, record a `PointerEdge`.
+   For each pointer-typed field pointing to another live struct, record a `PointerEdge`
+   carrying `direction`, `color`, `style`, and `fallbackStyle` from `context.structFieldMeta`.
    If the target cell is dead, record a `DanglingEdge` instead.
 
 3. **Tree detection** via in-degree + DFS:
-   - Nodes with in-degree 0 from other structs = tree roots
-   - Nodes with in-degree 1 = potential tree children
-   - Nodes with in-degree > 1 = shared (excluded from tree layout)
-   - DFS from each root detects cycles (back-edges)
-   - A valid tree: every non-root has exactly 1 in-edge from within the tree
+   - Left-direction edges (`@arrow-position left`) are excluded from in-degree calculation
+     and DFS traversal (they're back-links, e.g. `prev` pointers)
+   - Nodes with forward in-degree 0 = tree roots
+   - DFS from each root detects cycles (back-edges stored in `cycleEdges`)
+   - Cycle back-edges are excluded from the tree validation check
+   - If no natural roots exist (fully cyclic structures), BFS finds connected
+     components and picks the lowest forward in-degree node as root
 
 4. **Output**: `{ nodes, trees, standalone, danglingEdges }`
 
@@ -58,11 +61,13 @@ and are only recalculated when items first appear or auto-layout is triggered.
 Finds empty space in the visible viewport via `findEmptySpace`. Returns early if the
 item already has a position (idempotent across re-renders).
 
-**`placeRelative(key, parentKey, w, h, childIndex, siblingHeights)`** --- For tree
-children. Computes ideal position to the right of the parent:
+**`placeRelative(key, parentKey, w, h, childIndex, siblingHeights, direction, gapOverride?)`**
+--- For tree children. Computes ideal position relative to the parent:
 
-- X = parent.x + parent.w + arrowGap (60px default)
+- `direction = 'right'`: X = parent.x + parent.w + gap, to the right
+- `direction = 'left'`: X = parent.x - w - gap, to the left
 - Y = centered among siblings relative to parent's vertical center
+- `gapOverride` overrides the default arrow gap (60px), used by `@arrow-size` annotation
 - Returns early if already positioned (respects user drags and prior placement)
 
 **`findEmptySpace(w, h, occupied, container)`** --- Two-pass scan:
@@ -73,6 +78,11 @@ children. Computes ideal position to the right of the parent:
 
 **`displaceAndPlace(key, x, y, w, h)`** --- Conflict resolution. Removes overlapping
 items, places the target, then re-places displaced items via `findEmptySpace`.
+
+**`evictOverlapping(protectedKeys)`** --- Removes positions of any items that overlap
+with the protected set. Returns evicted keys so they can be re-placed in a later step.
+Used after tree placement to prevent standalone items from overlapping newly-placed
+tree children.
 
 ### Collision detection
 
@@ -85,22 +95,42 @@ on all sides. This ensures items never touch --- there's always visual breathing
 - Items in `userDragged` keep their position through re-renders
 - `clearUserDragged()` --- called by auto-layout to reset everything
 
-### Auto-layout (`clear()`)
+### Auto-layout
 
-Wipes all positions, sizes, and user-drag state. The next `onUpdated` cycle re-measures
-all DOM elements and re-places everything from scratch with tree-aware layout.
+**`clearPositions()`** --- Clears positions and user-drag state but keeps sizes.
+Used by `autoLayout()` so that `measureAndPlace()` can run synchronously in the same
+tick, placing items directly at their final positions (no flash at origin).
+
+**`clear()`** --- Wipes positions, sizes, and user-drag state. Used for full reset.
 
 ## Canvas Arrows (`CanvasArrow.vue`)
 
 SVG arrows rendered inside the panned `contentRef` container, so they move with pan
 automatically. Positioned AFTER items in DOM order with `z-10` to paint on top.
 
-### Rendering
+### Rendering modes
 
-- **Normal edges**: Solid blue cubic bezier from parent's right edge to
-  child's left edge center. Triangle arrowhead at the end.
-- **Cycle edges**: Dashed amber line with back-arrow icon.
-- **Dangling edges**: Dashed red stub with X mark and stale address label.
+**Direction** (from `@arrow-position`):
+- `right`: Start from parent's right edge, end at child's left edge
+- `left`: Start from parent's left edge, end at child's right edge
+- `dynamic`: Use nearest border points on both sides
+
+**Style** (from `@arrow-style`):
+- `bezier` (default): Cubic bezier curve bowing in the arrow direction
+- `straight`: Direct line from start to end
+- `horizontal`: Straight horizontal line (start Y = end Y)
+- `orthogonal`: H-V-H step line through midpoint
+
+**Fallback** (from `@arrow-fallback-style`): When `horizontal` style can't connect
+(start Y is outside the target rect), falls back to the specified style.
+
+**Anchor** (from `@arrow-anchor` on struct): Controls where arrows land on the target:
+- `center` (default): Center of the receiving border
+- `closest`: Nearest point on the border to the source, clamped 6px from corners
+
+**Special cases**:
+- **Cycle edges**: Always rendered as dashed amber bezier (hardcoded, ignoring annotations)
+- **Dangling edges**: Dashed red stub with X mark and stale address label
 
 The SVG uses `h-[1px] w-[1px] overflow-visible` instead of `h-0 w-0` because browsers
 skip painting zero-area SVG elements even with overflow:visible.
@@ -114,9 +144,6 @@ not the center of the parent card. This is achieved by:
 2. `DataStructureView.measureFieldY()` queries the DOM for the field element,
    computes its vertical center offset relative to the parent card
 3. The Y offset is passed to `CanvasArrow` as `fromFieldY`
-
-This means the arrow from `left: 0xff8` visually stems from the `left` row,
-and the arrow from `right: 0xff4` stems from the `right` row.
 
 ### Hover interaction
 
@@ -139,6 +166,8 @@ Positions are invalidated (removed) when:
 3. A node's **sibling group changed** (a sibling was added or removed) ---
    ALL siblings of the affected parent are invalidated so `placeRelative`
    recalculates the entire group as a centered unit
+4. **Descendants** of any invalidated node are recursively invalidated via BFS
+   through the new parent-to-children map
 
 User-dragged items are never invalidated. This ensures manual positioning is
 preserved while the rest of the tree adapts around it.
@@ -156,24 +185,48 @@ Interpreter step
         1. Measure all [data-place-key] elements via offsetWidth/offsetHeight
         2. Diff tree parent + sibling maps, invalidate stale positions
         3. Place tree roots via placeNew (idempotent)
-        4. Place tree children via placeRelative (idempotent)
-        5. Place remaining items via placeNew (idempotent)
-        6. retainOnly active keys (cleanup dead items)
+        4. Place tree children via placeRelative (with @arrow-size gap override)
+        5. Evict non-tree items that overlap with tree items (evictOverlapping)
+        6. Place remaining standalone items via placeNew (idempotent)
+        7. retainOnly active keys (cleanup dead items)
+      -> animateEnterLeave()
+        - Detect new keys vs prevActiveKeys → fade-in via Web Animations API
+        - Detect removed keys → clone ghost at last position, fade-out
       -> autoPanToContent() if content bounds changed and items overflow
       -> clampPan() to keep content visible
   -> arrowEdges computed reacts to placement.version
     -> CanvasArrow components render with positions from placement engine
 ```
 
+## Item animations
+
+Enter/leave animations are handled manually (not Vue TransitionGroup, which conflicts
+with inline `transform` styles by applying its own move transforms).
+
+**Enter (fade-in)**: When a new key appears in `animateEnterLeave()`, its DOM element
+gets `el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150 })`. The key is
+added to `settlingKeys` which suppresses the movement transition, and cleaned up via
+double-`requestAnimationFrame` to persist through the re-render cycle.
+
+**Leave (fade-out)**: When a key disappears, a ghost `<div>` is cloned at the item's
+last position and faded out via Web Animations API (`duration: 200, fill: 'forwards'`),
+then removed from the DOM.
+
+**Movement**: Items have `transition: transform 100ms ease-out` for smooth re-placement.
+Disabled during: active drag (`getActiveDragKey()`), settling new items (`settlingKeys`),
+or before first position is assigned (`visibility: hidden`).
+
 ## Drag flow
 
 ```
 pointerdown on [data-drag-key] element
   -> track start position, prepare drag state
+  -> skip buttons/links (so auto-layout button click works)
 pointermove (4px threshold crossed)
   -> set activeKey, capture pointer
   -> activeDelta updated continuously (transient visual offset)
   -> getItemStyle() combines committed position + activeDelta -> GPU transform
+  -> ALL items have transition: none during any active drag
 pointerup
   -> onDragEnd callback fires
     -> placement.setPosition(key, pos + delta)
@@ -183,6 +236,13 @@ pointerup
 
 User-dragged items are excluded from automatic re-placement. Auto-layout clears
 all drag state so everything returns to computed tree positions.
+
+## Auto-layout
+
+`autoLayout()` uses `clearPositions()` (not `clear()`) to keep measured sizes,
+then calls `measureAndPlace()` synchronously in the same tick. This means items
+transition directly from their current positions to the computed layout (via the
+100ms transform transition) instead of flashing at (0,0).
 
 ## Auto-pan
 
@@ -201,8 +261,12 @@ into negative coordinates.
 Canvas pan is bounded so content stays partially visible. Margin = max(maxItemSize/2, 50px).
 Re-clamps on: pan gesture, wheel scroll, canvas resize (splitpane drag), and after placement.
 
-## Direction extensibility
+## Current-expression highlighting
 
-`placeRelative` accepts a `direction` parameter (default `'right'`). Currently only `'right'`
-is implemented (children placed to the right of parent). Adding `'down'` or `'up'` requires
-swapping X/Y logic in the position calculation. See TODO comment in the function.
+DS view items receive `statementLhsAddresses` and `statementRhsAddresses` props from
+`useStatementAddresses`. Items involved in the current expression get a background tint:
+
+- **LHS** (write target): `bg-blue-500/10`
+- **RHS** (read source): `bg-green-500/10`
+- **Hover boost**: When hovering an item that also has a code highlight, the tint
+  intensifies to `bg-blue-500/20`
