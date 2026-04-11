@@ -1,11 +1,13 @@
 import { expect, test } from '@playwright/test'
 
-// Helper: click the step button N times with a small delay
+// Helper: click the step button N times, waiting for each step to complete
+// by observing the data-step attribute (memory version) change on the button.
 async function stepN(page: import('@playwright/test').Page, n: number) {
   const btn = page.getByTestId('btn-step')
   for (let i = 0; i < n; i++) {
+    const before = await btn.getAttribute('data-step')
     await btn.click()
-    await page.waitForTimeout(100)
+    await expect(btn).not.toHaveAttribute('data-step', before ?? '', { timeout: 5000 })
   }
 }
 
@@ -23,7 +25,7 @@ test.describe('memory map', () => {
     const stackColumn = page.getByTestId('stack-column')
     await expect(stackColumn).toBeVisible()
     const entries = stackColumn.locator('[data-testid^="stack-entry-"]')
-    await expect(entries.first()).toBeVisible({ timeout: 10_000 })
+    await expect(entries.first()).toBeVisible()
   })
 
   test('shows heap allocations after new ListNode', async ({ page }) => {

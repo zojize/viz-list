@@ -312,7 +312,7 @@ const speedLabel = computed(() => {
             <button v-else data-testid="btn-run" class="icon-btn" title="Run" @click="handleRun()">
               <div class="i-carbon-play-filled" />
             </button>
-            <button data-testid="btn-step" class="icon-btn" title="Step" @click="handleStep()">
+            <button data-testid="btn-step" :data-step="context.memory.version" class="icon-btn" title="Step" @click="handleStep()">
               <div class="i-carbon-skip-forward-filled" />
             </button>
           </div>
