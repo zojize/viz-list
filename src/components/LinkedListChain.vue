@@ -102,10 +102,10 @@ function handleArrowLeave() {
         class="shrink-0 cursor-pointer border rounded px-3 py-2 text-center font-mono transition-all"
         :class="{
           'border-blue-400 bg-blue-500/20 outline outline-2 outline-blue-400': isNodeSelected(node.address),
-          'border-blue-400 bg-blue-500/10': isNodeHighlighted(node.address) && !isNodeSelected(node.address) && !hasCodeHighlight(node.address),
-          'border-l-blue-500! border-l-3': statementLhsAddresses?.has(node.address),
-          'border-l-green-500! border-l-3': statementRhsAddresses?.has(node.address) && !statementLhsAddresses?.has(node.address),
-          'ring-2 ring-blue-400/40': isHoverBoosted(node.address),
+          'bg-blue-500/20!': isHoverBoosted(node.address),
+          'bg-blue-500/10!': !isHoverBoosted(node.address) && statementLhsAddresses?.has(node.address),
+          'bg-green-500/10!': !isHoverBoosted(node.address) && statementRhsAddresses?.has(node.address) && !statementLhsAddresses?.has(node.address),
+          'border-blue-400 bg-blue-500/10': !hasCodeHighlight(node.address) && isNodeHighlighted(node.address) && !isNodeSelected(node.address),
           'border-gray-300 hover:border-blue-400 dark:border-gray-600': !isNodeHighlighted(node.address) && !isNodeSelected(node.address) && !hasCodeHighlight(node.address),
         }"
         @click="!didDrag && emit('selectNode', node.address)"

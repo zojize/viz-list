@@ -1039,10 +1039,10 @@ const kindBg: Record<DataItem['kind'], string> = {
             kindColors[item.kind],
             kindBg[item.kind],
             isNodeSelected(item.address) ? 'outline outline-2 outline-blue-400' : '',
-            isNodeHighlighted(item.address) && !hasCodeHighlight(item.address) ? 'bg-blue-500/10!' : '',
-            isStatementLhs(item.address) ? 'border-l-blue-500! border-l-3' : '',
-            isStatementRhs(item.address) && !isStatementLhs(item.address) ? 'border-l-green-500! border-l-3' : '',
-            isHoverBoosted(item.address) ? 'ring-2 ring-blue-400/40' : '',
+            isHoverBoosted(item.address) ? 'bg-blue-500/20!' : '',
+            !isHoverBoosted(item.address) && isStatementLhs(item.address) ? 'bg-blue-500/10!' : '',
+            !isHoverBoosted(item.address) && isStatementRhs(item.address) && !isStatementLhs(item.address) ? 'bg-green-500/10!' : '',
+            !hasCodeHighlight(item.address) && isNodeHighlighted(item.address) ? 'bg-blue-500/10!' : '',
             item.dimmed ? 'opacity-40' : '',
           ]"
           :style="getItemStyle(`item-${item.address}`)"
