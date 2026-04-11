@@ -8,14 +8,14 @@ struct ListNode {
    * @arrow-position right
    * @arrow-color #4ade80
    * @arrow-style horizontal
-   * @arrow-fallback-style orthogonal
+   *
    */
   ListNode *next;
   /**
    * @arrow-position left
    * @arrow-color #fb923c
    * @arrow-style horizontal
-   * @arrow-fallback-style orthogonal
+   *
    */
   ListNode *prev;
 };
