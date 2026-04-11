@@ -1,9 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <style>
-    path { fill: #222; }
+    .brace { fill: none; stroke: #555; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .arrow { fill: none; stroke: #4d9375; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    .head { fill: #4d9375; stroke: none; }
     @media (prefers-color-scheme: dark) {
-      path { fill: #ffffff; }
+      .brace { stroke: #aaa; }
     }
   </style>
-  <path d="M27.562 26L17.17 8.928l2.366-3.888L17.828 4L16 7.005L14.17 4l-1.708 1.04l2.366 3.888L4.438 26H2v2h28v-2zM16 10.85L25.22 26H17v-8h-2v8H6.78z" />
+  <!-- Left brace { -->
+  <path class="brace" d="M10 6 Q7 6 7 10 L7 13 Q7 16 4 16 Q7 16 7 19 L7 22 Q7 26 10 26" />
+  <!-- Right brace } -->
+  <path class="brace" d="M22 6 Q25 6 25 10 L25 13 Q25 16 28 16 Q25 16 25 19 L25 22 Q25 26 22 26" />
+  <!-- Arrow → -->
+  <line class="arrow" x1="11" y1="16" x2="20" y2="16" />
+  <polygon class="head" points="21,16 17,13.5 17,18.5" />
 </svg>

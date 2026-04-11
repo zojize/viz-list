@@ -6,7 +6,7 @@ import { toggleDark } from '~/composables/dark'
   <nav class="flex items-center justify-between border-b border-gray-200 px-4 py-1.5 dark:border-gray-800">
     <div class="flex items-center gap-3">
       <h1 class="text-base font-semibold tracking-tight">
-        <span class="text-vitesse">viz</span><span class="opacity-60">list</span>
+        <span class="text-vitesse">Struct</span><span class="opacity-60">Viz</span>
       </h1>
     </div>
 
@@ -17,7 +17,7 @@ import { toggleDark } from '~/composables/dark'
       <a
         class="icon-btn"
         rel="noreferrer"
-        href="https://github.com/zojize/viz-list"
+        href="https://github.com/zojize/structviz"
         target="_blank"
         title="GitHub"
       >

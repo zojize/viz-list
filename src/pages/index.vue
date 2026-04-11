@@ -16,8 +16,8 @@ import { useStatementAddresses } from '~/composables/useStatementAddresses'
 import 'splitpanes/dist/splitpanes.css'
 
 useHead({
-  title: 'Viz List',
-  meta: [{ name: 'description', content: 'Visualize linked list operations' }],
+  title: 'StructViz',
+  meta: [{ name: 'description', content: 'Interactive C++ data structure visualizer' }],
 })
 
 const queryParams = new URLSearchParams(window.location.search)
