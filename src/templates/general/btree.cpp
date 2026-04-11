@@ -53,5 +53,6 @@ int main() {
   root->children[2] = right;
   root->children[3] = nullptr;
 
+  breakpoint();
   return 0;
 }

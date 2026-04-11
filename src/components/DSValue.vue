@@ -154,7 +154,15 @@ const arrayElements = computed((): ArrayEntry[] => {
         />
       </template>
       <!-- Leaf element -->
-      <div v-else class="flex items-baseline justify-between gap-2 rounded px-1 py-0.5">
+      <div
+        v-else
+        class="flex items-baseline justify-between gap-2 rounded px-1 py-0.5"
+        :class="[
+          highlightedFieldAddress === elem.cell?.address ? 'bg-blue-500/15' : '',
+          statementLhsAddresses?.has(elem.cell?.address ?? -1) ? 'bg-blue-500/10' : '',
+          statementRhsAddresses?.has(elem.cell?.address ?? -1) && !statementLhsAddresses?.has(elem.cell?.address ?? -1) ? 'bg-green-500/10' : '',
+        ]"
+      >
         <span class="text-gray-500 font-mono">{{ elem.prefix }}</span>
         <DSValue
           v-if="elem.cell"

@@ -82,6 +82,8 @@ export interface InterpreterContext {
   callStack: { env: Record<string, EnvEntry>[] }[]
   memory: AddressSpace
   currentNode?: SyntaxNode
+  /** Set by breakpoint() builtin — signals play mode to pause */
+  hitBreakpoint?: boolean
 }
 
 export interface UseCppInterpreterReturn {

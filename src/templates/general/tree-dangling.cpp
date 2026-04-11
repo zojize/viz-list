@@ -36,5 +36,6 @@ int main() {
   // root->left still points to the freed address.
   delete left;
 
+  breakpoint();
   return 0;
 }

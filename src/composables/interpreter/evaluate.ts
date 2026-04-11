@@ -415,6 +415,15 @@ export function* evaluate(
         throw new StackOverflowError(`Stack overflow: call depth exceeded ${MAX_CALL_DEPTH}`, node)
       const func = node.childForFieldName('function')!
       asserts(func.type === 'identifier')
+
+      // Built-in: breakpoint() pauses execution and stops play mode
+      if (func.text === 'breakpoint') {
+        setCurrentNode(node)
+        context.hitBreakpoint = true
+        yield
+        return null
+      }
+
       asserts(func.text in context.functions)
       const { params, body } = context.functions[func.text]
       const argumentsNode = node.childForFieldName('arguments')!.namedChildren

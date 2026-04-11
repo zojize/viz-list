@@ -187,9 +187,9 @@ function handlePause() {
 function runStep() {
   try {
     snapshot()
-    const done = step()
+    const { done, breakpoint } = step()
     diff()
-    if (done)
+    if (done || breakpoint)
       pause()
   }
   catch (e) {
@@ -217,11 +217,11 @@ function handleStep() {
 
 const speedLabel = computed(() => {
   const ms = speedMs.value
-  if (ms <= 50)
-    return 'fast'
   if (ms <= 150)
-    return 'med'
+    return 'fast'
   if (ms <= 300)
+    return 'med'
+  if (ms <= 500)
     return 'slow'
   return 'slower'
 })

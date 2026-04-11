@@ -46,5 +46,6 @@ int main() {
   insertBack(&head, 5);
   reverse(&head);
 
+  breakpoint();
   return 0;
 }

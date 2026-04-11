@@ -48,5 +48,6 @@ int main() {
   TreeNode *found = search(root, 4);
   TreeNode *notFound = search(root, 6);
 
+  breakpoint();
   return 0;
 }

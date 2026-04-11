@@ -28,5 +28,6 @@ int main() {
   insertBack(&head, 2);
   insertBack(&head, 3);
 
+  breakpoint();
   return 0;
 }
