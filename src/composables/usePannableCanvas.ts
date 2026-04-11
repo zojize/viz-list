@@ -78,7 +78,8 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
     }
 
     // Middle-click anywhere, or left-click on empty canvas → pan
-    if (e.button === 1 || e.button === 0) {
+    // Skip interactive elements (buttons, links) so their click handlers work
+    if (e.button === 1 || (e.button === 0 && !(e.target as HTMLElement).closest('button, a'))) {
       isPanning.value = true
       panStart.x = e.clientX
       panStart.y = e.clientY
