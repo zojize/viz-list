@@ -2,6 +2,7 @@ import type { Ref } from 'vue'
 import type { Node as SyntaxNode } from 'web-tree-sitter'
 import type { InterpreterContext } from '~/composables/interpreter/types'
 import { computed } from 'vue'
+import { structFieldOffset } from '~/composables/interpreter/memory'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 /**
@@ -239,9 +240,9 @@ function resolveFieldAddress(node: SyntaxNode, context: Readonly<InterpreterCont
     const structDef = context.structs[targetCell.value.name]
     if (!structDef)
       return
-    const fieldIdx = Object.keys(structDef).indexOf(fieldName)
-    if (fieldIdx >= 0)
-      addrs.add(targetCell.value.base + 1 + fieldIdx)
+    const offset = structFieldOffset(fieldName, structDef)
+    if (offset >= 0)
+      addrs.add(targetCell.value.base + 1 + offset)
   }
   else if (operator.text === '.') {
     // Direct struct access
@@ -260,17 +261,58 @@ function resolveFieldAddress(node: SyntaxNode, context: Readonly<InterpreterCont
  * For subscript_expression like `arr[i]` or `node->keys[i]`, resolve the
  * actual array element address.
  */
+/** Try to resolve an index expression to a number (literal or variable lookup) */
+function resolveIndex(node: SyntaxNode, context: Readonly<InterpreterContext>): number | undefined {
+  if (node.type === 'number_literal')
+    return Number.parseInt(node.text)
+  if (node.type === 'identifier') {
+    // Look up variable value
+    for (let i = context.envStack.length - 1; i >= 0; i--) {
+      if (node.text in context.envStack[i]) {
+        const val = context.memory.cells.get(context.envStack[i][node.text].address)?.value
+        return typeof val === 'number' ? val : undefined
+      }
+    }
+    if (node.text in context.globalEnv) {
+      const val = context.memory.cells.get(context.globalEnv[node.text].address)?.value
+      return typeof val === 'number' ? val : undefined
+    }
+  }
+  // Binary expression (e.g. j + 1): try to evaluate simple cases
+  if (node.type === 'binary_expression') {
+    const left = node.childForFieldName('left')
+    const right = node.childForFieldName('right')
+    const op = node.childForFieldName('operator')?.text
+    if (left && right && op) {
+      const l = resolveIndex(left, context)
+      const r = resolveIndex(right, context)
+      if (l !== undefined && r !== undefined) {
+        if (op === '+')
+          return l + r
+        if (op === '-')
+          return l - r
+      }
+    }
+  }
+  return undefined
+}
+
 function resolveSubscriptAddress(node: SyntaxNode, context: Readonly<InterpreterContext>, addrs: Set<number>) {
   const arrayNode = node.childForFieldName('argument')
   const indexNode = node.childForFieldName('indices')
   if (!arrayNode || !indexNode)
     return
 
-  // Resolve the array base — could be a field_expression (node->keys) or identifier (arr)
-  // Try field_expression first
+  const idxChild = indexNode.namedChildren[0]
+  if (!idxChild)
+    return
+  const idx = resolveIndex(idxChild, context)
+  if (idx === undefined)
+    return
+
+  // field_expression: node->keys[i]
   if (arrayNode.type === 'field_expression') {
     resolveFieldAddress(arrayNode, context, addrs)
-    // Now find the array value at the resolved field address to get the element
     const lastAddr = [...addrs].at(-1)
     if (lastAddr === undefined)
       return
@@ -280,32 +322,22 @@ function resolveSubscriptAddress(node: SyntaxNode, context: Readonly<Interpreter
     const arrVal = fieldCell.value
     if (typeof arrVal !== 'object' || arrVal.type !== 'array')
       return
-    // Resolve index (try simple number literal)
-    const idxChild = indexNode.namedChildren[0]
-    if (!idxChild)
-      return
-    const idxText = idxChild.text
-    const idx = Number.parseInt(idxText)
-    if (Number.isNaN(idx))
-      return
-    // Replace field address with element address
     addrs.delete(lastAddr)
     addrs.add(arrVal.base + 1 + idx)
     return
   }
 
-  // Simple array variable: arr[i]
+  // identifier: arr[i]
   if (arrayNode.type === 'identifier') {
-    const varName = arrayNode.text
     let varAddr: number | undefined
     for (let i = context.envStack.length - 1; i >= 0; i--) {
-      if (varName in context.envStack[i]) {
-        varAddr = context.envStack[i][varName].address
+      if (arrayNode.text in context.envStack[i]) {
+        varAddr = context.envStack[i][arrayNode.text].address
         break
       }
     }
-    if (varAddr === undefined && varName in context.globalEnv)
-      varAddr = context.globalEnv[varName].address
+    if (varAddr === undefined && arrayNode.text in context.globalEnv)
+      varAddr = context.globalEnv[arrayNode.text].address
     if (varAddr === undefined)
       return
     const cell = context.memory.cells.get(varAddr)
@@ -313,12 +345,6 @@ function resolveSubscriptAddress(node: SyntaxNode, context: Readonly<Interpreter
       return
     const arrVal = cell.value
     if (typeof arrVal !== 'object' || arrVal.type !== 'array')
-      return
-    const idxChild = indexNode.namedChildren[0]
-    if (!idxChild)
-      return
-    const idx = Number.parseInt(idxChild.text)
-    if (Number.isNaN(idx))
       return
     addrs.add(arrVal.base + 1 + idx)
   }

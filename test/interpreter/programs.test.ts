@@ -281,18 +281,43 @@ describe('interpreter integration tests', () => {
     const rootCell = heapCells[0]
     const rootBase = (rootCell.value as any).base
 
-    // numKeys = 2
+    // Verify inline memory layout:
+    // BTreeNode { int numKeys; int keys[3]; BTreeNode *children[4]; }
+    // Layout: [header] [numKeys] [keys_hdr] [k0] [k1] [k2] [children_hdr] [c0] [c1] [c2] [c3]
+    // Offsets:  +0       +1       +2         +3   +4   +5   +6              +7   +8   +9   +10
+
+    // numKeys at offset 1
     expect(mem.read(rootBase + 1).value).toBe(2)
 
-    // keys field (base+2) should be an array with base pointing to allocated elements
+    // keys array header at offset 2 (inline, base === rootBase + 2)
     const keysValue = mem.read(rootBase + 2).value
     expect(typeof keysValue).toBe('object')
     expect((keysValue as any).type).toBe('array')
-    const keysBase = (keysValue as any).base
-    // keys[0] = 10, keys[1] = 20, keys[2] = 0
-    expect(mem.read(keysBase + 1).value).toBe(10)
-    expect(mem.read(keysBase + 2).value).toBe(20)
-    expect(mem.read(keysBase + 3).value).toBe(0)
+    expect((keysValue as any).base).toBe(rootBase + 2) // inline: array base IS the field address
+
+    // keys elements are contiguous after the header
+    expect(mem.read(rootBase + 3).value).toBe(10) // keys[0]
+    expect(mem.read(rootBase + 4).value).toBe(20) // keys[1]
+    expect(mem.read(rootBase + 5).value).toBe(0) // keys[2]
+
+    // children array header at offset 6
+    const childrenValue = mem.read(rootBase + 6).value
+    expect(typeof childrenValue).toBe('object')
+    expect((childrenValue as any).type).toBe('array')
+    expect((childrenValue as any).base).toBe(rootBase + 6)
+
+    // children[0..3] are pointers at offsets 7..10
+    const c0 = mem.read(rootBase + 7).value
+    expect(typeof c0).toBe('object')
+    expect((c0 as any).type).toBe('pointer')
+
+    // Total struct size: 1 (header) + 1 (numKeys) + 4 (keys) + 5 (children) = 11 cells
+    // All 11 cells should be in the same contiguous block
+    for (let i = 0; i < 11; i++) {
+      const cell = mem.space.cells.get(rootBase + i)
+      expect(cell).toBeDefined()
+      expect(cell!.region).toBe('heap')
+    }
   })
 })
 

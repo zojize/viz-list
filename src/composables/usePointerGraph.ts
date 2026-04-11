@@ -1,5 +1,6 @@
 import type { ArrowStyle, FieldDirection, InterpreterContext } from '~/composables/interpreter/types'
 import { computed } from 'vue'
+import { structFieldOffset } from '~/composables/interpreter/memory'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 interface PointerEdge {
@@ -85,7 +86,7 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
       const fieldNames = Object.keys(structDef)
       for (let i = 0; i < fieldNames.length; i++) {
         const fieldType = structDef[fieldNames[i]]
-        const fieldAddr = base + 1 + i
+        const fieldAddr = base + 1 + structFieldOffset(fieldNames[i], structDef)
         const meta = context.structFieldMeta[info.structName]?.[fieldNames[i]]
 
         // Collect pointer-to-struct entries: either direct pointer or array of pointers
