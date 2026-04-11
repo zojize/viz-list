@@ -54,7 +54,7 @@ and are only recalculated when items first appear or auto-layout is triggered.
 
 ### Placement strategies
 
-**`placeNew(key, w, h)`** --- For new items (chains, standalone variables, tree roots).
+**`placeNew(key, w, h)`** --- For new items (standalone variables, tree roots).
 Finds empty space in the visible viewport via `findEmptySpace`. Returns early if the
 item already has a position (idempotent across re-renders).
 
@@ -68,7 +68,7 @@ children. Computes ideal position to the right of the parent:
 **`findEmptySpace(w, h, occupied, container)`** --- Two-pass scan:
 
 1. Try to fit within visible viewport (candidate Y rows x sliding X)
-2. Wide items (chains) that exceed viewport width: place at origin X, find clear Y row
+2. Wide items that exceed viewport width: place at origin X, find clear Y row
 3. Fallback: place below all existing items
 
 **`displaceAndPlace(key, x, y, w, h)`** --- Conflict resolution. Removes overlapping

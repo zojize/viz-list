@@ -1,24 +1,22 @@
-struct Node {
+/** @arrow-anchor closest @arrow-size 30 */
+struct ListNode {
   int data;
-  Node *next;
+  /** @arrow-position right @arrow-color #4ade80 @arrow-style horizontal @arrow-fallback-style orthogonal */
+  ListNode *next;
 };
 
-struct LinkedList {
-  Node *head;
-};
-
-void insertFront(LinkedList *list, int data) {
-  Node *newNode = new Node;
-  newNode->data = data;
-  newNode->next = list->head;
-  list->head = newNode;
+void insertFront(ListNode **head, int data) {
+  ListNode *node = new ListNode;
+  node->data = data;
+  node->next = *head;
+  *head = node;
 }
 
 int main() {
-  LinkedList list;
-  insertFront(&list, 3);
-  insertFront(&list, 2);
-  insertFront(&list, 1);
+  ListNode *head = nullptr;
+  insertFront(&head, 3);
+  insertFront(&head, 2);
+  insertFront(&head, 1);
 
   return 0;
 }
