@@ -85,18 +85,6 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
 
   // ---- Occupied rectangles ----
 
-  function getOccupied(excludeKey?: string): Rect[] {
-    const rects: Rect[] = []
-    for (const [k, pos] of positions) {
-      if (k === excludeKey)
-        continue
-      const size = sizes.get(k)
-      if (size)
-        rects.push({ x: pos.x, y: pos.y, w: size.w, h: size.h })
-    }
-    return rects
-  }
-
   function getOccupiedKeyed(excludeKey?: string): { key: string, rect: Rect }[] {
     const rects: { key: string, rect: Rect }[] = []
     for (const [k, pos] of positions) {
@@ -107,6 +95,10 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
         rects.push({ key: k, rect: { x: pos.x, y: pos.y, w: size.w, h: size.h } })
     }
     return rects
+  }
+
+  function getOccupied(excludeKey?: string): Rect[] {
+    return getOccupiedKeyed(excludeKey).map(item => item.rect)
   }
 
   // ---- Placement ----
@@ -191,10 +183,14 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     }
     if (displaced.length > 0) {
       const container = options.containerSize?.()
+      const occupied = getOccupied()
       for (const k of displaced) {
         const s = sizes.get(k)
-        if (s)
-          positions.set(k, findEmptySpace(s.w, s.h, getOccupied(k), container))
+        if (!s)
+          continue
+        const newPos = findEmptySpace(s.w, s.h, occupied, container)
+        positions.set(k, newPos)
+        occupied.push({ x: newPos.x, y: newPos.y, w: s.w, h: s.h })
       }
     }
 
@@ -226,15 +222,16 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     // Place the target item
     positions.set(key, { x, y })
 
-    // Re-place displaced items
+    // Re-place displaced items using incremental occupied list
     const container = options.containerSize?.()
+    const occupied = getOccupied()
     for (const k of displaced) {
       const size = sizes.get(k)
       if (!size)
         continue
-      const occupied = getOccupied(k)
       const newPos = findEmptySpace(size.w, size.h, occupied, container)
       positions.set(k, newPos)
+      occupied.push({ x: newPos.x, y: newPos.y, w: size.w, h: size.h })
     }
 
     version.value++
@@ -250,11 +247,12 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     userDragged.clear()
 
     const container = options.containerSize?.()
+    const occupied: Rect[] = []
     for (const { key, w, h } of orderedKeys) {
       sizes.set(key, { w, h })
-      const occupied = getOccupied()
       const pos = findEmptySpace(w, h, occupied, container)
       positions.set(key, pos)
+      occupied.push({ x: pos.x, y: pos.y, w, h })
     }
 
     version.value++

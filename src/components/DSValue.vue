@@ -2,6 +2,7 @@
 import type { CppType, MemoryCell } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
+import { formatType } from '~/composables/interpreter/helpers'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
 const props = defineProps<{
@@ -18,18 +19,6 @@ const emit = defineEmits<{
 }>()
 
 const context = useInterpreterContext()
-
-function formatType(type: CppType): string {
-  if (typeof type === 'string')
-    return type
-  if (type.type === 'pointer')
-    return `${formatType(type.to)}*`
-  if (type.type === 'array')
-    return `${formatType(type.of)}[${type.size}]`
-  if (type.type === 'struct')
-    return type.name
-  return '?'
-}
 
 // ---- Computed data ----
 
@@ -166,7 +155,7 @@ const arrayElements = computed((): ArrayEntry[] => {
           <div class="pl-2">
             <DSValue
               :cell="field.cell"
-
+              :highlighted-field-address="highlightedFieldAddress"
               @navigate="emit('navigate', $event)"
               @hover-node="emit('hoverNode', $event)"
             />
