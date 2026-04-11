@@ -2,6 +2,7 @@
 import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
+import { formatAddr, formatType, formatValue, isPointerValue } from '~/composables/interpreter/helpers'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 const props = defineProps<{
@@ -17,36 +18,6 @@ const emit = defineEmits<{
   hoverPointer: [address: number | null]
   clickCell: [address: number]
 }>()
-
-function formatValue(value: CppValue): string {
-  if (typeof value === 'number' || typeof value === 'boolean')
-    return String(value)
-  if (typeof value === 'object') {
-    if (value.type === 'pointer')
-      return value.address === NULL_ADDRESS ? 'NULL' : `0x${value.address.toString(16).padStart(3, '0')}`
-    if (value.type === 'struct')
-      return `${value.name} {...}`
-    if (value.type === 'array')
-      return `[${value.length}]`
-  }
-  return String(value)
-}
-
-function formatType(type: CppType): string {
-  if (typeof type === 'string')
-    return type
-  if (type.type === 'pointer')
-    return `${formatType(type.to)}*`
-  if (type.type === 'array')
-    return `${formatType(type.of)}[${type.size}]`
-  if (type.type === 'struct')
-    return type.name
-  return '?'
-}
-
-function isPointerValue(value: CppValue): value is { type: 'pointer', address: number } {
-  return typeof value === 'object' && value.type === 'pointer'
-}
 
 const structName = computed(() => {
   if (typeof props.cell.type === 'object' && props.cell.type.type === 'struct')
@@ -69,7 +40,7 @@ const structName = computed(() => {
         <span v-if="structName" class="text-sm text-accent-cyan font-bold">{{ structName }}</span>
         <span v-else class="text-sm text-gray-600 dark:text-gray-400">{{ formatType(cell.type) }}</span>
       </div>
-      <span class="text-[10px] text-gray-500 font-mono">{{ `0x${cell.address.toString(16).padStart(3, '0')}` }}</span>
+      <span class="text-[10px] text-gray-500 font-mono">{{ formatAddr(cell.address) }}</span>
     </div>
 
     <!-- Struct with fields -->

@@ -33,8 +33,6 @@ const templates = Object.fromEntries(Object.entries(
 const templateNames = Object.keys(templates)
 const selectedTemplateName = useLocalStorage('selected-template', 'singly-insertBack')
 
-// No prefix code — all templates include their own struct definitions
-const prefixCode = computed(() => '')
 const code = useLocalStorage('code', templates[selectedTemplateName.value] ?? '')
 if (queryParams.has('code')) {
   const queryCode = queryParams.get('code')!
@@ -58,7 +56,6 @@ const {
   highlightVariable,
 } = useMonacoEditor({
   container: monacoContainer,
-  prefixCode,
   code,
 })
 
@@ -190,9 +187,9 @@ function handlePause() {
 function runStep() {
   try {
     snapshot()
-    const done = step()
+    const { done, breakpoint } = step()
     diff()
-    if (done)
+    if (done || breakpoint)
       pause()
   }
   catch (e) {
@@ -220,11 +217,11 @@ function handleStep() {
 
 const speedLabel = computed(() => {
   const ms = speedMs.value
-  if (ms <= 50)
-    return 'fast'
   if (ms <= 150)
-    return 'med'
+    return 'fast'
   if (ms <= 300)
+    return 'med'
+  if (ms <= 500)
     return 'slow'
   return 'slower'
 })

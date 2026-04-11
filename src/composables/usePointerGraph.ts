@@ -1,5 +1,6 @@
 import type { ArrowStyle, FieldDirection, InterpreterContext } from '~/composables/interpreter/types'
 import { computed } from 'vue'
+import { structFieldOffset } from '~/composables/interpreter/memory'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 interface PointerEdge {
@@ -13,16 +14,7 @@ interface PointerEdge {
   fallbackStyle?: ArrowStyle
 }
 
-interface DanglingEdge {
-  fromAddress: number
-  fromFieldAddress: number
-  fieldName: string
-  toAddress: number
-  direction: FieldDirection
-  color?: string
-  style?: ArrowStyle
-  fallbackStyle?: ArrowStyle
-}
+type DanglingEdge = PointerEdge
 
 interface GraphNode {
   address: number
@@ -94,61 +86,72 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
       const fieldNames = Object.keys(structDef)
       for (let i = 0; i < fieldNames.length; i++) {
         const fieldType = structDef[fieldNames[i]]
-        // Only follow pointer fields that point to struct types
-        if (typeof fieldType !== 'object' || fieldType.type !== 'pointer')
-          continue
-        if (typeof fieldType.to !== 'object' || fieldType.to.type !== 'struct')
-          continue
-
-        const fieldAddr = base + 1 + i
-        const fieldCell = context.memory.cells.get(fieldAddr)
-        if (!fieldCell)
-          continue
-
-        const val = fieldCell.value
-        if (typeof val !== 'object' || val.type !== 'pointer' || val.address === NULL_ADDRESS)
-          continue
-
-        const targetAddr = val.address
+        const fieldAddr = base + 1 + structFieldOffset(fieldNames[i], structDef)
         const meta = context.structFieldMeta[info.structName]?.[fieldNames[i]]
+
+        // Collect pointer-to-struct entries: either direct pointer or array of pointers
+        interface PtrEntry { ptrAddr: number, fieldName: string }
+        const ptrEntries: PtrEntry[] = []
+
+        if (typeof fieldType === 'object' && fieldType.type === 'pointer'
+          && typeof fieldType.to === 'object' && fieldType.to.type === 'struct') {
+          ptrEntries.push({ ptrAddr: fieldAddr, fieldName: fieldNames[i] })
+        }
+        else if (typeof fieldType === 'object' && fieldType.type === 'array'
+          && typeof fieldType.of === 'object' && fieldType.of.type === 'pointer'
+          && typeof fieldType.of.to === 'object' && fieldType.of.to.type === 'struct') {
+          // Array of pointers to structs — iterate elements
+          const fieldCell = context.memory.cells.get(fieldAddr)
+          if (fieldCell && typeof fieldCell.value === 'object' && fieldCell.value.type === 'array') {
+            for (let j = 0; j < fieldCell.value.length; j++)
+              ptrEntries.push({ ptrAddr: fieldCell.value.base + 1 + j, fieldName: `${fieldNames[i]}[${j}]` })
+          }
+        }
+
+        if (ptrEntries.length === 0)
+          continue
+
         const direction: FieldDirection = meta?.direction ?? 'right'
         const color = meta?.color
         const style = meta?.style
         const fallbackStyle = meta?.fallbackStyle
 
-        // Resolve target to struct base
-        const targetCell = context.memory.cells.get(targetAddr)
-        if (!targetCell) {
-          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction, color, style, fallbackStyle })
-          continue
+        for (const { ptrAddr, fieldName } of ptrEntries) {
+          const ptrCell = context.memory.cells.get(ptrAddr)
+          if (!ptrCell)
+            continue
+          const val = ptrCell.value
+          if (typeof val !== 'object' || val.type !== 'pointer' || val.address === NULL_ADDRESS)
+            continue
+
+          const targetAddr = val.address
+          const targetCell = context.memory.cells.get(targetAddr)
+          if (!targetCell || targetCell.dead) {
+            danglingEdges.push({ fromAddress: base, fromFieldAddress: ptrAddr, fieldName, toAddress: targetAddr, direction, color, style, fallbackStyle })
+            continue
+          }
+
+          const targetBase = (typeof targetCell.value === 'object' && targetCell.value.type === 'struct')
+            ? targetCell.value.base
+            : targetAddr
+
+          if (!nodes.has(targetBase))
+            continue
+
+          const edge: PointerEdge = {
+            fromAddress: base,
+            fromFieldAddress: ptrAddr,
+            fieldName,
+            toAddress: targetBase,
+            direction,
+            color,
+            style,
+            fallbackStyle,
+          }
+
+          nodes.get(base)!.outEdges.push(edge)
+          nodes.get(targetBase)!.inEdges.push(edge)
         }
-
-        if (targetCell.dead) {
-          danglingEdges.push({ fromAddress: base, fromFieldAddress: fieldAddr, fieldName: fieldNames[i], toAddress: targetAddr, direction, color, style, fallbackStyle })
-          continue
-        }
-
-        // Resolve to struct base
-        const targetBase = (typeof targetCell.value === 'object' && targetCell.value.type === 'struct')
-          ? targetCell.value.base
-          : targetAddr
-
-        if (!nodes.has(targetBase))
-          continue
-
-        const edge: PointerEdge = {
-          fromAddress: base,
-          fromFieldAddress: fieldAddr,
-          fieldName: fieldNames[i],
-          toAddress: targetBase,
-          direction,
-          color,
-          style,
-          fallbackStyle,
-        }
-
-        nodes.get(base)!.outEdges.push(edge)
-        nodes.get(targetBase)!.inEdges.push(edge)
       }
     }
 

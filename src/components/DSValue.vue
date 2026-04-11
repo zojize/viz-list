@@ -2,6 +2,8 @@
 import type { CppType, MemoryCell } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
+import { formatType } from '~/composables/interpreter/helpers'
+import { structFieldOffset } from '~/composables/interpreter/memory'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
 const props = defineProps<{
@@ -10,6 +12,9 @@ const props = defineProps<{
   indexPrefix?: string
   /** Field address to highlight (from referenced-by hover or arrow hover) */
   highlightedFieldAddress?: number | null
+  /** Statement LHS/RHS addresses for per-field code highlighting */
+  statementLhsAddresses?: ReadonlySet<number>
+  statementRhsAddresses?: ReadonlySet<number>
 }>()
 
 const emit = defineEmits<{
@@ -18,18 +23,6 @@ const emit = defineEmits<{
 }>()
 
 const context = useInterpreterContext()
-
-function formatType(type: CppType): string {
-  if (typeof type === 'string')
-    return type
-  if (type.type === 'pointer')
-    return `${formatType(type.to)}*`
-  if (type.type === 'array')
-    return `${formatType(type.of)}[${type.size}]`
-  if (type.type === 'struct')
-    return type.name
-  return '?'
-}
 
 // ---- Computed data ----
 
@@ -78,11 +71,37 @@ const structFields = computed((): FieldEntry[] => {
   const structDef = context.structs[v.name]
   if (!structDef)
     return []
-  return Object.keys(structDef).map((name, i) => ({
-    name,
-    cell: context.memory.cells.get(v.base + 1 + i),
-    type: structDef[name],
-  }))
+  const entries: FieldEntry[] = []
+
+  /** Recursively flatten array elements with subscript prefix (handles n-d arrays) */
+  function flattenArray(prefix: string, elemType: CppType, cell: MemoryCell | undefined) {
+    if (!cell)
+      return
+    const arrVal = cell.value
+    if (typeof arrVal !== 'object' || arrVal.type !== 'array')
+      return
+    for (let i = 0; i < arrVal.length; i++) {
+      const elemCell = context.memory.cells.get(arrVal.base + 1 + i)
+      const subscript = `${prefix}[${i}]`
+      // Nested array: recurse
+      if (typeof elemType === 'object' && elemType.type === 'array' && elemCell) {
+        flattenArray(subscript, elemType.of, elemCell)
+      }
+      else {
+        entries.push({ name: subscript, cell: elemCell, type: elemType })
+      }
+    }
+  }
+
+  for (const [name, fieldType] of Object.entries(structDef)) {
+    const fieldCell = context.memory.cells.get(v.base + 1 + structFieldOffset(name, structDef))
+    if (typeof fieldType === 'object' && fieldType.type === 'array' && fieldCell) {
+      flattenArray(name, fieldType.of, fieldCell)
+      continue
+    }
+    entries.push({ name, cell: fieldCell, type: fieldType })
+  }
+  return entries
 })
 
 interface ArrayEntry {
@@ -135,7 +154,15 @@ const arrayElements = computed((): ArrayEntry[] => {
         />
       </template>
       <!-- Leaf element -->
-      <div v-else class="flex items-baseline justify-between gap-2 rounded px-1 py-0.5">
+      <div
+        v-else
+        class="flex items-baseline justify-between gap-2 rounded px-1 py-0.5"
+        :class="[
+          highlightedFieldAddress === elem.cell?.address ? 'bg-blue-500/15' : '',
+          statementLhsAddresses?.has(elem.cell?.address ?? -1) ? 'bg-blue-500/10' : '',
+          statementRhsAddresses?.has(elem.cell?.address ?? -1) && !statementLhsAddresses?.has(elem.cell?.address ?? -1) ? 'bg-green-500/10' : '',
+        ]"
+      >
         <span class="text-gray-500 font-mono">{{ elem.prefix }}</span>
         <DSValue
           v-if="elem.cell"
@@ -159,14 +186,18 @@ const arrayElements = computed((): ArrayEntry[] => {
       <template v-if="field.cell && typeof field.cell.value === 'object' && (field.cell.value.type === 'struct' || field.cell.value.type === 'array')">
         <div
           class="py-0.5 pl-3"
-          :class="highlightedFieldAddress === field.cell?.address ? 'bg-blue-500/15 rounded' : ''"
+          :class="[
+            highlightedFieldAddress === field.cell?.address ? 'bg-blue-500/15 rounded' : '',
+            statementLhsAddresses?.has(field.cell?.address ?? -1) ? 'bg-blue-500/10 rounded' : '',
+            statementRhsAddresses?.has(field.cell?.address ?? -1) && !statementLhsAddresses?.has(field.cell?.address ?? -1) ? 'bg-green-500/10 rounded' : '',
+          ]"
           :data-field-addr="field.cell?.address"
         >
           <span class="text-gray-500 font-mono">{{ field.name }}:</span>
           <div class="pl-2">
             <DSValue
               :cell="field.cell"
-
+              :highlighted-field-address="highlightedFieldAddress"
               @navigate="emit('navigate', $event)"
               @hover-node="emit('hoverNode', $event)"
             />
@@ -177,7 +208,11 @@ const arrayElements = computed((): ArrayEntry[] => {
       <div
         v-else
         class="flex items-baseline justify-between gap-4 rounded px-1 py-0.5 pl-3"
-        :class="highlightedFieldAddress === field.cell?.address ? 'bg-blue-500/15' : ''"
+        :class="[
+          highlightedFieldAddress === field.cell?.address ? 'bg-blue-500/15' : '',
+          statementLhsAddresses?.has(field.cell?.address ?? -1) ? 'bg-blue-500/10' : '',
+          statementRhsAddresses?.has(field.cell?.address ?? -1) && !statementLhsAddresses?.has(field.cell?.address ?? -1) ? 'bg-green-500/10' : '',
+        ]"
         :data-field-addr="field.cell?.address"
       >
         <span class="shrink-0 text-gray-500 font-mono">{{ field.name }}:</span>
@@ -185,6 +220,8 @@ const arrayElements = computed((): ArrayEntry[] => {
           v-if="field.cell"
           :cell="field.cell"
           :highlighted-field-address="highlightedFieldAddress"
+          :statement-lhs-addresses="statementLhsAddresses"
+          :statement-rhs-addresses="statementRhsAddresses"
           @navigate="emit('navigate', $event)"
           @hover-node="emit('hoverNode', $event)"
         />

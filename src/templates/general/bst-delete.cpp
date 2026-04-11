@@ -75,5 +75,6 @@ int main() {
   // Delete node with two children
   root = deleteNode(root, 5);
 
+  breakpoint();
   return 0;
 }

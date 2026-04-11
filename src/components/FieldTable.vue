@@ -3,7 +3,8 @@ import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/ty
 import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
 import DSValue from '~/components/DSValue.vue'
-import { NULL_ADDRESS } from '~/composables/interpreter/types'
+import { formatAddr, formatType, formatValue } from '~/composables/interpreter/helpers'
+import { structFieldOffset } from '~/composables/interpreter/memory'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
 const props = defineProps<{
@@ -18,32 +19,6 @@ const emit = defineEmits<{
 }>()
 
 const context = useInterpreterContext()
-
-function formatValue(value: CppValue): string {
-  if (typeof value === 'number' || typeof value === 'boolean')
-    return String(value)
-  if (typeof value === 'object') {
-    if (value.type === 'pointer')
-      return value.address === NULL_ADDRESS ? 'NULL' : `0x${value.address.toString(16).padStart(3, '0')}`
-    if (value.type === 'struct')
-      return `${value.name} {...}`
-    if (value.type === 'array')
-      return `[${value.length}]`
-  }
-  return String(value)
-}
-
-function formatType(type: CppType): string {
-  if (typeof type === 'string')
-    return type
-  if (type.type === 'pointer')
-    return `${formatType(type.to)}*`
-  if (type.type === 'array')
-    return `${formatType(type.of)}[${type.size}]`
-  if (type.type === 'struct')
-    return type.name
-  return '?'
-}
 
 const structName = computed(() => {
   if (typeof props.cell.type === 'object' && props.cell.type.type === 'struct')
@@ -88,7 +63,7 @@ const referencedBy = computed((): RefEntry[] => {
     if (cell.dead)
       continue
     if (typeof cell.value === 'object' && cell.value.type === 'pointer' && cell.value.address === targetAddr)
-      refs.push({ address: cell.address, label: `0x${cell.address.toString(16).padStart(3, '0')}` })
+      refs.push({ address: cell.address, label: formatAddr(cell.address) })
   }
   return refs
 })
@@ -100,20 +75,55 @@ const fields = computed((): FieldRow[] => {
   if (!structDef)
     return []
   const base = structBase.value
-  return Object.keys(structDef).map((name, i) => {
-    const addr = base + 1 + i
+  const rows: FieldRow[] = []
+
+  /** Recursively flatten array elements with subscript prefix (handles n-d arrays) */
+  function flattenArray(prefix: string, elemType: CppType, arrValue: { base: number, length: number }) {
+    for (let i = 0; i < arrValue.length; i++) {
+      const elemAddr = arrValue.base + 1 + i
+      const elemCell = context.memory.cells.get(elemAddr)
+      const elemValue = elemCell?.value ?? 0
+      const subscript = `${prefix}[${i}]`
+      // Nested array: recurse
+      if (typeof elemType === 'object' && elemType.type === 'array'
+        && typeof elemValue === 'object' && elemValue.type === 'array') {
+        flattenArray(subscript, elemType.of, elemValue)
+        continue
+      }
+      rows.push({
+        name: subscript,
+        type: elemType,
+        value: elemValue,
+        address: elemAddr,
+        isPointer: typeof elemValue === 'object' && elemValue.type === 'pointer',
+        pointerAddress: (typeof elemValue === 'object' && elemValue.type === 'pointer') ? elemValue.address : 0,
+        changed: props.changedAddresses.has(elemAddr),
+      })
+    }
+  }
+
+  for (const [name, fieldType] of Object.entries(structDef)) {
+    const addr = base + 1 + structFieldOffset(name, structDef)
     const fieldCell = context.memory.cells.get(addr)
     const value = fieldCell?.value ?? 0
-    return {
+
+    if (typeof fieldType === 'object' && fieldType.type === 'array'
+      && typeof value === 'object' && value.type === 'array') {
+      flattenArray(name, fieldType.of, value)
+      continue
+    }
+
+    rows.push({
       name,
-      type: structDef[name],
+      type: fieldType,
       value,
       address: addr,
       isPointer: typeof value === 'object' && value.type === 'pointer',
       pointerAddress: (typeof value === 'object' && value.type === 'pointer') ? value.address : 0,
       changed: props.changedAddresses.has(addr),
-    }
-  })
+    })
+  }
+  return rows
 })
 </script>
 

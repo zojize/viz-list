@@ -30,5 +30,6 @@ int main() {
   root->left = nullptr;
   root->right->right = detached;
 
+  breakpoint();
   return 0;
 }

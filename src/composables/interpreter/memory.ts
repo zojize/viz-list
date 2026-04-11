@@ -45,6 +45,7 @@ export interface MemoryManager {
     fieldName: string,
     fieldDefs: Record<string, CppType>,
   ) => [CppType, number]
+  structFieldOffset: (fieldName: string, fieldDefs: Record<string, CppType>) => number
   reset: () => void
 }
 
@@ -56,6 +57,32 @@ function makeNullCell(): MemoryCell {
     region: 'global',
     dead: true,
   }
+}
+
+/** Compute the number of cells a field type occupies (inline arrays expand) */
+function fieldCellCount(type: CppType): number {
+  if (typeof type === 'object' && type.type === 'array')
+    return 1 + type.size // header + elements
+  return 1
+}
+
+/** Compute the cell offset of fieldName within a struct (accounting for inline arrays) */
+export function structFieldOffset(fieldName: string, fieldDefs: Record<string, CppType>): number {
+  let offset = 0
+  for (const [name, type] of Object.entries(fieldDefs)) {
+    if (name === fieldName)
+      return offset
+    offset += fieldCellCount(type)
+  }
+  return -1
+}
+
+/** Compute the total number of cells a struct occupies (header + all fields) */
+export function structTotalSize(fieldDefs: Record<string, CppType>): number {
+  let size = 1 // header
+  for (const type of Object.values(fieldDefs))
+    size += fieldCellCount(type)
+  return size
 }
 
 export function createAddressSpace(): MemoryManager {
@@ -107,7 +134,9 @@ export function createAddressSpace(): MemoryManager {
     region: MemoryRegion,
   ): number {
     const fields = Object.entries(fieldDefs)
-    const totalSize = 1 + fields.length // header + fields
+    let totalSize = 1 // header
+    for (const [, type] of fields)
+      totalSize += fieldCellCount(type)
     const base = allocRegion(totalSize, region)
 
     // Header cell
@@ -118,17 +147,43 @@ export function createAddressSpace(): MemoryManager {
       region,
       dead: false,
     })
-    // Field cells at base+1, base+2, ...
-    for (let i = 0; i < fields.length; i++) {
-      const [, fieldType] = fields[i]
-      const fieldAddress = base + 1 + i
-      space.cells.set(fieldAddress, {
-        address: fieldAddress,
-        type: fieldType,
-        value: defaultValue(fieldType),
-        region,
-        dead: false,
-      })
+
+    // Field cells with computed offsets (inline arrays are contiguous)
+    let offset = 1
+    for (const [, fieldType] of fields) {
+      if (typeof fieldType === 'object' && fieldType.type === 'array') {
+        // Inline array: header at base+offset, elements at base+offset+1..
+        const arrBase = base + offset
+        space.cells.set(arrBase, {
+          address: arrBase,
+          type: fieldType,
+          value: { type: 'array', base: arrBase, length: fieldType.size },
+          region,
+          dead: false,
+        })
+        for (let j = 0; j < fieldType.size; j++) {
+          const elemAddr = arrBase + 1 + j
+          space.cells.set(elemAddr, {
+            address: elemAddr,
+            type: fieldType.of,
+            value: defaultValue(fieldType.of),
+            region,
+            dead: false,
+          })
+        }
+        offset += 1 + fieldType.size
+      }
+      else {
+        const fieldAddress = base + offset
+        space.cells.set(fieldAddress, {
+          address: fieldAddress,
+          type: fieldType,
+          value: defaultValue(fieldType),
+          region,
+          dead: false,
+        })
+        offset += 1
+      }
     }
     return base
   }
@@ -212,12 +267,10 @@ export function createAddressSpace(): MemoryManager {
     fieldName: string,
     fieldDefs: Record<string, CppType>,
   ): [CppType, number] {
-    const fields = Object.keys(fieldDefs)
-    const index = fields.indexOf(fieldName)
-    if (index === -1)
+    const offset = structFieldOffset(fieldName, fieldDefs)
+    if (offset === -1)
       throw new Error(`Unknown field: ${fieldName}`)
-    const fieldAddress = structBase + 1 + index
-    return [fieldDefs[fieldName], fieldAddress]
+    return [fieldDefs[fieldName], structBase + 1 + offset]
   }
 
   function reset(): void {
@@ -228,5 +281,5 @@ export function createAddressSpace(): MemoryManager {
     space.cells.set(NULL_ADDRESS, makeNullCell())
   }
 
-  return { space, alloc, allocStruct, allocArray, read, write, free, readField, reset }
+  return { space, alloc, allocStruct, allocArray, read, write, free, readField, structFieldOffset, reset }
 }

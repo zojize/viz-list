@@ -18,5 +18,6 @@ int main() {
   insertFront(&head, 2);
   insertFront(&head, 1);
 
+  breakpoint();
   return 0;
 }

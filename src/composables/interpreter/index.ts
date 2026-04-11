@@ -90,6 +90,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     callStack: [] as { env: Record<string, import('./types').EnvEntry>[] }[],
     memory: mem.space,
     currentNode: undefined as import('web-tree-sitter').Node | undefined,
+    hitBreakpoint: false,
   })
 
   let gen: Generator | undefined
@@ -231,7 +232,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     context.memory = { ...mem.space }
   }
 
-  function step() {
+  function step(): { done: boolean, breakpoint: boolean } {
     asserts(gen)
     try {
       const done = !!gen.next().done
@@ -239,9 +240,11 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
       // by the interpreter, bypassing Vue's reactive proxy)
       mem.space.version++
       context.memory = { ...mem.space }
+      const bp = !!context.hitBreakpoint
+      context.hitBreakpoint = false
       if (done)
         isActive.value = false
-      return done
+      return { done, breakpoint: bp }
     }
     catch (e) {
       isActive.value = false
