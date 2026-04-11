@@ -6,7 +6,7 @@ import { processDeclaration, setEvaluate } from './declarations'
 import { asserts, castIfNull, checksDefined, getGeneratorReturn, isTruthy } from './helpers'
 import { NULL_ADDRESS, NullPointerError, StackOverflowError, UnsupportedError, UseAfterFreeError } from './types'
 
-const MAX_CALL_DEPTH = 256
+const MAX_CALL_DEPTH = 128
 
 // ── Pointer equality ──────────────────────────────────────────────
 
@@ -231,6 +231,16 @@ export function* evaluate(
 
       const isFunctionBody = node.parent!.type === 'function_definition'
       if (isFunctionBody) {
+        // Mark function parameter cells as dead (they were allocated on the stack
+        // for this call). Skip struct/array pass-by-reference params that share
+        // the original heap address.
+        for (const env of context.envStack) {
+          for (const { address } of Object.values(env)) {
+            const cell = mem.read(address)
+            if (cell.region === 'stack')
+              cell.dead = true
+          }
+        }
         context.envStack = context.callStack.pop()!.env
       }
 

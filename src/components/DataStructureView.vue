@@ -13,6 +13,8 @@ import { usePointerGraph } from '~/composables/usePointerGraph'
 const props = defineProps<{
   highlightedAddress?: number | null
   selectedAddress?: number | null
+  statementLhsAddresses?: ReadonlySet<number>
+  statementRhsAddresses?: ReadonlySet<number>
 }>()
 
 const emit = defineEmits<{
@@ -357,6 +359,22 @@ function isNodeSelected(address: number): boolean {
   return props.selectedAddress === address
 }
 
+function isStatementLhs(address: number): boolean {
+  return props.statementLhsAddresses?.has(address) ?? false
+}
+
+function isStatementRhs(address: number): boolean {
+  return props.statementRhsAddresses?.has(address) ?? false
+}
+
+function hasCodeHighlight(address: number): boolean {
+  return isStatementLhs(address) || isStatementRhs(address)
+}
+
+function isHoverBoosted(address: number): boolean {
+  return isNodeHighlighted(address) && hasCodeHighlight(address) && !isNodeSelected(address)
+}
+
 // ---- Placement engine ----
 
 // ---- Pannable canvas (declared first so panOffset is available to placement) ----
@@ -372,6 +390,7 @@ const {
   isPanning,
   didDrag,
   getDragDelta,
+  getActiveDragKey,
   panToElement,
   resetPan,
   clampPan,
@@ -643,8 +662,17 @@ function placeTreeChildren(
 /** Snapshot of content bounds before placement, used to detect layout shifts */
 let prevBoundsKey = ''
 
+/**
+ * Track items that are still "settling" — they were just created and haven't
+ * been placed at their real position yet. Suppress movement transition until
+ * the item's position has been set by measureAndPlace (which runs in onUpdated,
+ * one tick after the initial render at 0,0).
+ */
+const settlingKeys = new Set<string>()
+
 onUpdated(() => nextTick(() => {
   measureAndPlace()
+  settlingKeys.clear()
 
   // Auto-pan when content bounds changed and items are outside the visible viewport
   const bounds = placement.getContentBounds()
@@ -679,13 +707,31 @@ watch(hasContent, (has) => {
 function getItemStyle(key: string) {
   const pos = placement.getPosition(key) ?? { x: 0, y: 0 }
   const delta = getDragDelta(key)
-  const isDragging = delta.x !== 0 || delta.y !== 0
+  const anyDragActive = getActiveDragKey() !== null
+  const isSettling = settlingKeys.has(key)
   return {
     position: 'absolute' as const,
     transform: `translate(${pos.x + delta.x}px, ${pos.y + delta.y}px)`,
-    willChange: isDragging ? 'transform' : 'auto',
-    transition: isDragging ? 'none' : undefined,
+    willChange: anyDragActive ? 'transform' : 'auto',
+    // Movement transition only for re-placement (not drag, not settling new items)
+    transition: anyDragActive || isSettling ? 'none' : 'transform 100ms ease-out',
   }
+}
+
+// ---- DS item enter/leave animations (Web Animations API — no conflict with inline transitions) ----
+
+function onItemEnter(el: Element, done: () => void) {
+  const key = (el as HTMLElement).dataset.placeKey
+  if (key)
+    settlingKeys.add(key)
+  const anim = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: 'ease-out' })
+  anim.finished.then(done)
+}
+
+function onItemLeave(el: Element, done: () => void) {
+  (el as HTMLElement).style.pointerEvents = 'none'
+  const anim = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: 'ease-out', fill: 'forwards' })
+  anim.finished.then(done)
 }
 
 // ---- Arrow edges (computed from pointer graph + placement positions) ----
@@ -874,6 +920,7 @@ function autoLayout() {
   placement.clear()
   prevChildToParent.clear()
   prevParentToChildren.clear()
+  settlingKeys.clear()
   resetPan()
 }
 
@@ -958,53 +1005,62 @@ const kindBg: Record<DataItem['kind'], string> = {
       </div>
 
       <!-- Linked list chains -->
-      <LinkedListChain
-        v-for="chain in chains"
-        :key="chain.id"
-        :data-testid="`chain-${chain.id}`"
-        :data-drag-key="chain.id"
-        :data-place-key="chain.id"
-        :nodes="chain.nodes"
-        :has-prev="hasPrev"
-        :highlighted-address="highlightedAddress"
-        :selected-address="selectedAddress"
-        :did-drag="didDrag"
-        :style="getItemStyle(chain.id)"
-        @select-node="emit('selectNode', $event)"
-        @hover-node="emit('hoverNode', $event)"
-        @hover-field="emit('hoverField', $event)"
-      />
+      <TransitionGroup :css="false" tag="div" class="contents" @enter="onItemEnter" @leave="onItemLeave">
+        <LinkedListChain
+          v-for="chain in chains"
+          :key="chain.id"
+          :data-testid="`chain-${chain.id}`"
+          :data-drag-key="chain.id"
+          :data-place-key="chain.id"
+          :nodes="chain.nodes"
+          :has-prev="hasPrev"
+          :highlighted-address="highlightedAddress"
+          :selected-address="selectedAddress"
+          :statement-lhs-addresses="statementLhsAddresses"
+          :statement-rhs-addresses="statementRhsAddresses"
+          :did-drag="didDrag"
+          :style="getItemStyle(chain.id)"
+          @select-node="emit('selectNode', $event)"
+          @hover-node="emit('hoverNode', $event)"
+          @hover-field="emit('hoverField', $event)"
+        />
+      </TransitionGroup>
 
       <!-- Standalone data items -->
-      <div
-        v-for="item in standaloneItems"
-        :key="item.address"
-        :data-testid="`ds-item-${item.address}`"
-        :data-drag-key="`item-${item.address}`"
-        :data-place-key="`item-${item.address}`"
-        class="cursor-pointer border-2 rounded p-1.5 text-xs font-mono transition-colors"
-        :class="[
-          kindColors[item.kind],
-          kindBg[item.kind],
-          isNodeSelected(item.address) ? 'outline outline-2 outline-blue-400' : '',
-          isNodeHighlighted(item.address) ? 'bg-blue-500/10!' : '',
-          item.dimmed ? 'opacity-40' : '',
-        ]"
-        :style="getItemStyle(`item-${item.address}`)"
-        @click="!didDrag && emit('selectNode', item.address)"
-        @pointerenter="emit('hoverNode', item.address); item.varName && emit('hoverVariable', item.varName)"
-        @pointerleave="emit('hoverNode', null); emit('hoverVariable', null)"
-      >
-        <div class="mb-0.5 flex items-baseline gap-1.5 text-[10px]">
-          <span class="text-gray-600 font-semibold dark:text-gray-400">{{ item.label }}</span>
-          <span class="text-gray-400">{{ formatAddr(item.address) }}</span>
+      <TransitionGroup :css="false" tag="div" class="contents" @enter="onItemEnter" @leave="onItemLeave">
+        <div
+          v-for="item in standaloneItems"
+          :key="item.address"
+          :data-testid="`ds-item-${item.address}`"
+          :data-drag-key="`item-${item.address}`"
+          :data-place-key="`item-${item.address}`"
+          class="cursor-pointer border-2 rounded p-1.5 text-xs font-mono transition-colors"
+          :class="[
+            kindColors[item.kind],
+            kindBg[item.kind],
+            isNodeSelected(item.address) ? 'outline outline-2 outline-blue-400' : '',
+            isNodeHighlighted(item.address) && !hasCodeHighlight(item.address) ? 'bg-blue-500/10!' : '',
+            isStatementLhs(item.address) ? 'border-l-blue-500! border-l-3' : '',
+            isStatementRhs(item.address) && !isStatementLhs(item.address) ? 'border-l-green-500! border-l-3' : '',
+            isHoverBoosted(item.address) ? 'ring-2 ring-blue-400/40' : '',
+            item.dimmed ? 'opacity-40' : '',
+          ]"
+          :style="getItemStyle(`item-${item.address}`)"
+          @click="!didDrag && emit('selectNode', item.address)"
+          @pointerenter="emit('hoverNode', item.address); item.varName && emit('hoverVariable', item.varName)"
+          @pointerleave="emit('hoverNode', null); emit('hoverVariable', null)"
+        >
+          <div class="mb-0.5 flex items-baseline gap-1.5 text-[10px]">
+            <span class="text-gray-600 font-semibold dark:text-gray-400">{{ item.label }}</span>
+            <span class="text-gray-400">{{ formatAddr(item.address) }}</span>
+          </div>
+          <DSValue
+            :cell="item.cell"
+            @navigate="emit('selectNode', $event)"
+            @hover-node="emit('hoverNode', $event)"
+          />
         </div>
-        <DSValue
-          :cell="item.cell"
-          @navigate="emit('selectNode', $event)"
-          @hover-node="emit('hoverNode', $event)"
-        />
-      </div>
+      </TransitionGroup>
 
       <!-- SVG arrow overlay (after items so it paints on top; h-[1px]/w-[1px] gives it
            a non-zero paint area — browsers skip rendering 0×0 SVGs even with overflow-visible) -->

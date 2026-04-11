@@ -17,6 +17,8 @@ const props = defineProps<{
   hasPrev: boolean
   highlightedAddress?: number | null
   selectedAddress?: number | null
+  statementLhsAddresses?: ReadonlySet<number>
+  statementRhsAddresses?: ReadonlySet<number>
   /** Whether a drag just happened (suppress click) */
   didDrag?: boolean
 }>()
@@ -37,6 +39,14 @@ function isNodeHighlighted(address: number): boolean {
 
 function isNodeSelected(address: number): boolean {
   return props.selectedAddress === address
+}
+
+function hasCodeHighlight(address: number): boolean {
+  return (props.statementLhsAddresses?.has(address) ?? false) || (props.statementRhsAddresses?.has(address) ?? false)
+}
+
+function isHoverBoosted(address: number): boolean {
+  return isNodeHighlighted(address) && hasCodeHighlight(address) && !isNodeSelected(address)
 }
 
 // ---- Arrow hover (for field highlighting in memory map) ----
@@ -92,8 +102,11 @@ function handleArrowLeave() {
         class="shrink-0 cursor-pointer border rounded px-3 py-2 text-center font-mono transition-all"
         :class="{
           'border-blue-400 bg-blue-500/20 outline outline-2 outline-blue-400': isNodeSelected(node.address),
-          'border-blue-400 bg-blue-500/10': isNodeHighlighted(node.address) && !isNodeSelected(node.address),
-          'border-gray-300 hover:border-blue-400 dark:border-gray-600': !isNodeHighlighted(node.address) && !isNodeSelected(node.address),
+          'border-blue-400 bg-blue-500/10': isNodeHighlighted(node.address) && !isNodeSelected(node.address) && !hasCodeHighlight(node.address),
+          'border-l-blue-500! border-l-3': statementLhsAddresses?.has(node.address),
+          'border-l-green-500! border-l-3': statementRhsAddresses?.has(node.address) && !statementLhsAddresses?.has(node.address),
+          'ring-2 ring-blue-400/40': isHoverBoosted(node.address),
+          'border-gray-300 hover:border-blue-400 dark:border-gray-600': !isNodeHighlighted(node.address) && !isNodeSelected(node.address) && !hasCodeHighlight(node.address),
         }"
         @click="!didDrag && emit('selectNode', node.address)"
         @pointerenter="emit('hoverNode', node.address)"

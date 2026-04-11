@@ -182,6 +182,29 @@ export function createAddressSpace(): MemoryManager {
     if (!cell)
       throw new Error(`Invalid address: ${address}`)
     cell.dead = true
+
+    // For structs/arrays, also mark field/element cells as dead.
+    // Fields are contiguous at base+1..base+N, same region, not struct/array headers.
+    const v = cell.value
+    if (typeof v === 'object' && v.type === 'struct') {
+      for (let i = 1; ; i++) {
+        const sub = space.cells.get(address + i)
+        if (!sub || sub.region !== cell.region)
+          break
+        // Stop if we hit another struct/array header (its own base)
+        const sv = sub.value
+        if (typeof sv === 'object' && (sv.type === 'struct' || sv.type === 'array') && sv.base === sub.address)
+          break
+        sub.dead = true
+      }
+    }
+    else if (typeof v === 'object' && v.type === 'array') {
+      for (let i = 1; i <= v.length; i++) {
+        const sub = space.cells.get(address + i)
+        if (sub)
+          sub.dead = true
+      }
+    }
   }
 
   function readField(

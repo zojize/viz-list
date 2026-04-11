@@ -377,6 +377,8 @@ const speedLabel = computed(() => {
                 <DataStructureView
                   :highlighted-address="hoveredNodeAddress"
                   :selected-address="selectedAddress"
+                  :statement-lhs-addresses="lhsAddresses"
+                  :statement-rhs-addresses="rhsAddresses"
                   @select-node="selectedAddress = $event"
                   @hover-node="hoveredNodeAddress = $event"
                   @hover-field="hoveredFieldAddress = $event"
