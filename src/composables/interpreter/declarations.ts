@@ -2,6 +2,7 @@ import type { Node as SyntaxNode } from 'web-tree-sitter'
 import type { MemoryManager } from './memory'
 import type { CppType, CppValue, InterpreterContext } from './types'
 import { asserts, castIfNull, checksDefined, getGeneratorReturn } from './helpers'
+import { structFieldOffset } from './memory'
 import { NULL_ADDRESS } from './types'
 
 // Circular dependency resolution: evaluate.ts calls processDeclaration,
@@ -143,12 +144,10 @@ export function* initializeValue(
             const fieldDefs = context.structs[type.name]
             const base = mem.allocStruct(type.name, fieldDefs, 'stack')
             // Recursively initialize nested struct/array fields
-            const fieldNames = Object.keys(fieldDefs)
-            for (let i = 0; i < fieldNames.length; i++) {
-              const fieldType = fieldDefs[fieldNames[i]]
+            for (const [fieldName, fieldType] of Object.entries(fieldDefs)) {
               if (typeof fieldType === 'object' && (fieldType.type === 'struct' || fieldType.type === 'array')) {
                 const fieldValue = yield* initializeValue(fieldType, context, mem)
-                mem.write(base + 1 + i, fieldValue)
+                mem.write(base + 1 + structFieldOffset(fieldName, fieldDefs), fieldValue)
               }
             }
             return { type: 'struct', name: type.name, base }

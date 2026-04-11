@@ -3,6 +3,7 @@ import type { CppType, MemoryCell } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
 import { formatType } from '~/composables/interpreter/helpers'
+import { structFieldOffset } from '~/composables/interpreter/memory'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
 const props = defineProps<{
@@ -93,8 +94,7 @@ const structFields = computed((): FieldEntry[] => {
   }
 
   for (const [name, fieldType] of Object.entries(structDef)) {
-    const fieldIdx = Object.keys(structDef).indexOf(name)
-    const fieldCell = context.memory.cells.get(v.base + 1 + fieldIdx)
+    const fieldCell = context.memory.cells.get(v.base + 1 + structFieldOffset(name, structDef))
     if (typeof fieldType === 'object' && fieldType.type === 'array' && fieldCell) {
       flattenArray(name, fieldType.of, fieldCell)
       continue

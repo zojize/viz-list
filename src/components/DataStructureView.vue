@@ -4,6 +4,7 @@ import { computed, nextTick, onUpdated, shallowRef, watch } from 'vue'
 import CanvasArrow from '~/components/CanvasArrow.vue'
 import DSValue from '~/components/DSValue.vue'
 import { formatAddr, formatType, formatValue } from '~/composables/interpreter/helpers'
+import { structTotalSize } from '~/composables/interpreter/memory'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { usePannableCanvas } from '~/composables/usePannableCanvas'
 import { usePlacementEngine } from '~/composables/usePlacementEngine'
@@ -50,9 +51,9 @@ const subCellAddresses = computed(() => {
     if (typeof v === 'object' && v.type === 'struct') {
       const structDef = context.structs[v.name]
       if (structDef) {
-        const fieldCount = Object.keys(structDef).length
-        for (let i = 0; i < fieldCount; i++)
-          sub.add(v.base + 1 + i)
+        const total = structTotalSize(structDef)
+        for (let i = 1; i < total; i++)
+          sub.add(v.base + i)
       }
     }
     else if (typeof v === 'object' && v.type === 'array') {

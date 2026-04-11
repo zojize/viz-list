@@ -4,6 +4,7 @@ import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
 import DSValue from '~/components/DSValue.vue'
 import { formatAddr, formatType, formatValue } from '~/composables/interpreter/helpers'
+import { structFieldOffset } from '~/composables/interpreter/memory'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
 const props = defineProps<{
@@ -102,8 +103,7 @@ const fields = computed((): FieldRow[] => {
   }
 
   for (const [name, fieldType] of Object.entries(structDef)) {
-    const fieldIdx = Object.keys(structDef).indexOf(name)
-    const addr = base + 1 + fieldIdx
+    const addr = base + 1 + structFieldOffset(name, structDef)
     const fieldCell = context.memory.cells.get(addr)
     const value = fieldCell?.value ?? 0
 

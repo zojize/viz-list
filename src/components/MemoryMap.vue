@@ -5,6 +5,7 @@ import AddressLink from '~/components/AddressLink.vue'
 import DSValue from '~/components/DSValue.vue'
 import MemoryCell from '~/components/MemoryCell.vue'
 import { formatAddr, formatType, formatValue, isPointerValue } from '~/composables/interpreter/helpers'
+import { structFieldOffset, structTotalSize } from '~/composables/interpreter/memory'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
@@ -44,12 +45,11 @@ function getFieldValues(cell: MemoryCellType): Map<string, { type: CppType, valu
   if (!structDef)
     return undefined
   const map = new Map<string, { type: CppType, value: CppValue, address: number }>()
-  const fieldNames = Object.keys(structDef)
-  for (let i = 0; i < fieldNames.length; i++) {
-    const fieldAddr = base + 1 + i
+  for (const [fieldName, fieldType] of Object.entries(structDef)) {
+    const fieldAddr = base + 1 + structFieldOffset(fieldName, structDef)
     const fieldCell = context.memory.cells.get(fieldAddr)
     if (fieldCell)
-      map.set(fieldNames[i], { type: structDef[fieldNames[i]], value: fieldCell.value, address: fieldAddr })
+      map.set(fieldName, { type: fieldType, value: fieldCell.value, address: fieldAddr })
   }
   return map
 }
@@ -193,8 +193,9 @@ const heapEntries = computed(() => {
     if (typeof v === 'object' && v.type === 'struct') {
       const structDef = context.structs[v.name]
       if (structDef) {
-        for (let i = 0; i < Object.keys(structDef).length; i++)
-          structFieldAddresses.add(v.base + 1 + i)
+        const total = structTotalSize(structDef)
+        for (let i = 1; i < total; i++)
+          structFieldAddresses.add(v.base + i)
       }
     }
     else if (typeof v === 'object' && v.type === 'array') {
