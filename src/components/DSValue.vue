@@ -11,6 +11,9 @@ const props = defineProps<{
   indexPrefix?: string
   /** Field address to highlight (from referenced-by hover or arrow hover) */
   highlightedFieldAddress?: number | null
+  /** Statement LHS/RHS addresses for per-field code highlighting */
+  statementLhsAddresses?: ReadonlySet<number>
+  statementRhsAddresses?: ReadonlySet<number>
 }>()
 
 const emit = defineEmits<{
@@ -67,11 +70,27 @@ const structFields = computed((): FieldEntry[] => {
   const structDef = context.structs[v.name]
   if (!structDef)
     return []
-  return Object.keys(structDef).map((name, i) => ({
-    name,
-    cell: context.memory.cells.get(v.base + 1 + i),
-    type: structDef[name],
-  }))
+  const entries: FieldEntry[] = []
+  for (const [name, fieldType] of Object.entries(structDef)) {
+    const fieldIdx = Object.keys(structDef).indexOf(name)
+    const fieldCell = context.memory.cells.get(v.base + 1 + fieldIdx)
+    // Flatten array fields into individual subscript entries
+    if (typeof fieldType === 'object' && fieldType.type === 'array' && fieldCell) {
+      const arrVal = fieldCell.value
+      if (typeof arrVal === 'object' && arrVal.type === 'array') {
+        for (let i = 0; i < arrVal.length; i++) {
+          entries.push({
+            name: `${name}[${i}]`,
+            cell: context.memory.cells.get(arrVal.base + 1 + i),
+            type: fieldType.of,
+          })
+        }
+        continue
+      }
+    }
+    entries.push({ name, cell: fieldCell, type: fieldType })
+  }
+  return entries
 })
 
 interface ArrayEntry {
@@ -148,7 +167,11 @@ const arrayElements = computed((): ArrayEntry[] => {
       <template v-if="field.cell && typeof field.cell.value === 'object' && (field.cell.value.type === 'struct' || field.cell.value.type === 'array')">
         <div
           class="py-0.5 pl-3"
-          :class="highlightedFieldAddress === field.cell?.address ? 'bg-blue-500/15 rounded' : ''"
+          :class="[
+            highlightedFieldAddress === field.cell?.address ? 'bg-blue-500/15 rounded' : '',
+            statementLhsAddresses?.has(field.cell?.address ?? -1) ? 'bg-blue-500/10 rounded' : '',
+            statementRhsAddresses?.has(field.cell?.address ?? -1) && !statementLhsAddresses?.has(field.cell?.address ?? -1) ? 'bg-green-500/10 rounded' : '',
+          ]"
           :data-field-addr="field.cell?.address"
         >
           <span class="text-gray-500 font-mono">{{ field.name }}:</span>
@@ -166,7 +189,11 @@ const arrayElements = computed((): ArrayEntry[] => {
       <div
         v-else
         class="flex items-baseline justify-between gap-4 rounded px-1 py-0.5 pl-3"
-        :class="highlightedFieldAddress === field.cell?.address ? 'bg-blue-500/15' : ''"
+        :class="[
+          highlightedFieldAddress === field.cell?.address ? 'bg-blue-500/15' : '',
+          statementLhsAddresses?.has(field.cell?.address ?? -1) ? 'bg-blue-500/10' : '',
+          statementRhsAddresses?.has(field.cell?.address ?? -1) && !statementLhsAddresses?.has(field.cell?.address ?? -1) ? 'bg-green-500/10' : '',
+        ]"
         :data-field-addr="field.cell?.address"
       >
         <span class="shrink-0 text-gray-500 font-mono">{{ field.name }}:</span>
@@ -174,6 +201,8 @@ const arrayElements = computed((): ArrayEntry[] => {
           v-if="field.cell"
           :cell="field.cell"
           :highlighted-field-address="highlightedFieldAddress"
+          :statement-lhs-addresses="statementLhsAddresses"
+          :statement-rhs-addresses="statementRhsAddresses"
           @navigate="emit('navigate', $event)"
           @hover-node="emit('hoverNode', $event)"
         />

@@ -866,6 +866,8 @@ const kindBg: Record<DataItem['kind'], string> = {
           <DSValue
             :cell="item.cell"
             :highlighted-field-address="highlightedFieldAddress"
+            :statement-lhs-addresses="statementLhsAddresses"
+            :statement-rhs-addresses="statementRhsAddresses"
             @navigate="emit('selectNode', $event)"
             @hover-node="emit('hoverNode', $event)"
           />

@@ -122,10 +122,19 @@ export function createAddressSpace(): MemoryManager {
     for (let i = 0; i < fields.length; i++) {
       const [, fieldType] = fields[i]
       const fieldAddress = base + 1 + i
+      // Array fields: allocate the array separately and point to it
+      let fieldValue: CppValue
+      if (typeof fieldType === 'object' && fieldType.type === 'array') {
+        const arrBase = allocArray(fieldType.of, fieldType.size, region)
+        fieldValue = { type: 'array', base: arrBase, length: fieldType.size }
+      }
+      else {
+        fieldValue = defaultValue(fieldType)
+      }
       space.cells.set(fieldAddress, {
         address: fieldAddress,
         type: fieldType,
-        value: defaultValue(fieldType),
+        value: fieldValue,
         region,
         dead: false,
       })

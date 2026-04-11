@@ -252,4 +252,46 @@ describe('interpreter integration tests', () => {
     const sumAddr = context.globalEnv.sum.address
     expect(mem.read(sumAddr).value).toBe(6)
   })
+
+  it('constructs a B-tree with array fields', () => {
+    const { mem } = runProgram(`
+      struct BTreeNode {
+        int numKeys;
+        int keys[3];
+        BTreeNode *children[4];
+      };
+      void main() {
+        BTreeNode *root = new BTreeNode;
+        root->numKeys = 2;
+        root->keys[0] = 10;
+        root->keys[1] = 20;
+        root->keys[2] = 0;
+        root->children[0] = nullptr;
+        root->children[1] = nullptr;
+        root->children[2] = nullptr;
+        root->children[3] = nullptr;
+      }
+    `)
+
+    // Find the BTreeNode struct on the heap
+    const heapCells = [...mem.space.cells.values()].filter(c =>
+      !c.dead && c.region === 'heap' && typeof c.value === 'object' && c.value.type === 'struct',
+    )
+    expect(heapCells.length).toBeGreaterThanOrEqual(1)
+    const rootCell = heapCells[0]
+    const rootBase = (rootCell.value as any).base
+
+    // numKeys = 2
+    expect(mem.read(rootBase + 1).value).toBe(2)
+
+    // keys field (base+2) should be an array with base pointing to allocated elements
+    const keysValue = mem.read(rootBase + 2).value
+    expect(typeof keysValue).toBe('object')
+    expect((keysValue as any).type).toBe('array')
+    const keysBase = (keysValue as any).base
+    // keys[0] = 10, keys[1] = 20, keys[2] = 0
+    expect(mem.read(keysBase + 1).value).toBe(10)
+    expect(mem.read(keysBase + 2).value).toBe(20)
+    expect(mem.read(keysBase + 3).value).toBe(0)
+  })
 })
