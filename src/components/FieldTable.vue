@@ -74,20 +74,44 @@ const fields = computed((): FieldRow[] => {
   if (!structDef)
     return []
   const base = structBase.value
-  return Object.keys(structDef).map((name, i) => {
-    const addr = base + 1 + i
+  const rows: FieldRow[] = []
+  for (const [name, fieldType] of Object.entries(structDef)) {
+    const fieldIdx = Object.keys(structDef).indexOf(name)
+    const addr = base + 1 + fieldIdx
     const fieldCell = context.memory.cells.get(addr)
     const value = fieldCell?.value ?? 0
-    return {
+
+    // Flatten array fields into individual subscript entries
+    if (typeof fieldType === 'object' && fieldType.type === 'array'
+      && typeof value === 'object' && value.type === 'array') {
+      for (let i = 0; i < value.length; i++) {
+        const elemAddr = value.base + 1 + i
+        const elemCell = context.memory.cells.get(elemAddr)
+        const elemValue = elemCell?.value ?? 0
+        rows.push({
+          name: `${name}[${i}]`,
+          type: fieldType.of,
+          value: elemValue,
+          address: elemAddr,
+          isPointer: typeof elemValue === 'object' && elemValue.type === 'pointer',
+          pointerAddress: (typeof elemValue === 'object' && elemValue.type === 'pointer') ? elemValue.address : 0,
+          changed: props.changedAddresses.has(elemAddr),
+        })
+      }
+      continue
+    }
+
+    rows.push({
       name,
-      type: structDef[name],
+      type: fieldType,
       value,
       address: addr,
       isPointer: typeof value === 'object' && value.type === 'pointer',
       pointerAddress: (typeof value === 'object' && value.type === 'pointer') ? value.address : 0,
       changed: props.changedAddresses.has(addr),
-    }
-  })
+    })
+  }
+  return rows
 })
 </script>
 
