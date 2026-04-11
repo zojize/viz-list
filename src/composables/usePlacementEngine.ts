@@ -249,7 +249,7 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     const maxW = origin.x + viewW
     const maxH = container ? origin.y + container.h : Infinity
 
-    // If item is wider than viewport (e.g. linked list chains), just find a clear
+    // If item is wider than viewport, just find a clear
     // Y row starting at origin.x — horizontal overflow is fine (user can pan).
     const widerThanViewport = w > viewW
 
@@ -372,6 +372,13 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
       version.value++
   }
 
+  /** Clear positions only (keep sizes for immediate re-placement). */
+  function clearPositions() {
+    positions.clear()
+    userDragged.clear()
+    version.value++
+  }
+
   function clear() {
     positions.clear()
     sizes.clear()
@@ -420,6 +427,7 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     clearUserDragged,
     isUserDragged,
     evictOverlapping,
+    clearPositions,
     version: readonly(version),
   }
 }

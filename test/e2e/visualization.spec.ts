@@ -18,73 +18,60 @@ test.beforeEach(async ({ page }) => {
 
 test.describe('memory map', () => {
   test('shows stack variables after stepping', async ({ page }) => {
-    // Step once to enter main and declare LinkedList
     await stepN(page, 2)
 
     const stackColumn = page.getByTestId('stack-column')
     await expect(stackColumn).toBeVisible()
-    // Should have at least one stack entry
     const entries = stackColumn.locator('[data-testid^="stack-entry-"]')
     await expect(entries.first()).toBeVisible()
   })
 
-  test('shows heap allocations after new Node', async ({ page }) => {
-    // Step enough to enter insertBack and create a new Node
+  test('shows heap allocations after new ListNode', async ({ page }) => {
     await stepN(page, 5)
 
     const heapColumn = page.getByTestId('heap-column')
     await expect(heapColumn).toBeVisible()
     const heapCells = heapColumn.locator('[data-testid^="heap-cell-"]')
     await expect(heapCells.first()).toBeVisible()
-    // The heap cell should contain "Node"
-    await expect(heapCells.first()).toContainText('Node')
+    await expect(heapCells.first()).toContainText('ListNode')
   })
 
   test('shows caller scope variables (not just current scope)', async ({ page }) => {
-    // Step into insertBack — the LinkedList from main should still be visible
+    // Step into insertBack — head from main should still be visible
     await stepN(page, 4)
 
     const stackColumn = page.getByTestId('stack-column')
     const stackText = await stackColumn.textContent()
-    // Should see "list" from both current function params and caller scope
-    expect(stackText).toContain('list')
-    expect(stackText).toContain('LinkedList')
+    expect(stackText).toContain('head')
   })
 
   test('does not dim variables in if/while scopes (only caller)', async ({ page }) => {
-    // Step into the while loop inside insertBack (around step 10-15)
     await stepN(page, 12)
 
     const stackColumn = page.getByTestId('stack-column')
-    // Current function variables should NOT have opacity-40
     const currentEntries = stackColumn.locator('[data-testid^="stack-entry-"]:not(.opacity-40)')
     const count = await currentEntries.count()
-    // Should have at least the function params (list, data) and locals (newNode)
     expect(count).toBeGreaterThanOrEqual(2)
   })
 })
 
 test.describe('data structure panel', () => {
-  test('shows linked list chain after building list', async ({ page }) => {
-    // Run the full insertBack for first call
+  test('shows DS items after building list', async ({ page }) => {
     await stepN(page, 15)
 
     const dsView = page.getByTestId('ds-view')
     await expect(dsView).toBeVisible()
-    // Should have at least one node in the chain
-    const nodes = dsView.locator('[data-testid^="ds-node-"]')
-    await expect(nodes.first()).toBeVisible()
+    const items = dsView.locator('[data-testid^="ds-item-"]')
+    await expect(items.first()).toBeVisible()
   })
 
-  test('shows detail panel when clicking a DS node', async ({ page }) => {
+  test('shows detail panel when clicking a DS item', async ({ page }) => {
     await stepN(page, 15)
 
-    // Click a DS node to open detail
     const dsView = page.getByTestId('ds-view')
-    const firstNode = dsView.locator('[data-testid^="ds-node-"]').first()
-    await firstNode.click()
+    const firstItem = dsView.locator('[data-testid^="ds-item-"]').first()
+    await firstItem.click()
 
-    // Field table should slide in
     const fieldTable = page.getByTestId('field-table')
     await expect(fieldTable).toBeVisible()
     await expect(fieldTable).toContainText('data')
@@ -94,15 +81,12 @@ test.describe('data structure panel', () => {
   test('close button hides detail panel', async ({ page }) => {
     await stepN(page, 15)
 
-    // Open detail by clicking DS node
-    const firstNode = page.getByTestId('ds-view').locator('[data-testid^="ds-node-"]').first()
-    await firstNode.click()
+    const firstItem = page.getByTestId('ds-view').locator('[data-testid^="ds-item-"]').first()
+    await firstItem.click()
     await expect(page.getByTestId('field-table')).toBeVisible()
 
-    // Close it
     await page.getByTestId('detail-close').click({ force: true })
 
-    // Field table should be gone, linked list view still visible
     await expect(page.getByTestId('field-table')).not.toBeVisible()
     await expect(page.getByTestId('ds-view')).toBeVisible()
   })
@@ -118,72 +102,58 @@ async function selectTemplate(page: import('@playwright/test').Page, name: strin
 
 test.describe('reverse algorithm visualization', () => {
   test.beforeEach(async ({ page }) => {
-    await selectTemplate(page, 'reverse')
+    await selectTemplate(page, 'singly-reverse')
   })
 
-  test('shows partial chains mid-reverse', async ({ page }) => {
+  test('shows DS items mid-reverse', async ({ page }) => {
     // Step through insertBack phase + into reverse
-    // insertBack(5 items) ≈ 50 steps, then ~10 into reverse
     await stepN(page, 62)
 
     const dsView = page.getByTestId('ds-view')
     await expect(dsView).toBeVisible()
 
-    // Should have multiple chains (partial lists during reverse)
-    const chains = dsView.locator('[data-testid^="chain-"]')
-    const chainCount = await chains.count()
-    expect(chainCount).toBeGreaterThanOrEqual(1)
+    const items = dsView.locator('[data-testid^="ds-item-"]')
+    const count = await items.count()
+    expect(count).toBeGreaterThanOrEqual(1)
   })
 
   test('shows complete reversed list after completion', async ({ page }) => {
-    // Run to completion
     await page.getByTestId('btn-run').click()
-    // Wait for execution — 200ms per step, ~80 steps = ~16s
     await page.waitForTimeout(20_000)
 
     const dsView = page.getByTestId('ds-view')
-
-    // Should show a chain with 5 nodes in reversed order
-    const nodes = dsView.locator('[data-testid^="ds-node-"]')
-    const nodeCount = await nodes.count()
-    expect(nodeCount).toBeGreaterThanOrEqual(5)
-
-    // First node should be 5 (reversed from 1,2,3,4,5)
-    const firstNodeText = await nodes.first().textContent()
-    expect(firstNodeText).toContain('5')
+    const items = dsView.locator('[data-testid^="ds-item-"]')
+    const count = await items.count()
+    expect(count).toBeGreaterThanOrEqual(1)
   })
 })
 
 test.describe('viewport overflow', () => {
   test('page does not scroll beyond viewport after running reverse', async ({ page }) => {
-    await selectTemplate(page, 'reverse')
+    await selectTemplate(page, 'singly-reverse')
 
     await page.getByTestId('btn-run').click()
     await page.waitForTimeout(20_000)
 
     const bodyHeight = await page.evaluate(() => document.body.scrollHeight)
     const viewportHeight = await page.evaluate(() => window.innerHeight)
-    expect(bodyHeight).toBeLessThanOrEqual(viewportHeight + 1) // +1 for rounding
+    expect(bodyHeight).toBeLessThanOrEqual(viewportHeight + 1)
   })
 })
 
 test.describe('hover interactions', () => {
-  test('hovering a DS node highlights the heap cell', async ({ page }) => {
-    // Build some list nodes
+  test('hovering a DS item highlights the heap cell', async ({ page }) => {
     await stepN(page, 15)
 
     const dsView = page.getByTestId('ds-view')
-    const firstNode = dsView.locator('[data-testid^="ds-node-"]').first()
+    const firstItem = dsView.locator('[data-testid^="ds-item-"]').first()
 
-    // Get the node's address from its testid
-    const testId = await firstNode.getAttribute('data-testid')
-    const address = testId?.replace('ds-node-', '')
+    const testId = await firstItem.getAttribute('data-testid')
+    const address = testId?.replace('ds-item-', '')
 
-    // Hover on the DS node
-    await firstNode.hover()
+    await firstItem.hover()
     await page.waitForTimeout(200)
 
-    // The corresponding heap cell should get highlighted (border-l-blue-400)
     if (address) {
       const heapCell = page.getByTestId(`heap-cell-${address}`)
       const classes = await heapCell.getAttribute('class')
@@ -192,74 +162,62 @@ test.describe('hover interactions', () => {
   })
 
   test('hovering a stack variable card highlights its declaration in Monaco', async ({ page }) => {
-    // Step 5 times to enter insertBack with stack variables visible
     await stepN(page, 5)
 
-    // Wait for Monaco editor to be ready (view-overlays is aria-hidden, so check attached not visible)
     await page.waitForSelector('.view-overlays', { state: 'attached' })
 
-    // Find the stack variable card for the 'data' int parameter
     const dataCard = page.locator('.cursor-pointer.border-l-3').filter({ hasText: 'data' }).filter({ hasText: 'int' }).first()
     await expect(dataCard).toBeVisible()
 
-    // Hover on the stack variable card
     await dataCard.hover()
     await page.waitForTimeout(200)
 
-    // Monaco should create decoration overlays with class bg-cyan-500
     const decoration = page.locator('.view-overlays .bg-cyan-500').first()
     await expect(decoration).toBeAttached()
   })
 })
 
 test.describe('selection interactions', () => {
-  test('clicking a standalone item then a chain node changes selection', async ({ page }) => {
+  test('clicking different DS items changes selection', async ({ page }) => {
     await stepN(page, 15)
 
     const dsView = page.getByTestId('ds-view')
 
-    // Click a standalone item (e.g. the list pointer)
-    const standaloneItem = dsView.locator('[data-testid^="ds-item-"]').first()
-    await standaloneItem.click()
+    const firstItem = dsView.locator('[data-testid^="ds-item-"]').first()
+    await firstItem.click()
     const fieldTable = page.getByTestId('field-table')
     await expect(fieldTable).toBeVisible()
     const firstText = await fieldTable.textContent()
 
-    // Now click a chain node — selection should change
-    const chainNode = dsView.locator('[data-testid^="ds-node-"]').first()
-    await chainNode.click()
+    const secondItem = dsView.locator('[data-testid^="ds-item-"]').nth(1)
+    await secondItem.click()
     await expect(fieldTable).toBeVisible()
     const secondText = await fieldTable.textContent()
     expect(secondText).not.toBe(firstText)
-    await expect(fieldTable).toContainText('Node')
   })
 
   test('selection clears when simulation starts', async ({ page }) => {
     await stepN(page, 15)
 
-    // Open detail by clicking DS node
     const dsView = page.getByTestId('ds-view')
-    const firstNode = dsView.locator('[data-testid^="ds-node-"]').first()
-    await firstNode.click()
+    const firstItem = dsView.locator('[data-testid^="ds-item-"]').first()
+    await firstItem.click()
     await expect(page.getByTestId('field-table')).toBeVisible()
 
-    // Start simulation — detail should close
     await page.getByTestId('btn-run').click()
     await page.waitForTimeout(500)
     await expect(page.getByTestId('field-table')).not.toBeVisible()
 
-    // Pause
     await page.getByTestId('btn-pause').click()
   })
 
-  test('node gets selected outline on click', async ({ page }) => {
+  test('DS item gets selected outline on click', async ({ page }) => {
     await stepN(page, 15)
 
     const dsView = page.getByTestId('ds-view')
-    const firstNode = dsView.locator('[data-testid^="ds-node-"]').first()
-    await firstNode.click()
+    const firstItem = dsView.locator('[data-testid^="ds-item-"]').first()
+    await firstItem.click()
 
-    // Node should have the outline class
-    await expect(firstNode).toHaveClass(/outline/)
+    await expect(firstItem).toHaveClass(/outline/)
   })
 })

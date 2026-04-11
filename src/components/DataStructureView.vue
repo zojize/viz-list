@@ -3,7 +3,6 @@ import type { ArrowAnchor, ArrowStyle, CppType, CppValue, FieldDirection, Memory
 import { computed, nextTick, onUpdated, shallowRef, watch } from 'vue'
 import CanvasArrow from '~/components/CanvasArrow.vue'
 import DSValue from '~/components/DSValue.vue'
-import LinkedListChain from '~/components/LinkedListChain.vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { usePannableCanvas } from '~/composables/usePannableCanvas'
@@ -59,175 +58,7 @@ function formatType(type: CppType): string {
   return '?'
 }
 
-// ---- Helpers to read memory ----
-
-function getNodeDef() {
-  return context.structs.Node
-}
-
-function readNodeField(nodeBase: number, fieldName: string): CppValue | undefined {
-  const nodeDef = getNodeDef()
-  if (!nodeDef)
-    return undefined
-  const idx = Object.keys(nodeDef).indexOf(fieldName)
-  if (idx === -1)
-    return undefined
-  return context.memory.cells.get(nodeBase + 1 + idx)?.value
-}
-
-function getNodeFieldAddress(nodeBase: number, fieldName: string): number | undefined {
-  const nodeDef = getNodeDef()
-  if (!nodeDef)
-    return undefined
-  const idx = Object.keys(nodeDef).indexOf(fieldName)
-  if (idx === -1)
-    return undefined
-  return nodeBase + 1 + idx
-}
-
-function getPointerAddr(value: CppValue | undefined): number | null {
-  if (!value || typeof value !== 'object' || value.type !== 'pointer')
-    return null
-  return value.address === NULL_ADDRESS ? null : value.address
-}
-
-function getNodeBase(address: number): number {
-  const cell = context.memory.cells.get(address)
-  if (!cell)
-    return address
-  const v = cell.value
-  return (typeof v === 'object' && v.type === 'struct') ? v.base : address
-}
-
-// ---- Build linked list chains ----
-
-interface ChainNode {
-  address: number
-  base: number
-  data: string
-  nextAddr: number | null
-  prevAddr: number | null
-  nextFieldAddress: number | undefined
-  prevFieldAddress: number | undefined
-}
-
-interface ListChain {
-  id: string
-  nodes: ChainNode[]
-}
-
-const hasPrev = computed(() => !!getNodeDef()?.prev)
-
-function buildChainNode(address: number): ChainNode {
-  const base = getNodeBase(address)
-  const data = readNodeField(base, 'data')
-  const next = readNodeField(base, 'next')
-  const prev = hasPrev.value ? readNodeField(base, 'prev') : undefined
-  return {
-    address,
-    base,
-    data: data !== undefined ? String(data) : '?',
-    nextAddr: getPointerAddr(next),
-    prevAddr: hasPrev.value ? getPointerAddr(prev) : null,
-    nextFieldAddress: getNodeFieldAddress(base, 'next'),
-    prevFieldAddress: hasPrev.value ? getNodeFieldAddress(base, 'prev') : undefined,
-  }
-}
-
-function followNextChain(startAddr: number, limit = 100): ChainNode[] {
-  const nodes: ChainNode[] = []
-  let cur: number | null = startAddr
-  const seen = new Set<number>()
-  while (cur !== null && nodes.length < limit) {
-    if (seen.has(cur))
-      break
-    seen.add(cur)
-    const cell = context.memory.cells.get(cur)
-    if (!cell || cell.dead)
-      break
-    const node = buildChainNode(cur)
-    nodes.push(node)
-    cur = node.nextAddr
-  }
-  return nodes
-}
-
-const chains = computed((): ListChain[] => {
-  const nodeDef = getNodeDef()
-  if (!nodeDef)
-    return []
-
-  const startingPoints = new Map<number, string>()
-  const listDef = context.structs.LinkedList
-  if (listDef) {
-    const seenBases = new Set<number>()
-    for (const cell of context.memory.cells.values()) {
-      if (cell.dead || typeof cell.type !== 'object' || cell.type.type !== 'struct' || cell.type.name !== 'LinkedList')
-        continue
-      const v = cell.value
-      if (typeof v !== 'object' || v.type !== 'struct')
-        continue
-      if (seenBases.has(v.base))
-        continue
-      seenBases.add(v.base)
-      for (const fieldName of Object.keys(listDef)) {
-        const idx = Object.keys(listDef).indexOf(fieldName)
-        const fieldCell = context.memory.cells.get(v.base + 1 + idx)
-        if (fieldCell && typeof fieldCell.value === 'object' && fieldCell.value.type === 'pointer' && fieldCell.value.address !== NULL_ADDRESS) {
-          startingPoints.set(fieldCell.value.address, fieldName)
-        }
-      }
-    }
-  }
-
-  const result: ListChain[] = []
-  const seenSignatures = new Set<string>()
-  const coveredAddresses = new Set<number>()
-
-  for (const [startAddr, label] of startingPoints) {
-    const nodes = followNextChain(startAddr)
-    if (nodes.length === 0)
-      continue
-    const sig = nodes.map(n => n.address).sort((a, b) => a - b).join(',')
-    if (seenSignatures.has(sig))
-      continue
-    seenSignatures.add(sig)
-    for (const n of nodes)
-      coveredAddresses.add(n.address)
-    result.push({ id: `${label}-${startAddr}`, nodes })
-  }
-
-  for (const cell of context.memory.cells.values()) {
-    if (cell.dead || cell.region !== 'heap')
-      continue
-    if (typeof cell.type !== 'object' || cell.type.type !== 'struct' || cell.type.name !== 'Node')
-      continue
-    if (coveredAddresses.has(cell.address))
-      continue
-    const nodes = followNextChain(cell.address)
-    if (nodes.length === 0)
-      continue
-    const sig = nodes.map(n => n.address).sort((a, b) => a - b).join(',')
-    if (seenSignatures.has(sig))
-      continue
-    seenSignatures.add(sig)
-    for (const n of nodes)
-      coveredAddresses.add(n.address)
-    result.push({ id: `orphan-${cell.address}`, nodes })
-  }
-
-  const filtered = result.filter((chain, i) => {
-    return !result.some((other, j) => {
-      if (i === j || other.nodes.length <= chain.nodes.length)
-        return false
-      return chain.nodes.every(n => other.nodes.some(o => o.address === n.address))
-    })
-  })
-
-  return filtered
-})
-
-// ---- Standalone data items (in-scope stack + live heap, not part of chains) ----
+// ---- Standalone data items (in-scope stack + live heap) ----
 
 interface DataItem {
   address: number
@@ -239,16 +70,6 @@ interface DataItem {
   /** Variable name for editor highlighting (only for stack variables) */
   varName: string | null
 }
-
-/** Addresses already shown as part of a linked list chain */
-const chainAddresses = computed(() => {
-  const s = new Set<number>()
-  for (const chain of chains.value) {
-    for (const node of chain.nodes)
-      s.add(node.address)
-  }
-  return s
-})
 
 /** Addresses that are struct fields or array elements (sub-cells) */
 function getSubCellAddresses(): Set<number> {
@@ -298,8 +119,6 @@ const standaloneItems = computed((): DataItem[] => {
   function addItem(name: string, cell: MemoryCell, dimmed: boolean, varName: string | null = null) {
     if (cell.dead || seen.has(cell.address))
       return
-    if (chainAddresses.value.has(cell.address))
-      return
     if (subCells.has(cell.address))
       return
     seen.add(cell.address)
@@ -337,7 +156,7 @@ const standaloneItems = computed((): DataItem[] => {
     }
   }
 
-  // Live heap data not in chains
+  // Live heap data
   for (const cell of context.memory.cells.values()) {
     if (cell.dead || cell.region !== 'heap')
       continue
@@ -349,7 +168,7 @@ const standaloneItems = computed((): DataItem[] => {
 
 // ---- Whether anything is shown ----
 
-const hasContent = computed(() => chains.value.length > 0 || standaloneItems.value.length > 0)
+const hasContent = computed(() => standaloneItems.value.length > 0)
 
 function isNodeHighlighted(address: number): boolean {
   return props.highlightedAddress === address
@@ -420,16 +239,8 @@ const placement = usePlacementEngine({
 })
 placementRef = placement
 
-/** Map from struct base address to placement key for tree items */
+/** Map from struct base address to placement key */
 function addressToKey(address: number): string | undefined {
-  // Check chains first
-  for (const chain of chains.value) {
-    for (const node of chain.nodes) {
-      if (node.address === address)
-        return chain.id
-    }
-  }
-  // Check standalone items
   for (const item of standaloneItems.value) {
     if (item.address === address)
       return `item-${item.address}`
@@ -582,7 +393,7 @@ function measureAndPlace() {
   if (treePlacedKeys.size > 0)
     placement.evictOverlapping(treePlacedKeys)
 
-  // Step 3: Place remaining items (chains not in trees, standalone items)
+  // Step 3: Place remaining standalone items
   for (const el of els) {
     const key = el.dataset.placeKey!
     if (treePlacedKeys.has(key))
@@ -939,13 +750,14 @@ function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
 // ---- Auto-layout ----
 
 function autoLayout() {
-  // clear() wipes positions + sizes + userDragged, bumps version.
-  // The version bump triggers a Vue re-render → onUpdated → measureAndPlace,
-  // which re-places everything from scratch (no existing positions to skip).
-  placement.clear()
+  // Clear positions (keep sizes) so measureAndPlace re-places from scratch.
+  // Call measureAndPlace immediately so the re-render sees final positions
+  // directly — no flash at (0,0).
+  placement.clearPositions()
   prevChildToParent.clear()
   prevParentToChildren.clear()
   settlingKeys.clear()
+  measureAndPlace()
   resetPan()
 }
 
@@ -1029,29 +841,7 @@ const kindBg: Record<DataItem['kind'], string> = {
         No data to display
       </div>
 
-      <!-- Linked list chains -->
-      <div class="contents">
-        <LinkedListChain
-          v-for="chain in chains"
-          :key="chain.id"
-          :data-testid="`chain-${chain.id}`"
-          :data-drag-key="chain.id"
-          :data-place-key="chain.id"
-          :nodes="chain.nodes"
-          :has-prev="hasPrev"
-          :highlighted-address="highlightedAddress"
-          :selected-address="selectedAddress"
-          :statement-lhs-addresses="statementLhsAddresses"
-          :statement-rhs-addresses="statementRhsAddresses"
-          :did-drag="didDrag"
-          :style="getItemStyle(chain.id)"
-          @select-node="emit('selectNode', $event)"
-          @hover-node="emit('hoverNode', $event)"
-          @hover-field="emit('hoverField', $event)"
-        />
-      </div>
-
-      <!-- Standalone data items -->
+      <!-- Data items -->
       <div class="contents">
         <div
           v-for="item in standaloneItems"

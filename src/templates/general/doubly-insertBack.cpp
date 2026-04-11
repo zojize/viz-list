@@ -1,35 +1,49 @@
-struct Node {
+// Doubly linked list using @arrow-position annotations for arrow direction.
+// Uses ListNode (not Node) to avoid the LinkedListChain special-case renderer
+// and demonstrate the generic tree placement + arrow system.
+/** @arrow-anchor closest @arrow-size 30 */
+struct ListNode {
   int data;
-  Node *next;
-  Node *prev;
+  /**
+   * @arrow-position right
+   * @arrow-color #4ade80
+   * @arrow-style horizontal
+   * @arrow-fallback-style orthogonal
+   */
+  ListNode *next;
+  /**
+   * @arrow-position left
+   * @arrow-color #fb923c
+   * @arrow-style horizontal
+   * @arrow-fallback-style orthogonal
+   */
+  ListNode *prev;
 };
 
-struct LinkedList {
-  Node *head;
-  Node *tail;
-};
+void insertBack(ListNode **head, int data) {
+  ListNode *node = new ListNode;
+  node->data = data;
+  node->next = nullptr;
+  node->prev = nullptr;
 
-void insertBack(LinkedList *list, int data) {
-  Node *newNode = new Node;
-  newNode->data = data;
-  newNode->next = nullptr;
-  newNode->prev = list->tail;
-
-  if (list->head == nullptr) {
-    list->head = newNode;
-    list->tail = newNode;
+  if (*head == nullptr) {
+    *head = node;
     return;
   }
 
-  list->tail->next = newNode;
-  list->tail = newNode;
+  ListNode *cur = *head;
+  while (cur->next != nullptr) {
+    cur = cur->next;
+  }
+  cur->next = node;
+  node->prev = cur;
 }
 
 int main() {
-  LinkedList list;
-  insertBack(&list, 1);
-  insertBack(&list, 2);
-  insertBack(&list, 3);
+  ListNode *head = nullptr;
+  insertBack(&head, 1);
+  insertBack(&head, 2);
+  insertBack(&head, 3);
 
   return 0;
 }

@@ -1,33 +1,31 @@
-struct Node {
+/** @arrow-anchor closest @arrow-size 30 */
+struct ListNode {
   int data;
-  Node *next;
+  /** @arrow-position right @arrow-color #4ade80 @arrow-style horizontal @arrow-fallback-style orthogonal */
+  ListNode *next;
 };
 
-struct LinkedList {
-  Node *head;
-};
+void insertBack(ListNode **head, int data) {
+  ListNode *node = new ListNode;
+  node->data = data;
+  node->next = nullptr;
 
-void insertBack(LinkedList *list, int data) {
-  Node *newNode = new Node;
-  newNode->data = data;
-  newNode->next = nullptr;
-
-  if (list->head == nullptr) {
-    list->head = newNode;
+  if (*head == nullptr) {
+    *head = node;
     return;
   }
 
-  Node *temp = list->head;
-  while (temp->next != nullptr) {
-    temp = temp->next;
+  ListNode *cur = *head;
+  while (cur->next != nullptr) {
+    cur = cur->next;
   }
-  temp->next = newNode;
+  cur->next = node;
 }
 
-void reverse(LinkedList *list) {
-  Node *prev = nullptr;
-  Node *current = list->head;
-  Node *next = nullptr;
+void reverse(ListNode **head) {
+  ListNode *prev = nullptr;
+  ListNode *current = *head;
+  ListNode *next = nullptr;
 
   while (current != nullptr) {
     next = current->next;
@@ -36,17 +34,17 @@ void reverse(LinkedList *list) {
     current = next;
   }
 
-  list->head = prev;
+  *head = prev;
 }
 
 int main() {
-  LinkedList list;
-  insertBack(&list, 1);
-  insertBack(&list, 2);
-  insertBack(&list, 3);
-  insertBack(&list, 4);
-  insertBack(&list, 5);
-  reverse(&list);
+  ListNode *head = nullptr;
+  insertBack(&head, 1);
+  insertBack(&head, 2);
+  insertBack(&head, 3);
+  insertBack(&head, 4);
+  insertBack(&head, 5);
+  reverse(&head);
 
   return 0;
 }

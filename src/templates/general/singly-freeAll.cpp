@@ -1,45 +1,43 @@
-struct Node {
+/** @arrow-anchor closest @arrow-size 30 */
+struct ListNode {
   int data;
-  Node *next;
+  /** @arrow-position right @arrow-color #4ade80 @arrow-style horizontal @arrow-fallback-style orthogonal */
+  ListNode *next;
 };
 
-struct LinkedList {
-  Node *head;
-};
+void insertBack(ListNode **head, int data) {
+  ListNode *node = new ListNode;
+  node->data = data;
+  node->next = nullptr;
 
-void insertBack(LinkedList *list, int data) {
-  Node *newNode = new Node;
-  newNode->data = data;
-  newNode->next = nullptr;
-
-  if (list->head == nullptr) {
-    list->head = newNode;
+  if (*head == nullptr) {
+    *head = node;
     return;
   }
 
-  Node *temp = list->head;
-  while (temp->next != nullptr) {
-    temp = temp->next;
+  ListNode *cur = *head;
+  while (cur->next != nullptr) {
+    cur = cur->next;
   }
-  temp->next = newNode;
+  cur->next = node;
 }
 
-void freeAll(LinkedList *list) {
-  Node *curr = list->head;
+void freeAll(ListNode **head) {
+  ListNode *curr = *head;
   while (curr != nullptr) {
-    Node *next = curr->next;
+    ListNode *next = curr->next;
     delete curr;
     curr = next;
   }
-  list->head = nullptr;
+  *head = nullptr;
 }
 
 int main() {
-  LinkedList list;
-  insertBack(&list, 10);
-  insertBack(&list, 20);
-  insertBack(&list, 30);
-  freeAll(&list);
+  ListNode *head = nullptr;
+  insertBack(&head, 10);
+  insertBack(&head, 20);
+  insertBack(&head, 30);
+  freeAll(&head);
 
   return 0;
 }
