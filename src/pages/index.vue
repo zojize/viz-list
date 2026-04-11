@@ -387,6 +387,7 @@ const speedLabel = computed(() => {
               <div class="h-full overflow-hidden panel-border">
                 <DataStructureView
                   :highlighted-address="hoveredNodeAddress"
+                  :highlighted-field-address="hoveredFieldAddress"
                   :selected-address="selectedAddress"
                   :statement-lhs-addresses="lhsAddresses"
                   :statement-rhs-addresses="rhsAddresses"
@@ -411,6 +412,8 @@ const speedLabel = computed(() => {
                 :cell="selectedCell"
                 :changed-addresses="changedAddresses"
                 @navigate="selectedAddress = $event"
+                @hover-field="hoveredFieldAddress = $event"
+                @hover-pointer="hoveredNodeAddress = $event"
               />
             </Pane>
           </Splitpanes>

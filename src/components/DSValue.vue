@@ -8,6 +8,8 @@ const props = defineProps<{
   cell: MemoryCell
   /** Optional prefix for array indices, e.g. "[0]" for nested display */
   indexPrefix?: string
+  /** Field address to highlight (from referenced-by hover or arrow hover) */
+  highlightedFieldAddress?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -155,7 +157,11 @@ const arrayElements = computed((): ArrayEntry[] => {
     <template v-for="field in structFields" :key="field.name">
       <!-- Complex value (struct/array): field name then value below, indented -->
       <template v-if="field.cell && typeof field.cell.value === 'object' && (field.cell.value.type === 'struct' || field.cell.value.type === 'array')">
-        <div class="py-0.5 pl-3" :data-field-addr="field.cell?.address">
+        <div
+          class="py-0.5 pl-3"
+          :class="highlightedFieldAddress === field.cell?.address ? 'bg-blue-500/15 rounded' : ''"
+          :data-field-addr="field.cell?.address"
+        >
           <span class="text-gray-500 font-mono">{{ field.name }}:</span>
           <div class="pl-2">
             <DSValue
@@ -168,12 +174,17 @@ const arrayElements = computed((): ArrayEntry[] => {
         </div>
       </template>
       <!-- Simple value: inline row -->
-      <div v-else class="flex items-baseline justify-between gap-4 rounded px-1 py-0.5 pl-3" :data-field-addr="field.cell?.address">
+      <div
+        v-else
+        class="flex items-baseline justify-between gap-4 rounded px-1 py-0.5 pl-3"
+        :class="highlightedFieldAddress === field.cell?.address ? 'bg-blue-500/15' : ''"
+        :data-field-addr="field.cell?.address"
+      >
         <span class="shrink-0 text-gray-500 font-mono">{{ field.name }}:</span>
         <DSValue
           v-if="field.cell"
           :cell="field.cell"
-
+          :highlighted-field-address="highlightedFieldAddress"
           @navigate="emit('navigate', $event)"
           @hover-node="emit('hoverNode', $event)"
         />

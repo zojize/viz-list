@@ -11,6 +11,7 @@ import { usePointerGraph } from '~/composables/usePointerGraph'
 
 const props = defineProps<{
   highlightedAddress?: number | null
+  highlightedFieldAddress?: number | null
   selectedAddress?: number | null
   statementLhsAddresses?: ReadonlySet<number>
   statementRhsAddresses?: ReadonlySet<number>
@@ -871,6 +872,7 @@ const kindBg: Record<DataItem['kind'], string> = {
           </div>
           <DSValue
             :cell="item.cell"
+            :highlighted-field-address="highlightedFieldAddress"
             @navigate="emit('selectNode', $event)"
             @hover-node="emit('hoverNode', $event)"
           />
