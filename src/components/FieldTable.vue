@@ -13,6 +13,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   navigate: [address: number]
+  hoverField: [address: number | null]
+  hoverPointer: [address: number | null]
 }>()
 
 const context = useInterpreterContext()
@@ -197,6 +199,7 @@ const fields = computed((): FieldRow[] => {
           :address="ref.address"
           class="text-xs"
           @navigate="emit('navigate', $event)"
+          @hover="(addr) => { emit('hoverField', addr); emit('hoverPointer', addr) }"
         />
       </div>
     </div>
