@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { useHead } from '@unhead/vue'
-import { useIntervalFn, useLocalStorage } from '@vueuse/core'
+import { useIntervalFn, useLocalStorage, useMediaQuery } from '@vueuse/core'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
 import { Pane, Splitpanes } from 'splitpanes'
-import { computed, markRaw, onMounted, onUnmounted, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, markRaw, nextTick, onMounted, onUnmounted, shallowRef, useTemplateRef, watch } from 'vue'
 import { Language, Parser } from 'web-tree-sitter'
 import DataStructureView from '~/components/DataStructureView.vue'
 import FieldTable from '~/components/FieldTable.vue'
@@ -225,199 +225,351 @@ const speedLabel = computed(() => {
     return 'slow'
   return 'slower'
 })
+
+// ---- Mobile layout ----
+
+const isMobile = useMediaQuery('(max-width: 767px)')
+const mobileTab = shallowRef<'code' | 'viz'>('code')
+
+// Move Monaco between desktop and mobile editor slots
+function reparentMonaco() {
+  const el = monacoContainer.value
+  if (!el)
+    return
+  const mobileSlot = document.getElementById('mobile-editor-slot')
+  const desktopSlot = document.getElementById('desktop-editor-slot')
+  const mobileCodeTab = document.getElementById('mobile-code-tab')
+  if (isMobile.value && mobileSlot && mobileCodeTab) {
+    // Move slot into code tab and show it, then move Monaco into it
+    mobileCodeTab.insertBefore(mobileSlot, mobileCodeTab.firstChild)
+    mobileSlot.className = 'min-h-0 flex flex-1 flex-col'
+    if (el.parentElement !== mobileSlot)
+      mobileSlot.appendChild(el)
+  }
+  else if (desktopSlot) {
+    // Hide mobile slot, move Monaco back to desktop
+    if (mobileSlot)
+      mobileSlot.className = 'hidden'
+    if (el.parentElement !== desktopSlot)
+      desktopSlot.appendChild(el)
+  }
+}
+watch(isMobile, reparentMonaco, { flush: 'post' })
+onMounted(() => nextTick(reparentMonaco))
 </script>
 
 <template>
-  <Splitpanes class="h-full w-full">
-    <!-- Left: Editor + controls -->
-    <Pane :size="50" :min-size="20" class="flex flex-col">
-      <!-- Controls toolbar -->
-      <div class="flex items-center justify-between gap-2 px-2 py-1.5">
-        <!-- Left: template picker + info -->
-        <div class="flex items-center gap-2">
-          <!-- Template dropdown -->
-          <div data-testid="template-picker" class="relative">
-            <button
-              class="flex items-center gap-1.5 rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium transition-all dark:bg-white/5"
-              :class="templatePickerOpen ? 'text-vitesse' : 'text-gray-600 dark:text-gray-400'"
-              @click.stop="templatePickerOpen = !templatePickerOpen"
+  <div class="h-full flex flex-col">
+    <!-- Controls toolbar (always visible) -->
+    <div class="flex items-center justify-between gap-2 px-2 py-1.5">
+      <!-- Left: template picker + info -->
+      <div class="flex items-center gap-2">
+        <!-- Template dropdown -->
+        <div data-testid="template-picker" class="relative">
+          <button
+            class="flex items-center gap-1.5 rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium transition-all dark:bg-white/5"
+            :class="templatePickerOpen ? 'text-vitesse' : 'text-gray-600 dark:text-gray-400'"
+            @click.stop="templatePickerOpen = !templatePickerOpen"
+          >
+            <div class="i-carbon-code text-[0.85em]" />
+            {{ selectedTemplateName }}
+            <div class="i-carbon-chevron-down text-[0.7em] transition-transform" :class="templatePickerOpen && 'rotate-180'" />
+          </button>
+          <Transition
+            enter-active-class="transition-all duration-150 ease-out"
+            enter-from-class="opacity-0 -translate-y-1 scale-95"
+            leave-active-class="transition-all duration-100 ease-in"
+            leave-to-class="opacity-0 -translate-y-1 scale-95"
+          >
+            <div
+              v-if="templatePickerOpen"
+              class="absolute left-0 top-full z-20 mt-1 max-h-80 min-w-40 overflow-y-auto border border-gray-200 rounded-lg bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800"
             >
-              <div class="i-carbon-code text-[0.85em]" />
-              {{ selectedTemplateName }}
-              <div class="i-carbon-chevron-down text-[0.7em] transition-transform" :class="templatePickerOpen && 'rotate-180'" />
-            </button>
-            <Transition
-              enter-active-class="transition-all duration-150 ease-out"
-              enter-from-class="opacity-0 -translate-y-1 scale-95"
-              leave-active-class="transition-all duration-100 ease-in"
-              leave-to-class="opacity-0 -translate-y-1 scale-95"
-            >
-              <div
-                v-if="templatePickerOpen"
-                class="absolute left-0 top-full z-20 mt-1 max-h-80 min-w-40 overflow-y-auto border border-gray-200 rounded-lg bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800"
+              <button
+                v-for="name in templateNames"
+                :key="name"
+                :data-testid="`template-${name}`"
+                class="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors"
+                :class="selectedTemplateName === name
+                  ? 'text-vitesse bg-vitesse/5'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'"
+                @click="selectTemplate(name)"
               >
-                <button
-                  v-for="name in templateNames"
-                  :key="name"
-                  :data-testid="`template-${name}`"
-                  class="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors"
-                  :class="selectedTemplateName === name
-                    ? 'text-vitesse bg-vitesse/5'
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'"
-                  @click="selectTemplate(name)"
-                >
-                  <div
-                    class="h-1.5 w-1.5 rounded-full"
-                    :class="selectedTemplateName === name ? 'bg-vitesse' : 'bg-transparent'"
-                  />
-                  {{ name }}
-                </button>
-              </div>
-            </Transition>
-          </div>
-          <button
-            class="flex items-center justify-center rounded-lg bg-gray-100 p-1 text-gray-500 transition-colors dark:bg-white/5 hover:text-vitesse"
-            title="How to use"
-            @click="infoOpen = true"
-          >
-            <div class="i-carbon-information h-3.5 w-3.5" />
-          </button>
+                <div
+                  class="h-1.5 w-1.5 rounded-full"
+                  :class="selectedTemplateName === name ? 'bg-vitesse' : 'bg-transparent'"
+                />
+                {{ name }}
+              </button>
+            </div>
+          </Transition>
         </div>
-
-        <!-- Right: playback controls -->
-        <div class="flex items-center gap-2">
-          <!-- Speed slider -->
-          <div class="flex items-center gap-1.5">
-            <span class="text-[10px] text-gray-500 font-mono uppercase">{{ speedLabel }}</span>
-            <input
-              :value="520 - speedMs"
-              type="range"
-              min="20"
-              max="500"
-              step="10"
-              class="w-16"
-              title="Simulation speed"
-              @input="speedMs = 520 - Number(($event.target as HTMLInputElement).value)"
-            >
-          </div>
-
-          <!-- Playback buttons -->
-          <div class="toolbar-group">
-            <button data-testid="btn-reset" class="icon-btn" title="Reset" @click="handleReset()">
-              <div class="i-carbon-reset" />
-            </button>
-            <button v-if="running" data-testid="btn-pause" class="icon-btn" title="Pause" @click="handlePause()">
-              <div class="i-carbon-pause-filled text-vitesse" />
-            </button>
-            <button v-else data-testid="btn-run" class="icon-btn" title="Run" @click="handleRun()">
-              <div class="i-carbon-play-filled" />
-            </button>
-            <button data-testid="btn-step" :data-step="context.memory.version" class="icon-btn" title="Step" @click="handleStep()">
-              <div class="i-carbon-skip-forward-filled" />
-            </button>
-          </div>
-
-          <button
-            class="icon-btn"
-            :style="playingShareAnimation && { '--un-icon': clipBoardIconUrl }"
-            title="Copy share link"
-            @click="playingShareAnimation || saveToUrl()"
-          >
-            <div class="i-carbon-share" />
-          </button>
-        </div>
+        <button
+          class="flex items-center justify-center rounded-lg bg-gray-100 p-1 text-gray-500 transition-colors dark:bg-white/5 hover:text-vitesse"
+          title="How to use"
+          @click="infoOpen = true"
+        >
+          <div class="i-carbon-information h-3.5 w-3.5" />
+        </button>
       </div>
 
-      <!-- Editor -->
-      <div ref="monaco-container" class="min-h-0 flex-1" />
+      <!-- Right: playback controls -->
+      <div class="flex items-center gap-2">
+        <!-- Speed slider (hidden on mobile to save space) -->
+        <div class="hidden items-center gap-1.5 sm:flex">
+          <span class="text-[10px] text-gray-500 font-mono uppercase">{{ speedLabel }}</span>
+          <input
+            :value="520 - speedMs"
+            type="range"
+            min="20"
+            max="500"
+            step="10"
+            class="w-16"
+            title="Simulation speed"
+            @input="speedMs = 520 - Number(($event.target as HTMLInputElement).value)"
+          >
+        </div>
 
-      <!-- Error toast -->
-      <Transition
-        enter-active-class="transition-all duration-250 ease-out"
-        enter-from-class="translate-y-full opacity-0"
-        leave-active-class="transition-all duration-200 ease-in"
-        leave-to-class="translate-y-full opacity-0"
-      >
-        <div
-          v-if="executionError"
-          class="mx-2 mb-2 flex items-start gap-2 border border-accent-rose/20 rounded-lg bg-accent-rose/10 px-3 py-2"
-        >
-          <div class="i-carbon-warning-alt mt-0.5 shrink-0 text-accent-rose" />
-          <div class="min-w-0 flex-1">
-            <p class="text-xs text-accent-rose font-medium">
-              {{ executionError.message }}
-            </p>
-            <p v-if="executionError.line" class="mt-0.5 text-[10px] text-accent-rose/60 font-mono">
-              line {{ executionError.line }}
-            </p>
-          </div>
-          <button class="shrink-0 text-accent-rose/60 hover:text-accent-rose" @click="executionError = null">
-            <div class="i-carbon-close text-xs" />
+        <!-- Playback buttons -->
+        <div class="toolbar-group">
+          <button data-testid="btn-reset" class="icon-btn" title="Reset" @click="handleReset()">
+            <div class="i-carbon-reset" />
+          </button>
+          <button v-if="running" data-testid="btn-pause" class="icon-btn" title="Pause" @click="handlePause()">
+            <div class="i-carbon-pause-filled text-vitesse" />
+          </button>
+          <button v-else data-testid="btn-run" class="icon-btn" title="Run" @click="handleRun()">
+            <div class="i-carbon-play-filled" />
+          </button>
+          <button data-testid="btn-step" :data-step="context.memory.version" class="icon-btn" title="Step" @click="handleStep()">
+            <div class="i-carbon-skip-forward-filled" />
           </button>
         </div>
-      </Transition>
-    </Pane>
 
-    <!-- Right: Visualization -->
-    <Pane :size="50" :min-size="20" class="h-full" data-testid="viz-panel">
-      <Splitpanes horizontal class="h-full">
+        <button
+          class="icon-btn"
+          :style="playingShareAnimation && { '--un-icon': clipBoardIconUrl }"
+          title="Copy share link"
+          @click="playingShareAnimation || saveToUrl()"
+        >
+          <div class="i-carbon-share" />
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile tab toggle -->
+    <div v-if="isMobile" class="flex border-b border-gray-200 dark:border-gray-800">
+      <button
+        class="flex-1 py-1.5 text-center text-xs font-medium transition-colors"
+        :class="mobileTab === 'code'
+          ? 'text-vitesse border-b-2 border-vitesse'
+          : 'text-gray-500 dark:text-gray-400'"
+        @click="mobileTab = 'code'"
+      >
+        <div class="i-carbon-code mr-1 inline-block align-middle text-[0.85em]" />
+        Code
+      </button>
+      <button
+        class="flex-1 py-1.5 text-center text-xs font-medium transition-colors"
+        :class="mobileTab === 'viz'
+          ? 'text-vitesse border-b-2 border-vitesse'
+          : 'text-gray-500 dark:text-gray-400'"
+        @click="mobileTab = 'viz'"
+      >
+        <div class="i-carbon-data-vis-1 mr-1 inline-block align-middle text-[0.85em]" />
+        Visualize
+      </button>
+    </div>
+
+    <!-- Desktop: Splitpanes layout (hidden on mobile via CSS) -->
+    <Splitpanes class="min-h-0 flex-1" :class="isMobile && 'hidden!'">
+      <!-- Left: Editor -->
+      <Pane :size="50" :min-size="20" class="flex flex-col">
+        <div id="desktop-editor-slot" class="min-h-0 flex flex-1 flex-col">
+          <div ref="monaco-container" class="min-h-0 flex-1" />
+        </div>
+
+        <!-- Error toast -->
+        <Transition
+          enter-active-class="transition-all duration-250 ease-out"
+          enter-from-class="translate-y-full opacity-0"
+          leave-active-class="transition-all duration-200 ease-in"
+          leave-to-class="translate-y-full opacity-0"
+        >
+          <div
+            v-if="executionError"
+            class="mx-2 mb-2 flex items-start gap-2 border border-accent-rose/20 rounded-lg bg-accent-rose/10 px-3 py-2"
+          >
+            <div class="i-carbon-warning-alt mt-0.5 shrink-0 text-accent-rose" />
+            <div class="min-w-0 flex-1">
+              <p class="text-xs text-accent-rose font-medium">
+                {{ executionError.message }}
+              </p>
+              <p v-if="executionError.line" class="mt-0.5 text-[10px] text-accent-rose/60 font-mono">
+                line {{ executionError.line }}
+              </p>
+            </div>
+            <button class="shrink-0 text-accent-rose/60 hover:text-accent-rose" @click="executionError = null">
+              <div class="i-carbon-close text-xs" />
+            </button>
+          </div>
+        </Transition>
+      </Pane>
+
+      <!-- Right: Visualization -->
+      <Pane :size="50" :min-size="20" class="h-full" data-testid="viz-panel">
+        <Splitpanes horizontal class="h-full">
+          <!-- Memory map -->
+          <Pane :size="50" :min-size="15">
+            <div class="h-full overflow-hidden panel-border">
+              <MemoryMap
+                :changed-addresses="changedAddresses"
+                :highlighted-address="hoveredNodeAddress"
+                :highlighted-field-address="hoveredFieldAddress"
+                :statement-lhs-addresses="lhsAddresses"
+                :statement-rhs-addresses="rhsAddresses"
+                :selected-address="selectedAddress"
+                @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
+                @hover-pointer="hoveredNodeAddress = $event"
+                @hover-variable="highlightVariable($event, context.currentNode)"
+              />
+            </div>
+          </Pane>
+          <!-- Data structure + detail -->
+          <Pane :size="50" :min-size="15">
+            <Splitpanes class="h-full">
+              <Pane :min-size="30">
+                <div class="h-full overflow-hidden panel-border">
+                  <DataStructureView
+                    :highlighted-address="hoveredNodeAddress"
+                    :highlighted-field-address="hoveredFieldAddress"
+                    :selected-address="selectedAddress"
+                    :statement-lhs-addresses="lhsAddresses"
+                    :statement-rhs-addresses="rhsAddresses"
+                    @select-node="selectedAddress = $event"
+                    @hover-node="hoveredNodeAddress = $event"
+                    @hover-field="hoveredFieldAddress = $event"
+                    @hover-variable="highlightVariable($event, context.currentNode)"
+                  />
+                </div>
+              </Pane>
+              <Pane v-if="selectedCell && !running" :size="35" :min-size="15" class="overflow-auto p-2">
+                <div class="mb-1.5 flex items-center justify-between">
+                  <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
+                  <button
+                    data-testid="detail-close"
+                    class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    title="Close"
+                    @click="selectedAddress = null"
+                  />
+                </div>
+                <FieldTable
+                  :cell="selectedCell"
+                  :changed-addresses="changedAddresses"
+                  @navigate="selectedAddress = $event"
+                  @hover-field="hoveredFieldAddress = $event"
+                  @hover-pointer="hoveredNodeAddress = $event"
+                />
+              </Pane>
+            </Splitpanes>
+          </Pane>
+        </Splitpanes>
+      </Pane>
+    </Splitpanes>
+
+    <!-- Mobile editor slot (always in DOM for reparenting) -->
+    <div id="mobile-editor-slot" class="hidden" />
+
+    <!-- Mobile: tabbed layout -->
+    <div v-if="isMobile" class="min-h-0 flex flex-1 flex-col overflow-hidden">
+      <!-- Code tab -->
+      <div v-show="mobileTab === 'code'" id="mobile-code-tab" class="min-h-0 flex flex-1 flex-col">
+        <!-- Error toast -->
+        <Transition
+          enter-active-class="transition-all duration-250 ease-out"
+          enter-from-class="translate-y-full opacity-0"
+          leave-active-class="transition-all duration-200 ease-in"
+          leave-to-class="translate-y-full opacity-0"
+        >
+          <div
+            v-if="executionError"
+            class="mx-2 mb-2 flex items-start gap-2 border border-accent-rose/20 rounded-lg bg-accent-rose/10 px-3 py-2"
+          >
+            <div class="i-carbon-warning-alt mt-0.5 shrink-0 text-accent-rose" />
+            <div class="min-w-0 flex-1">
+              <p class="text-xs text-accent-rose font-medium">
+                {{ executionError.message }}
+              </p>
+              <p v-if="executionError.line" class="mt-0.5 text-[10px] text-accent-rose/60 font-mono">
+                line {{ executionError.line }}
+              </p>
+            </div>
+            <button class="shrink-0 text-accent-rose/60 hover:text-accent-rose" @click="executionError = null">
+              <div class="i-carbon-close text-xs" />
+            </button>
+          </div>
+        </Transition>
+      </div>
+
+      <!-- Viz tab -->
+      <div v-show="mobileTab === 'viz'" class="min-h-0 flex flex-1 flex-col overflow-hidden" data-testid="mobile-viz-panel">
         <!-- Memory map -->
-        <Pane :size="50" :min-size="15">
-          <div class="h-full overflow-hidden panel-border">
-            <MemoryMap
+        <div class="h-1/2 overflow-hidden panel-border">
+          <MemoryMap
+            :changed-addresses="changedAddresses"
+            :highlighted-address="hoveredNodeAddress"
+            :highlighted-field-address="hoveredFieldAddress"
+            :statement-lhs-addresses="lhsAddresses"
+            :statement-rhs-addresses="rhsAddresses"
+            :selected-address="selectedAddress"
+            @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
+            @hover-pointer="hoveredNodeAddress = $event"
+            @hover-variable="highlightVariable($event, context.currentNode)"
+          />
+        </div>
+        <!-- Data structure view -->
+        <div class="min-h-0 flex-1 overflow-hidden panel-border">
+          <DataStructureView
+            :highlighted-address="hoveredNodeAddress"
+            :highlighted-field-address="hoveredFieldAddress"
+            :selected-address="selectedAddress"
+            :statement-lhs-addresses="lhsAddresses"
+            :statement-rhs-addresses="rhsAddresses"
+            @select-node="selectedAddress = $event"
+            @hover-node="hoveredNodeAddress = $event"
+            @hover-field="hoveredFieldAddress = $event"
+            @hover-variable="highlightVariable($event, context.currentNode)"
+          />
+        </div>
+        <!-- Detail panel (bottom sheet on mobile) -->
+        <Transition
+          enter-active-class="transition-all duration-200 ease-out"
+          enter-from-class="translate-y-full"
+          leave-active-class="transition-all duration-150 ease-in"
+          leave-to-class="translate-y-full"
+        >
+          <div v-if="selectedCell && !running" class="max-h-1/3 overflow-auto border-t border-gray-200 bg-white p-2 dark:border-gray-800 dark:bg-gray-900">
+            <div class="mb-1.5 flex items-center justify-between">
+              <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
+              <button
+                data-testid="detail-close"
+                class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                title="Close"
+                @click="selectedAddress = null"
+              />
+            </div>
+            <FieldTable
+              :cell="selectedCell"
               :changed-addresses="changedAddresses"
-              :highlighted-address="hoveredNodeAddress"
-              :highlighted-field-address="hoveredFieldAddress"
-              :statement-lhs-addresses="lhsAddresses"
-              :statement-rhs-addresses="rhsAddresses"
-              :selected-address="selectedAddress"
-              @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
+              @navigate="selectedAddress = $event"
+              @hover-field="hoveredFieldAddress = $event"
               @hover-pointer="hoveredNodeAddress = $event"
-              @hover-variable="highlightVariable($event, context.currentNode)"
             />
           </div>
-        </Pane>
-        <!-- Data structure + detail -->
-        <Pane :size="50" :min-size="15">
-          <Splitpanes class="h-full">
-            <Pane :min-size="30">
-              <div class="h-full overflow-hidden panel-border">
-                <DataStructureView
-                  :highlighted-address="hoveredNodeAddress"
-                  :highlighted-field-address="hoveredFieldAddress"
-                  :selected-address="selectedAddress"
-                  :statement-lhs-addresses="lhsAddresses"
-                  :statement-rhs-addresses="rhsAddresses"
-                  @select-node="selectedAddress = $event"
-                  @hover-node="hoveredNodeAddress = $event"
-                  @hover-field="hoveredFieldAddress = $event"
-                  @hover-variable="highlightVariable($event, context.currentNode)"
-                />
-              </div>
-            </Pane>
-            <Pane v-if="selectedCell && !running" :size="35" :min-size="15" class="overflow-auto p-2">
-              <div class="mb-1.5 flex items-center justify-between">
-                <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
-                <button
-                  data-testid="detail-close"
-                  class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                  title="Close"
-                  @click="selectedAddress = null"
-                />
-              </div>
-              <FieldTable
-                :cell="selectedCell"
-                :changed-addresses="changedAddresses"
-                @navigate="selectedAddress = $event"
-                @hover-field="hoveredFieldAddress = $event"
-                @hover-pointer="hoveredNodeAddress = $event"
-              />
-            </Pane>
-          </Splitpanes>
-        </Pane>
-      </Splitpanes>
-    </Pane>
-  </Splitpanes>
+        </Transition>
+      </div>
+    </div>
+  </div>
 
   <!-- Info modal -->
   <Teleport to="body">
