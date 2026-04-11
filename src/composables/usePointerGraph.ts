@@ -162,6 +162,48 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
         roots.push(addr)
     }
 
+    // If no natural roots found (fully cyclic structures), pick the node with the
+    // lowest forward in-degree from each connected component as an arbitrary root.
+    if (roots.length === 0 && nodes.size > 0) {
+      const visited = new Set<number>()
+      for (const [addr] of nodes) {
+        if (visited.has(addr))
+          continue
+        // BFS to find connected component
+        const component: number[] = []
+        const queue = [addr]
+        while (queue.length > 0) {
+          const cur = queue.shift()!
+          if (visited.has(cur))
+            continue
+          visited.add(cur)
+          component.push(cur)
+          const node = nodes.get(cur)
+          if (node) {
+            for (const e of node.outEdges) {
+              if (!visited.has(e.toAddress))
+                queue.push(e.toAddress)
+            }
+            for (const e of node.inEdges) {
+              if (!visited.has(e.fromAddress))
+                queue.push(e.fromAddress)
+            }
+          }
+        }
+        // Pick the node with lowest forward in-degree as root
+        let bestAddr = component[0]
+        let bestDeg = Infinity
+        for (const a of component) {
+          const deg = nodes.get(a)!.inEdges.filter(e => e.direction !== 'left').length
+          if (deg < bestDeg) {
+            bestDeg = deg
+            bestAddr = a
+          }
+        }
+        roots.push(bestAddr)
+      }
+    }
+
     // Sort roots by tree size (descending) for stable ordering
     // Estimate size by counting reachable nodes
     const reachableCounts = new Map<number, number>()

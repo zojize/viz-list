@@ -487,8 +487,26 @@ function invalidateStaleTreePositions(
     }
   }
 
+  // 3. Recursively invalidate descendants of any invalidated item.
+  // When a parent is re-placed (e.g. moved to a new tree position), all its
+  // children need recalculation relative to the parent's new position.
+  const expanded = new Set(toInvalidate)
+  const queue = [...toInvalidate]
+  while (queue.length > 0) {
+    const key = queue.shift()!
+    const children = newParentToChildren.get(key)
+    if (children) {
+      for (const child of children) {
+        if (!expanded.has(child)) {
+          expanded.add(child)
+          queue.push(child)
+        }
+      }
+    }
+  }
+
   // Apply invalidation (skip user-dragged items)
-  for (const key of toInvalidate) {
+  for (const key of expanded) {
     if (!placement.isUserDragged(key))
       placement.remove(key)
   }
@@ -538,6 +556,12 @@ function measureAndPlace() {
     // Recursively place children
     placeTreeChildren(tree.rootAddress, rootKey, tree, measured, treePlacedKeys)
   }
+
+  // Step 2.5: Evict non-tree items whose positions now overlap with tree items.
+  // This happens when a new tree edge forms and placeRelative puts a child
+  // where a standalone item was already sitting from a prior render.
+  if (treePlacedKeys.size > 0)
+    placement.evictOverlapping(treePlacedKeys)
 
   // Step 3: Place remaining items (chains not in trees, standalone items)
   for (const el of els) {
