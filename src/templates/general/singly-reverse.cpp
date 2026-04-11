@@ -1,7 +1,7 @@
 /** @arrow-anchor closest @arrow-size 30 */
 struct ListNode {
   int data;
-  /** @arrow-position right @arrow-color #4ade80 @arrow-style horizontal @arrow-fallback-style orthogonal */
+  /** @arrow-position right @arrow-color #4ade80 @arrow-style horizontal */
   ListNode *next;
 };
 

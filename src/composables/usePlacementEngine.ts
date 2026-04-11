@@ -178,7 +178,26 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     const idealY = cumY
     const pos = { x: idealX, y: idealY }
 
+    // Set position first, then displace conflicting items
     positions.set(key, pos)
+
+    const target: Rect = { x: idealX, y: idealY, w, h }
+    const displaced: string[] = []
+    for (const item of getOccupiedKeyed(key)) {
+      if (rectsOverlap(target, item.rect)) {
+        positions.delete(item.key)
+        displaced.push(item.key)
+      }
+    }
+    if (displaced.length > 0) {
+      const container = options.containerSize?.()
+      for (const k of displaced) {
+        const s = sizes.get(k)
+        if (s)
+          positions.set(k, findEmptySpace(s.w, s.h, getOccupied(k), container))
+      }
+    }
+
     version.value++
     return pos
   }
