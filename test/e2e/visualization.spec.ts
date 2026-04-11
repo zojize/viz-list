@@ -7,7 +7,12 @@ async function stepN(page: import('@playwright/test').Page, n: number) {
   for (let i = 0; i < n; i++) {
     const before = await btn.getAttribute('data-step')
     await btn.click()
-    await expect(btn).not.toHaveAttribute('data-step', before ?? '', { timeout: 5000 })
+    // Wait for version to increment (first step is slower due to init + parse)
+    await btn.waitFor({ state: 'attached', timeout: 10_000 })
+    await expect(async () => {
+      const after = await btn.getAttribute('data-step')
+      expect(Number(after)).toBeGreaterThan(Number(before))
+    }).toPass({ timeout: 10_000 })
   }
 }
 
