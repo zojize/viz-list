@@ -4,11 +4,11 @@ import { useEventListener } from '@vueuse/core'
 // @ts-expect-error: no types
 import { constrainedEditor } from 'constrained-editor-plugin'
 import * as monaco from 'monaco-editor'
-import { computed, onMounted, onUnmounted, shallowRef, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 
 interface UseMonacoEditorOptions {
   container: Ref<HTMLElement | null>
-  prefixCode: Ref<string>
+  prefixCode?: Ref<string>
   code: Ref<string>
 }
 
@@ -38,7 +38,7 @@ export function findEnclosingFunction(node: SyntaxNode): SyntaxNode {
 }
 
 export function useMonacoEditor(options: UseMonacoEditorOptions) {
-  const { container, prefixCode, code } = options
+  const { container, prefixCode = ref(''), code } = options
 
   const editor = shallowRef<monaco.editor.IStandaloneCodeEditor>()
   const decorations = shallowRef<monaco.editor.IEditorDecorationsCollection>()

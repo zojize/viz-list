@@ -3,7 +3,7 @@ import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/ty
 import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
 import DSValue from '~/components/DSValue.vue'
-import { NULL_ADDRESS } from '~/composables/interpreter/types'
+import { formatAddr, formatType, formatValue } from '~/composables/interpreter/helpers'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
 const props = defineProps<{
@@ -18,32 +18,6 @@ const emit = defineEmits<{
 }>()
 
 const context = useInterpreterContext()
-
-function formatValue(value: CppValue): string {
-  if (typeof value === 'number' || typeof value === 'boolean')
-    return String(value)
-  if (typeof value === 'object') {
-    if (value.type === 'pointer')
-      return value.address === NULL_ADDRESS ? 'NULL' : `0x${value.address.toString(16).padStart(3, '0')}`
-    if (value.type === 'struct')
-      return `${value.name} {...}`
-    if (value.type === 'array')
-      return `[${value.length}]`
-  }
-  return String(value)
-}
-
-function formatType(type: CppType): string {
-  if (typeof type === 'string')
-    return type
-  if (type.type === 'pointer')
-    return `${formatType(type.to)}*`
-  if (type.type === 'array')
-    return `${formatType(type.of)}[${type.size}]`
-  if (type.type === 'struct')
-    return type.name
-  return '?'
-}
 
 const structName = computed(() => {
   if (typeof props.cell.type === 'object' && props.cell.type.type === 'struct')
@@ -88,7 +62,7 @@ const referencedBy = computed((): RefEntry[] => {
     if (cell.dead)
       continue
     if (typeof cell.value === 'object' && cell.value.type === 'pointer' && cell.value.address === targetAddr)
-      refs.push({ address: cell.address, label: `0x${cell.address.toString(16).padStart(3, '0')}` })
+      refs.push({ address: cell.address, label: formatAddr(cell.address) })
   }
   return refs
 })

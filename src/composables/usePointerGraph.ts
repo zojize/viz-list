@@ -13,16 +13,7 @@ interface PointerEdge {
   fallbackStyle?: ArrowStyle
 }
 
-interface DanglingEdge {
-  fromAddress: number
-  fromFieldAddress: number
-  fieldName: string
-  toAddress: number
-  direction: FieldDirection
-  color?: string
-  style?: ArrowStyle
-  fallbackStyle?: ArrowStyle
-}
+type DanglingEdge = PointerEdge
 
 interface GraphNode {
   address: number

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { ArrowAnchor, ArrowStyle, CppType, CppValue, FieldDirection, MemoryCell } from '~/composables/interpreter/types'
+import type { ArrowAnchor, ArrowStyle, FieldDirection, MemoryCell } from '~/composables/interpreter/types'
 import { computed, nextTick, onUpdated, shallowRef, watch } from 'vue'
 import CanvasArrow from '~/components/CanvasArrow.vue'
 import DSValue from '~/components/DSValue.vue'
-import { NULL_ADDRESS } from '~/composables/interpreter/types'
+import { formatAddr, formatType, formatValue } from '~/composables/interpreter/helpers'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { usePannableCanvas } from '~/composables/usePannableCanvas'
 import { usePlacementEngine } from '~/composables/usePlacementEngine'
@@ -27,38 +27,6 @@ const emit = defineEmits<{
 const context = useInterpreterContext()
 const pointerGraph = usePointerGraph(context)
 
-// ---- Format helpers ----
-
-function formatAddr(addr: number): string {
-  return `0x${addr.toString(16).padStart(3, '0')}`
-}
-
-function formatValue(value: CppValue): string {
-  if (typeof value === 'number' || typeof value === 'boolean')
-    return String(value)
-  if (typeof value === 'object') {
-    if (value.type === 'pointer')
-      return value.address === NULL_ADDRESS ? 'NULL' : formatAddr(value.address)
-    if (value.type === 'struct')
-      return `${value.name} {...}`
-    if (value.type === 'array')
-      return `[${value.length}]`
-  }
-  return String(value)
-}
-
-function formatType(type: CppType): string {
-  if (typeof type === 'string')
-    return type
-  if (type.type === 'pointer')
-    return `${formatType(type.to)}*`
-  if (type.type === 'array')
-    return `${formatType(type.of)}[${type.size}]`
-  if (type.type === 'struct')
-    return type.name
-  return '?'
-}
-
 // ---- Standalone data items (in-scope stack + live heap) ----
 
 interface DataItem {
@@ -73,7 +41,7 @@ interface DataItem {
 }
 
 /** Addresses that are struct fields or array elements (sub-cells) */
-function getSubCellAddresses(): Set<number> {
+const subCellAddresses = computed(() => {
   const sub = new Set<number>()
   for (const cell of context.memory.cells.values()) {
     if (cell.dead)
@@ -82,7 +50,8 @@ function getSubCellAddresses(): Set<number> {
     if (typeof v === 'object' && v.type === 'struct') {
       const structDef = context.structs[v.name]
       if (structDef) {
-        for (let i = 0; i < Object.keys(structDef).length; i++)
+        const fieldCount = Object.keys(structDef).length
+        for (let i = 0; i < fieldCount; i++)
           sub.add(v.base + 1 + i)
       }
     }
@@ -92,7 +61,7 @@ function getSubCellAddresses(): Set<number> {
     }
   }
   return sub
-}
+})
 
 function getKind(cell: MemoryCell): DataItem['kind'] {
   const t = cell.type
@@ -114,7 +83,7 @@ function getKind(cell: MemoryCell): DataItem['kind'] {
 
 const standaloneItems = computed((): DataItem[] => {
   const items: DataItem[] = []
-  const subCells = getSubCellAddresses()
+  const subCells = subCellAddresses.value
   const seen = new Set<number>()
 
   function addItem(name: string, cell: MemoryCell, dimmed: boolean, varName: string | null = null) {
@@ -240,13 +209,16 @@ const placement = usePlacementEngine({
 })
 placementRef = placement
 
-/** Map from struct base address to placement key */
+/** Reverse map: address → placement key (O(1) lookup) */
+const addressKeyMap = computed(() => {
+  const map = new Map<number, string>()
+  for (const item of standaloneItems.value)
+    map.set(item.address, `item-${item.address}`)
+  return map
+})
+
 function addressToKey(address: number): string | undefined {
-  for (const item of standaloneItems.value) {
-    if (item.address === address)
-      return `item-${item.address}`
-  }
-  return undefined
+  return addressKeyMap.value.get(address)
 }
 
 /**
@@ -306,8 +278,16 @@ function invalidateStaleTreePositions(
   for (const [parentKey, newChildren] of newParentToChildren) {
     const oldChildren = prevParentToChildren.get(parentKey)
     // Compare sets: different size or different members
-    if (!oldChildren || oldChildren.size !== newChildren.size
-      || [...newChildren].some(k => !oldChildren.has(k))) {
+    let childrenChanged = !oldChildren || oldChildren.size !== newChildren.size
+    if (!childrenChanged) {
+      for (const k of newChildren) {
+        if (!oldChildren!.has(k)) {
+          childrenChanged = true
+          break
+        }
+      }
+    }
+    if (childrenChanged) {
       for (const childKey of newChildren)
         toInvalidate.add(childKey)
       // Also invalidate old siblings that may have been removed from the group
@@ -351,10 +331,10 @@ function invalidateStaleTreePositions(
     prevParentToChildren.set(k, new Set(v))
 }
 
-/** Measure and place all visible items with tree-aware layout */
-function measureAndPlace() {
+/** Measure and place all visible items with tree-aware layout. Returns the queried elements for reuse. */
+function measureAndPlace(): NodeListOf<HTMLElement> | null {
   if (!contentRef.value)
-    return
+    return null
   // Step 1: Measure all DOM elements
   const els = contentRef.value.querySelectorAll<HTMLElement>('[data-place-key]')
   const measured = new Map<string, { w: number, h: number }>()
@@ -379,13 +359,24 @@ function measureAndPlace() {
     if (!rootKey || !measured.has(rootKey))
       continue
 
+    // Build adjacency map once per tree (O(edges) instead of O(nodes × edges))
+    const edgesByParent = new Map<number, typeof tree.edges>()
+    for (const edge of tree.edges) {
+      let list = edgesByParent.get(edge.fromAddress)
+      if (!list) {
+        list = []
+        edgesByParent.set(edge.fromAddress, list)
+      }
+      list.push(edge)
+    }
+
     // Place root normally
     const rootSize = measured.get(rootKey)!
     placement.placeNew(rootKey, rootSize.w, rootSize.h)
     treePlacedKeys.add(rootKey)
 
     // Recursively place children
-    placeTreeChildren(tree.rootAddress, rootKey, tree, measured, treePlacedKeys)
+    placeTreeChildren(tree.rootAddress, rootKey, edgesByParent, measured, treePlacedKeys)
   }
 
   // Step 2.5: Evict non-tree items whose positions now overlap with tree items.
@@ -408,13 +399,15 @@ function measureAndPlace() {
   for (const el of els)
     activeKeys.add(el.dataset.placeKey!)
   placement.retainOnly(activeKeys)
+
+  return els
 }
 
 /** Recursively place children of a tree node via placeRelative */
 function placeTreeChildren(
   parentAddress: number,
   parentKey: string,
-  tree: typeof pointerGraph.value.trees[number],
+  edgesByParent: Map<number, typeof pointerGraph.value.trees[number]['edges']>,
   measured: Map<string, { w: number, h: number }>,
   placedKeys: Set<string>,
 ) {
@@ -422,8 +415,8 @@ function placeTreeChildren(
   if (!parentNode)
     return
 
-  const childEdges = tree.edges.filter(e => e.fromAddress === parentAddress)
-  if (childEdges.length === 0)
+  const childEdges = edgesByParent.get(parentAddress)
+  if (!childEdges || childEdges.length === 0)
     return
 
   // Collect children with their direction, skipping already-placed nodes
@@ -455,7 +448,7 @@ function placeTreeChildren(
       const size = measured.get(child.key)!
       placement.placeRelative(child.key, parentKey, size.w, size.h, i, heights, dir, arrowSizeOverride)
       placedKeys.add(child.key)
-      placeTreeChildren(child.address, child.key, tree, measured, placedKeys)
+      placeTreeChildren(child.address, child.key, edgesByParent, measured, placedKeys)
     }
   }
 
@@ -467,7 +460,7 @@ function placeTreeChildren(
     const size = measured.get(child.key)!
     placement.placeNew(child.key, size.w, size.h)
     placedKeys.add(child.key)
-    placeTreeChildren(child.address, child.key, tree, measured, placedKeys)
+    placeTreeChildren(child.address, child.key, edgesByParent, measured, placedKeys)
   }
 }
 
@@ -480,8 +473,9 @@ const settlingKeys = new Set<string>()
 let prevActiveKeys = new Set<string>()
 
 onUpdated(() => nextTick(() => {
-  measureAndPlace()
-  animateEnterLeave()
+  const els = measureAndPlace()
+  if (els)
+    animateEnterLeave(els)
 
   // Auto-pan when content bounds changed and items are outside the visible viewport
   const bounds = placement.getContentBounds()
@@ -534,10 +528,9 @@ function getItemStyle(key: string) {
 // ---- DS item enter/leave animations (runs after placement in onUpdated) ----
 
 /** Animate fade-in for newly appeared items and fade-out for removed items. */
-function animateEnterLeave() {
+function animateEnterLeave(els: NodeListOf<HTMLElement>) {
   if (!contentRef.value)
     return
-  const els = contentRef.value.querySelectorAll<HTMLElement>('[data-place-key]')
   const currentKeys = new Set<string>()
 
   for (const el of els) {

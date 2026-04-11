@@ -33,8 +33,6 @@ const templates = Object.fromEntries(Object.entries(
 const templateNames = Object.keys(templates)
 const selectedTemplateName = useLocalStorage('selected-template', 'singly-insertBack')
 
-// No prefix code — all templates include their own struct definitions
-const prefixCode = computed(() => '')
 const code = useLocalStorage('code', templates[selectedTemplateName.value] ?? '')
 if (queryParams.has('code')) {
   const queryCode = queryParams.get('code')!
@@ -58,7 +56,6 @@ const {
   highlightVariable,
 } = useMonacoEditor({
   container: monacoContainer,
-  prefixCode,
   code,
 })
 

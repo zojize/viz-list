@@ -39,6 +39,40 @@ export function isTruthy(value: CppValue | null): boolean {
   }
 }
 
+export function formatType(type: CppType): string {
+  if (typeof type === 'string')
+    return type
+  if (type.type === 'pointer')
+    return `${formatType(type.to)}*`
+  if (type.type === 'array')
+    return `${formatType(type.of)}[${type.size}]`
+  if (type.type === 'struct')
+    return type.name
+  return '?'
+}
+
+export function formatAddr(addr: number): string {
+  return `0x${addr.toString(16).padStart(3, '0')}`
+}
+
+export function formatValue(value: CppValue): string {
+  if (typeof value === 'number' || typeof value === 'boolean')
+    return String(value)
+  if (typeof value === 'object') {
+    if (value.type === 'pointer')
+      return value.address === NULL_ADDRESS ? 'NULL' : formatAddr(value.address)
+    if (value.type === 'struct')
+      return `${value.name} {...}`
+    if (value.type === 'array')
+      return `[${value.length}]`
+  }
+  return String(value)
+}
+
+export function isPointerValue(value: CppValue): value is { type: 'pointer', address: number } {
+  return typeof value === 'object' && value.type === 'pointer'
+}
+
 export function castIfNull(type: CppType, value: CppValue | null): CppValue {
   if (value != null)
     return value
