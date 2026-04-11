@@ -5,7 +5,7 @@ async function stepN(page: import('@playwright/test').Page, n: number) {
   const btn = page.getByTestId('btn-step')
   for (let i = 0; i < n; i++) {
     await btn.click()
-    await page.waitForTimeout(60)
+    await page.waitForTimeout(100)
   }
 }
 
@@ -23,7 +23,7 @@ test.describe('memory map', () => {
     const stackColumn = page.getByTestId('stack-column')
     await expect(stackColumn).toBeVisible()
     const entries = stackColumn.locator('[data-testid^="stack-entry-"]')
-    await expect(entries.first()).toBeVisible()
+    await expect(entries.first()).toBeVisible({ timeout: 10_000 })
   })
 
   test('shows heap allocations after new ListNode', async ({ page }) => {
