@@ -758,8 +758,8 @@ function autoLayout() {
   prevChildToParent.clear()
   prevParentToChildren.clear()
   settlingKeys.clear()
-  measureAndPlace()
   resetPan()
+  measureAndPlace()
 }
 
 // ---- Auto-pan to cover content after placement ----
