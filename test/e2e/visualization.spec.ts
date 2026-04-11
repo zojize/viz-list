@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
 
 test.describe('memory map', () => {
   test('shows stack variables after stepping', async ({ page }) => {
-    await stepN(page, 2)
+    await stepN(page, 3)
 
     const stackColumn = page.getByTestId('stack-column')
     await expect(stackColumn).toBeVisible()
@@ -69,8 +69,9 @@ test.describe('data structure panel', () => {
     await stepN(page, 15)
 
     const dsView = page.getByTestId('ds-view')
-    const firstItem = dsView.locator('[data-testid^="ds-item-"]').first()
-    await firstItem.click()
+    // Click a struct item (contains "ListNode"), not a stack pointer
+    const structItem = dsView.locator('[data-testid^="ds-item-"]').filter({ hasText: 'ListNode' }).first()
+    await structItem.click()
 
     const fieldTable = page.getByTestId('field-table')
     await expect(fieldTable).toBeVisible()
@@ -146,12 +147,13 @@ test.describe('hover interactions', () => {
     await stepN(page, 15)
 
     const dsView = page.getByTestId('ds-view')
-    const firstItem = dsView.locator('[data-testid^="ds-item-"]').first()
+    // Target a heap struct item (contains "ListNode"), not a stack pointer
+    const structItem = dsView.locator('[data-testid^="ds-item-"]').filter({ hasText: 'ListNode' }).first()
 
-    const testId = await firstItem.getAttribute('data-testid')
+    const testId = await structItem.getAttribute('data-testid')
     const address = testId?.replace('ds-item-', '')
 
-    await firstItem.hover()
+    await structItem.hover()
     await page.waitForTimeout(200)
 
     if (address) {
