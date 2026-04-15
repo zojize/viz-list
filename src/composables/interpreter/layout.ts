@@ -73,7 +73,8 @@ function alignOfType(t: CppType, resolve: StructResolver): number {
     return 4
   if (t.type === 'array')
     return alignOfType(t.of, resolve)
-  return resolve(t.name).size === 0 ? 1 : alignOfNode(resolve(t.name))
+  const n = resolve(t.name)
+  return n.size === 0 ? 1 : alignOfNode(n)
 }
 
 function alignOfNode(n: LayoutNode): number {
@@ -94,13 +95,15 @@ function alignOfNode(n: LayoutNode): number {
   return a
 }
 
-// computeArrayLayout is implemented in Task 3; this stub preserves the reference.
 export function computeArrayLayout(
-  _of: CppType,
-  _size: number,
-  _resolve: StructResolver,
+  elementType: CppType,
+  length: number,
+  resolve: StructResolver,
 ): Extract<LayoutNode, { kind: 'array' }> {
-  throw new Error('computeArrayLayout: implemented in Task 3')
+  const element = layoutOfType(elementType, resolve)
+  const elementAlign = alignOfNode(element)
+  const stride = alignUp(element.size, elementAlign)
+  return { kind: 'array', element, length, stride, size: stride * length }
 }
 
 export function sizeOf(t: CppType, resolve?: StructResolver): number {
@@ -111,6 +114,7 @@ export function sizeOf(t: CppType, resolve?: StructResolver): number {
   if (t.type === 'array') {
     const elemSize = sizeOf(t.of, resolve)
     const elemAlign = alignOf(t.of, resolve)
+    // Stride matches computeArrayLayout — keep in sync when updating either.
     return alignUp(elemSize, elemAlign) * t.size
   }
   if (t.type === 'struct') {

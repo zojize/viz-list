@@ -1,5 +1,6 @@
+import type { LayoutNode } from '../../src/composables/interpreter/layout'
 import { describe, expect, it } from 'vitest'
-import { alignOf, alignUp, computeStructLayout, sizeOf } from '../../src/composables/interpreter/layout'
+import { alignOf, alignUp, computeArrayLayout, computeStructLayout, sizeOf } from '../../src/composables/interpreter/layout'
 
 describe('sizeOf', () => {
   it('returns LP32 widths for primitives', () => {
@@ -91,5 +92,63 @@ describe('computeStructLayout', () => {
       ['l', 4],
       ['r', 8],
     ])
+  })
+})
+
+describe('computeArrayLayout', () => {
+  it('lays out a primitive array with no per-element padding', () => {
+    // int[5] — stride 4, size 20
+    const layout = computeArrayLayout('int', 5, () => {
+      throw new Error('unexpected resolve')
+    })
+    expect(layout.stride).toBe(4)
+    expect(layout.length).toBe(5)
+    expect(layout.size).toBe(20)
+  })
+
+  it('pads element stride to the element alignment', () => {
+    // A struct layout of nominal size=5 align=4 should produce stride 8 in an array.
+    // Real structs are tail-padded so this is a guard against off-by-one stride bugs.
+    const fakeStructLayout: LayoutNode = {
+      kind: 'struct',
+      structName: 'Pad1',
+      size: 5,
+      fields: [
+        { name: 'i', node: { kind: 'scalar', type: 'int', size: 4 }, offset: 0 },
+        { name: 'c', node: { kind: 'scalar', type: 'char', size: 1 }, offset: 4 },
+      ],
+    }
+    const resolve = (name: string) => {
+      if (name === 'Pad1')
+        return fakeStructLayout
+      throw new Error(`unexpected: ${name}`)
+    }
+    const layout = computeArrayLayout({ type: 'struct', name: 'Pad1' }, 3, resolve)
+    expect(layout.stride).toBe(8)
+    expect(layout.size).toBe(24)
+  })
+})
+
+describe('nested structs and arrays', () => {
+  it('inlines a nested struct into the parent layout', () => {
+    // struct Point { int x; int y; }
+    // struct Line { Point from; Point to; }
+    const layouts: Record<string, LayoutNode> = {}
+    layouts.Point = computeStructLayout('Point', { x: 'int', y: 'int' }, n => layouts[n])
+    const line = computeStructLayout('Line', { from: { type: 'struct', name: 'Point' }, to: { type: 'struct', name: 'Point' } }, n => layouts[n])
+    expect(line.size).toBe(16)
+    expect(line.fields[0].offset).toBe(0)
+    expect(line.fields[1].offset).toBe(8)
+  })
+
+  it('inlines a fixed-size array field into the parent layout', () => {
+    // struct Bag { int n; int items[3]; }
+    const layout = computeStructLayout('Bag', { n: 'int', items: { type: 'array', of: 'int', size: 3 } }, () => {
+      throw new Error('unexpected resolve')
+    })
+    expect(layout.size).toBe(16)
+    expect(layout.fields[0]).toMatchObject({ name: 'n', offset: 0 })
+    expect(layout.fields[1]).toMatchObject({ name: 'items', offset: 4 })
+    expect(layout.fields[1].node.kind).toBe('array')
   })
 })
