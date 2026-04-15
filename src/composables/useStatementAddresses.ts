@@ -2,7 +2,6 @@ import type { Ref } from 'vue'
 import type { Node as SyntaxNode } from 'web-tree-sitter'
 import type { InterpreterContext } from '~/composables/interpreter/types'
 import { computed } from 'vue'
-import { structFieldOffset } from '~/composables/interpreter/memory'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 /**
@@ -197,7 +196,7 @@ function resolveVarAddress(name: string, context: Readonly<InterpreterContext>, 
 
 /**
  * For field_expression like `node->data` or `node.field`, resolve the actual
- * field cell address by looking up the struct's base in memory.
+ * field byte address by looking up the struct's base in memory.
  */
 function resolveFieldAddress(node: SyntaxNode, context: Readonly<InterpreterContext>, addrs: Set<number>) {
   const operator = node.childForFieldName('operator')
@@ -224,36 +223,38 @@ function resolveFieldAddress(node: SyntaxNode, context: Readonly<InterpreterCont
   if (varAddr === undefined)
     return
 
-  const cell = context.memory.cells.get(varAddr)
-  if (!cell)
-    return
-
   if (operator.text === '->') {
-    // Pointer dereference: cell value should be a pointer
-    const val = cell.value
-    if (typeof val !== 'object' || val.type !== 'pointer' || val.address === NULL_ADDRESS)
+    // Pointer dereference: read the pointer at varAddr, then find the struct field
+    const varAlloc = context.memory.findAllocation(varAddr)
+    if (!varAlloc || varAlloc.dead || varAlloc.layout.kind !== 'scalar')
       return
-    const targetCell = context.memory.cells.get(val.address)
-    if (!targetCell || typeof targetCell.value !== 'object' || targetCell.value.type !== 'struct')
+    const ptrType = varAlloc.layout.type
+    if (typeof ptrType !== 'object' || ptrType.type !== 'pointer')
       return
-    // Resolve field within the struct
-    const structDef = context.structs[targetCell.value.name]
-    if (!structDef)
+    let targetAddr: number
+    try {
+      targetAddr = context.memory.readScalar(varAddr, ptrType) as number
+    }
+    catch {
       return
-    const offset = structFieldOffset(fieldName, structDef)
-    if (offset >= 0)
-      addrs.add(targetCell.value.base + 1 + offset)
+    }
+    if (targetAddr === NULL_ADDRESS)
+      return
+    const targetAlloc = context.memory.findAllocation(targetAddr)
+    if (!targetAlloc || targetAlloc.dead || targetAlloc.layout.kind !== 'struct')
+      return
+    const field = targetAlloc.layout.fields.find(f => f.name === fieldName)
+    if (field)
+      addrs.add(targetAlloc.base + field.offset)
   }
   else if (operator.text === '.') {
     // Direct struct access
-    if (typeof cell.value !== 'object' || cell.value.type !== 'struct')
+    const varAlloc = context.memory.findAllocation(varAddr)
+    if (!varAlloc || varAlloc.dead || varAlloc.layout.kind !== 'struct')
       return
-    const structDef = context.structs[cell.value.name]
-    if (!structDef)
-      return
-    const fieldIdx = Object.keys(structDef).indexOf(fieldName)
-    if (fieldIdx >= 0)
-      addrs.add(cell.value.base + 1 + fieldIdx)
+    const field = varAlloc.layout.fields.find(f => f.name === fieldName)
+    if (field)
+      addrs.add(varAlloc.base + field.offset)
   }
 }
 
@@ -266,16 +267,28 @@ function resolveIndex(node: SyntaxNode, context: Readonly<InterpreterContext>): 
   if (node.type === 'number_literal')
     return Number.parseInt(node.text)
   if (node.type === 'identifier') {
-    // Look up variable value
+    // Look up variable value — read as int scalar
     for (let i = context.envStack.length - 1; i >= 0; i--) {
       if (node.text in context.envStack[i]) {
-        const val = context.memory.cells.get(context.envStack[i][node.text].address)?.value
-        return typeof val === 'number' ? val : undefined
+        const addr = context.envStack[i][node.text].address
+        try {
+          const v = context.memory.readScalar(addr, 'int')
+          return typeof v === 'number' ? v : undefined
+        }
+        catch {
+          return undefined
+        }
       }
     }
     if (node.text in context.globalEnv) {
-      const val = context.memory.cells.get(context.globalEnv[node.text].address)?.value
-      return typeof val === 'number' ? val : undefined
+      const addr = context.globalEnv[node.text].address
+      try {
+        const v = context.memory.readScalar(addr, 'int')
+        return typeof v === 'number' ? v : undefined
+      }
+      catch {
+        return undefined
+      }
     }
   }
   // Binary expression (e.g. j + 1): try to evaluate simple cases
@@ -316,14 +329,17 @@ function resolveSubscriptAddress(node: SyntaxNode, context: Readonly<Interpreter
     const lastAddr = [...addrs].at(-1)
     if (lastAddr === undefined)
       return
-    const fieldCell = context.memory.cells.get(lastAddr)
-    if (!fieldCell)
-      return
-    const arrVal = fieldCell.value
-    if (typeof arrVal !== 'object' || arrVal.type !== 'array')
+    // lastAddr is the address of the array field; find the element
+    if (!context.memory.findAllocation(lastAddr))
       return
     addrs.delete(lastAddr)
-    addrs.add(arrVal.base + 1 + idx)
+    try {
+      const { address } = context.memory.elementAddress(lastAddr, idx)
+      addrs.add(address)
+    }
+    catch {
+      // ignore out-of-bounds
+    }
     return
   }
 
@@ -340,13 +356,13 @@ function resolveSubscriptAddress(node: SyntaxNode, context: Readonly<Interpreter
       varAddr = context.globalEnv[arrayNode.text].address
     if (varAddr === undefined)
       return
-    const cell = context.memory.cells.get(varAddr)
-    if (!cell)
-      return
-    const arrVal = cell.value
-    if (typeof arrVal !== 'object' || arrVal.type !== 'array')
-      return
-    addrs.add(arrVal.base + 1 + idx)
+    try {
+      const { address } = context.memory.elementAddress(varAddr, idx)
+      addrs.add(address)
+    }
+    catch {
+      // ignore out-of-bounds
+    }
   }
 }
 

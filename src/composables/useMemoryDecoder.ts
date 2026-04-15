@@ -8,7 +8,7 @@ export function useMemoryDecoder(mem: MaybeRefOrGetter<MemoryManager>) {
 
   function decode(address: number, type: CppType): string {
     // Depend on version for reactivity.
-    const _v = m.value.space.version
+    void m.value.space.version
     if (typeof type === 'string') {
       const v = m.value.readScalar(address, type)
       return formatPrimitive(v, type)
@@ -22,7 +22,7 @@ export function useMemoryDecoder(mem: MaybeRefOrGetter<MemoryManager>) {
 
   function hex(address: number, size: number): string {
     // Depend on version for reactivity.
-    const _v = m.value.space.version
+    void m.value.space.version
     const bytes: string[] = []
     for (let i = 0; i < size; i++)
       bytes.push(m.value.space.buffer[address + i].toString(16).padStart(2, '0'))

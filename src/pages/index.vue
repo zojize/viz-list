@@ -81,14 +81,36 @@ const tree = computed(() => {
 
 const { init, step, reset, context, isActive } = useCppInterpreter(tree)
 provideInterpreterContext(context)
-const { changedAddresses, snapshot, diff } = useMemoryDiff(() => context.memory)
+const { changedAddresses, snapshot, diff } = useMemoryDiff(() => context.memory.space)
 const { lhsAddresses, rhsAddresses } = useStatementAddresses(context, isActive)
 const selectedAddress = shallowRef<number | null>(null)
-const selectedCell = computed(() => {
+/** Resolved type for the selected address, derived from its allocation layout. */
+const selectedAlloc = computed(() => {
   if (selectedAddress.value === null)
     return null
-  return context.memory.cells.get(selectedAddress.value) ?? null
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memory.space.version // reactive dependency
+  return context.memory.findAllocation(selectedAddress.value) ?? null
 })
+const selectedType = computed(() => {
+  const a = selectedAlloc.value
+  if (!a)
+    return null
+  const l = a.layout
+  if (l.kind === 'scalar')
+    return l.type
+  if (l.kind === 'array')
+    return { type: 'array' as const, of: fieldNodeToType(l.element), size: l.length }
+  return { type: 'struct' as const, name: l.structName }
+})
+
+function fieldNodeToType(node: import('~/composables/interpreter/layout').LayoutNode): import('~/composables/interpreter/types').CppType {
+  if (node.kind === 'scalar')
+    return node.type
+  if (node.kind === 'array')
+    return { type: 'array' as const, of: fieldNodeToType(node.element), size: node.length }
+  return { type: 'struct' as const, name: node.structName }
+}
 const hoveredNodeAddress = shallowRef<number | null>(null)
 const hoveredFieldAddress = shallowRef<number | null>(null)
 
@@ -340,7 +362,7 @@ onMounted(() => nextTick(reparentMonaco))
           <button v-else data-testid="btn-run" class="icon-btn" title="Run" @click="handleRun()">
             <div class="i-carbon-play-filled" />
           </button>
-          <button data-testid="btn-step" :data-step="context.memory.version" class="icon-btn" title="Step" @click="handleStep()">
+          <button data-testid="btn-step" :data-step="context.memory.space.version" class="icon-btn" title="Step" @click="handleStep()">
             <div class="i-carbon-skip-forward-filled" />
           </button>
         </div>
@@ -452,7 +474,7 @@ onMounted(() => nextTick(reparentMonaco))
                   />
                 </div>
               </Pane>
-              <Pane v-if="selectedCell && !running" :size="35" :min-size="15" class="overflow-auto p-2">
+              <Pane v-if="selectedAlloc && selectedType && !running" :size="35" :min-size="15" class="overflow-auto p-2">
                 <div class="mb-1.5 flex items-center justify-between">
                   <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
                   <button
@@ -463,7 +485,8 @@ onMounted(() => nextTick(reparentMonaco))
                   />
                 </div>
                 <FieldTable
-                  :cell="selectedCell"
+                  :address="selectedAddress!"
+                  :type="selectedType!"
                   :changed-addresses="changedAddresses"
                   @navigate="selectedAddress = $event"
                   @hover-field="hoveredFieldAddress = $event"
@@ -547,7 +570,7 @@ onMounted(() => nextTick(reparentMonaco))
           leave-active-class="transition-all duration-150 ease-in"
           leave-to-class="translate-y-full"
         >
-          <div v-if="selectedCell && !running" class="max-h-1/3 overflow-auto border-t border-gray-200 bg-white p-2 dark:border-gray-800 dark:bg-gray-900">
+          <div v-if="selectedAlloc && selectedType && !running" class="max-h-1/3 overflow-auto border-t border-gray-200 bg-white p-2 dark:border-gray-800 dark:bg-gray-900">
             <div class="mb-1.5 flex items-center justify-between">
               <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
               <button
@@ -558,7 +581,8 @@ onMounted(() => nextTick(reparentMonaco))
               />
             </div>
             <FieldTable
-              :cell="selectedCell"
+              :address="selectedAddress!"
+              :type="selectedType!"
               :changed-addresses="changedAddresses"
               @navigate="selectedAddress = $event"
               @hover-field="hoveredFieldAddress = $event"

@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/types'
+import type { CppType } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
 import DSValue from '~/components/DSValue.vue'
-import { formatAddr, formatType, formatValue } from '~/composables/interpreter/helpers'
-import { structFieldOffset } from '~/composables/interpreter/memory'
+import { formatAddr, formatType } from '~/composables/interpreter/helpers'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
+import { useMemoryDecoder } from '~/composables/useMemoryDecoder'
 
 const props = defineProps<{
-  cell: MemoryCell
+  /** Base address of the allocation to display */
+  address: number
+  /** CppType for this allocation (struct, array, or scalar) */
+  type: CppType
   changedAddresses: ReadonlySet<number>
 }>()
 
@@ -19,35 +22,46 @@ const emit = defineEmits<{
 }>()
 
 const context = useInterpreterContext()
+const { decode } = useMemoryDecoder(() => context.memory)
+
+const alloc = computed(() => {
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memory.space.version // reactive dependency
+  return context.memory.findAllocation(props.address)
+})
 
 const structName = computed(() => {
-  if (typeof props.cell.type === 'object' && props.cell.type.type === 'struct')
-    return props.cell.type.name
+  if (typeof props.type === 'object' && props.type.type === 'struct')
+    return props.type.name
   return null
 })
 
 const isArray = computed(() => {
-  return typeof props.cell.value === 'object' && props.cell.value.type === 'array'
+  return typeof props.type === 'object' && props.type.type === 'array'
 })
+
+const region = computed(() => alloc.value?.region ?? 'stack')
 
 interface FieldRow {
   name: string
   type: CppType
-  value: CppValue
+  displayValue: string
   address: number
   isPointer: boolean
   pointerAddress: number
   changed: boolean
 }
 
-const structBase = computed(() => {
-  const v = props.cell.value
-  if (typeof v === 'object' && v.type === 'struct')
-    return v.base
-  return props.cell.address
-})
+/** Convert a LayoutNode to a CppType for rendering */
+function fieldNodeToType(node: import('~/composables/interpreter/layout').LayoutNode): CppType {
+  if (node.kind === 'scalar')
+    return node.type
+  if (node.kind === 'array')
+    return { type: 'array', of: fieldNodeToType(node.element), size: node.length }
+  return { type: 'struct', name: node.structName }
+}
 
-// ---- Referenced-by: find all pointer cells pointing to this cell's address ----
+// ---- Referenced-by: find all pointer allocations pointing to this allocation's address ----
 
 interface RefEntry {
   address: number
@@ -56,14 +70,25 @@ interface RefEntry {
 
 const referencedBy = computed((): RefEntry[] => {
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.version // reactive dependency
-  const targetAddr = props.cell.address
+  context.memory.space.version // reactive dependency
+  const targetAddr = props.address
   const refs: RefEntry[] = []
-  for (const cell of context.memory.cells.values()) {
-    if (cell.dead)
+  for (const a of context.memory.space.allocations.values()) {
+    if (a.dead)
       continue
-    if (typeof cell.value === 'object' && cell.value.type === 'pointer' && cell.value.address === targetAddr)
-      refs.push({ address: cell.address, label: formatAddr(cell.address) })
+    if (a.layout.kind !== 'scalar')
+      continue
+    const t = a.layout.type
+    if (typeof t !== 'object' || t.type !== 'pointer')
+      continue
+    try {
+      const ptr = context.memory.readScalar(a.base, t) as number
+      if (ptr === targetAddr)
+        refs.push({ address: a.base, label: formatAddr(a.base) })
+    }
+    catch {
+      // ignore read errors
+    }
   }
   return refs
 })
@@ -71,55 +96,72 @@ const referencedBy = computed((): RefEntry[] => {
 const fields = computed((): FieldRow[] => {
   if (!structName.value)
     return []
-  const structDef = context.structs[structName.value]
-  if (!structDef)
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memory.space.version // reactive dependency
+  const layout = context.structLayouts[structName.value]
+  if (!layout || layout.kind !== 'struct')
     return []
-  const base = structBase.value
   const rows: FieldRow[] = []
 
   /** Recursively flatten array elements with subscript prefix (handles n-d arrays) */
-  function flattenArray(prefix: string, elemType: CppType, arrValue: { base: number, length: number }) {
-    for (let i = 0; i < arrValue.length; i++) {
-      const elemAddr = arrValue.base + 1 + i
-      const elemCell = context.memory.cells.get(elemAddr)
-      const elemValue = elemCell?.value ?? 0
+  function flattenArray(prefix: string, elemType: CppType, elemAddr: number, length: number, stride: number) {
+    for (let i = 0; i < length; i++) {
+      const addr = elemAddr + i * stride
       const subscript = `${prefix}[${i}]`
       // Nested array: recurse
-      if (typeof elemType === 'object' && elemType.type === 'array'
-        && typeof elemValue === 'object' && elemValue.type === 'array') {
-        flattenArray(subscript, elemType.of, elemValue)
+      if (typeof elemType === 'object' && elemType.type === 'array') {
+        const innerStride = stride / elemType.size || 1
+        flattenArray(subscript, elemType.of, addr, elemType.size, innerStride)
         continue
+      }
+      const isPtr = typeof elemType === 'object' && elemType.type === 'pointer'
+      let ptrAddr = 0
+      if (isPtr) {
+        try {
+          ptrAddr = context.memory.readScalar(addr, elemType) as number
+        }
+        catch { /* ignore */ }
       }
       rows.push({
         name: subscript,
         type: elemType,
-        value: elemValue,
-        address: elemAddr,
-        isPointer: typeof elemValue === 'object' && elemValue.type === 'pointer',
-        pointerAddress: (typeof elemValue === 'object' && elemValue.type === 'pointer') ? elemValue.address : 0,
-        changed: props.changedAddresses.has(elemAddr),
+        displayValue: decode(addr, elemType),
+        address: addr,
+        isPointer: isPtr,
+        pointerAddress: ptrAddr,
+        changed: props.changedAddresses.has(addr),
       })
     }
   }
 
-  for (const [name, fieldType] of Object.entries(structDef)) {
-    const addr = base + 1 + structFieldOffset(name, structDef)
-    const fieldCell = context.memory.cells.get(addr)
-    const value = fieldCell?.value ?? 0
+  for (const field of layout.fields) {
+    const addr = props.address + field.offset
+    const ftype = fieldNodeToType(field.node)
 
-    if (typeof fieldType === 'object' && fieldType.type === 'array'
-      && typeof value === 'object' && value.type === 'array') {
-      flattenArray(name, fieldType.of, value)
+    if (field.node.kind === 'array') {
+      const elemType = fieldNodeToType(field.node.element)
+      flattenArray(field.name, elemType, addr, field.node.length, field.node.stride)
       continue
     }
 
+    const isPtr = field.node.kind === 'scalar'
+      && typeof field.node.type === 'object'
+      && field.node.type.type === 'pointer'
+    let ptrAddr = 0
+    if (isPtr && field.node.kind === 'scalar' && typeof field.node.type === 'object') {
+      try {
+        ptrAddr = context.memory.readScalar(addr, field.node.type as { type: 'pointer', to: CppType }) as number
+      }
+      catch { /* ignore */ }
+    }
+
     rows.push({
-      name,
-      type: fieldType,
-      value,
+      name: field.name,
+      type: ftype,
+      displayValue: decode(addr, ftype),
       address: addr,
-      isPointer: typeof value === 'object' && value.type === 'pointer',
-      pointerAddress: (typeof value === 'object' && value.type === 'pointer') ? value.address : 0,
+      isPointer: isPtr,
+      pointerAddress: ptrAddr,
       changed: props.changedAddresses.has(addr),
     })
   }
@@ -131,21 +173,21 @@ const fields = computed((): FieldRow[] => {
   <div data-testid="field-table" class="flex flex-col gap-2">
     <div class="flex items-center gap-2">
       <span v-if="structName" class="text-accent-cyan font-bold">{{ structName }}</span>
-      <span class="text-xs text-gray-500 font-mono">at {{ formatAddr(cell.address) }}</span>
+      <span class="text-xs text-gray-500 font-mono">at {{ formatAddr(address) }}</span>
       <span
         class="rounded px-1.5 py-0.5 text-[10px]"
         :class="{
-          'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300': cell.region === 'heap',
-          'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300': cell.region === 'stack',
-          'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300': cell.region === 'global',
+          'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300': region === 'heap',
+          'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300': region === 'stack',
+          'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300': region === 'global',
         }"
-      >{{ cell.region }}</span>
+      >{{ region }}</span>
     </div>
     <!-- Array / general: recursive rendering -->
     <div v-if="isArray" class="rounded bg-gray-100 p-2 dark:bg-gray-800">
       <DSValue
-        :cell="cell"
-        :context="context"
+        :address="address"
+        :type="type"
         @navigate="emit('navigate', $event)"
       />
     </div>
@@ -155,7 +197,7 @@ const fields = computed((): FieldRow[] => {
       <template v-for="field in fields" :key="field.name">
         <!-- Complex value (struct/array): own row with value below -->
         <div
-          v-if="typeof field.value === 'object' && (field.value.type === 'struct' || field.value.type === 'array')"
+          v-if="typeof field.type === 'object' && (field.type.type === 'struct' || field.type.type === 'array')"
           :data-testid="`field-${field.name}`"
           class="border-b border-gray-200 px-3 py-1.5 text-xs font-mono last:border-b-0 dark:border-gray-700"
           :class="{ 'bg-yellow-500/10': field.changed }"
@@ -166,7 +208,8 @@ const fields = computed((): FieldRow[] => {
           </div>
           <div class="pl-2 pt-0.5">
             <DSValue
-              :cell="context.memory.cells.get(field.address)!"
+              :address="field.address"
+              :type="field.type"
               @navigate="emit('navigate', $event)"
             />
           </div>
@@ -186,14 +229,14 @@ const fields = computed((): FieldRow[] => {
               :address="field.pointerAddress"
               @navigate="emit('navigate', $event)"
             />
-            <span v-else class="text-orange-600 font-bold dark:text-orange-300">{{ formatValue(field.value) }}</span>
+            <span v-else class="text-orange-600 font-bold dark:text-orange-300">{{ field.displayValue }}</span>
           </div>
         </div>
       </template>
     </div>
     <div v-else class="rounded bg-gray-100 px-3 py-2 text-xs font-mono dark:bg-gray-800">
-      <span class="text-[10px] text-gray-600">{{ formatType(cell.type) }}</span>
-      <span class="ml-2 text-orange-600 font-bold dark:text-orange-300">{{ formatValue(cell.value) }}</span>
+      <span class="text-[10px] text-gray-600">{{ formatType(type) }}</span>
+      <span class="ml-2 text-orange-600 font-bold dark:text-orange-300">{{ decode(address, type) }}</span>
     </div>
 
     <!-- Referenced by -->

@@ -92,7 +92,7 @@ function runProgram(code: string) {
     globalEnv: {},
     envStack: [],
     callStack: [],
-    memory: mem.space,
+    memory: mem,
     currentNode: undefined,
   }
 

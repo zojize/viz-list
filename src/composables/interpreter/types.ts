@@ -1,6 +1,9 @@
 import type { Ref } from 'vue'
 import type { Node as SyntaxNode } from 'web-tree-sitter'
 import type { LayoutNode } from './layout'
+// NOTE: import type (erased at runtime) avoids a circular value-level import;
+// MemoryManager is only referenced in the InterpreterContext type.
+import type { MemoryManager } from './memory'
 
 // eslint-disable-next-line unused-imports/no-unused-vars
 const CppPrimitiveTypes = ['int', 'float', 'double', 'char', 'bool', 'void'] as const
@@ -91,7 +94,8 @@ export interface InterpreterContext {
   globalEnv: Record<string, EnvEntry>
   envStack: Record<string, EnvEntry>[]
   callStack: { env: Record<string, EnvEntry>[] }[]
-  memory: AddressSpace
+  /** The full MemoryManager — call .findAllocation(), .readScalar(), .space.version etc. */
+  memory: MemoryManager
   currentNode?: SyntaxNode
   /** Set by breakpoint() builtin — signals play mode to pause */
   hitBreakpoint?: boolean

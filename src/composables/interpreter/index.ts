@@ -90,7 +90,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     globalEnv: {} as Record<string, import('./types').EnvEntry>,
     envStack: [] as Record<string, import('./types').EnvEntry>[],
     callStack: [] as { env: Record<string, import('./types').EnvEntry>[] }[],
-    memory: mem.space,
+    memory: markRaw(mem),
     currentNode: undefined as import('web-tree-sitter').Node | undefined,
     hitBreakpoint: false,
   })
@@ -118,7 +118,6 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     context.callStack = []
     context.currentNode = undefined
     mem.reset()
-    context.memory = { ...mem.space }
     gen = undefined
     isActive.value = false
   }
@@ -240,17 +239,15 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     context.callStack.push({ env: [] })
     // Trigger reactivity for memory allocated during init
     mem.space.version++
-    context.memory = { ...mem.space }
   }
 
   function step(): { done: boolean, breakpoint: boolean } {
     asserts(gen)
     try {
       const done = !!gen.next().done
-      // Trigger Vue reactivity for memory mutations (the raw Map was mutated
-      // by the interpreter, bypassing Vue's reactive proxy)
+      // Trigger Vue reactivity: version bump on mem.space propagates through
+      // the reactive context.memory.space reference.
       mem.space.version++
-      context.memory = { ...mem.space }
       const bp = !!context.hitBreakpoint
       context.hitBreakpoint = false
       if (done)

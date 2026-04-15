@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/types'
+import type { CppType, CppValue } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
 import { formatAddr, formatType, formatValue, isPointerValue } from '~/composables/interpreter/helpers'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
+
+/** Temporary shim — MemoryCell was removed in the byte-addressed refactor.
+ *  MemoryCell.vue and its caller MemoryMap.vue will be replaced in Task 16. */
+interface MemoryCell {
+  address: number
+  type: CppType
+  value: CppValue
+  region: import('~/composables/interpreter/types').MemoryRegion
+  dead: boolean
+}
 
 const props = defineProps<{
   cell: MemoryCell

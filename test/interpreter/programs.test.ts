@@ -30,7 +30,7 @@ function runProgram(code: string) {
     globalEnv: {},
     envStack: [],
     callStack: [],
-    memory: mem.space,
+    memory: mem,
     currentNode: undefined,
   }
 
@@ -313,7 +313,7 @@ describe('scope cleanup', () => {
         foo(10, 20);
       }
     `)
-    const liveStackAllocs = [...context.memory.allocations.values()].filter(a => !a.dead && a.region === 'stack')
+    const liveStackAllocs = [...context.memory.space.allocations.values()].filter(a => !a.dead && a.region === 'stack')
     expect(liveStackAllocs).toHaveLength(0)
   })
 
@@ -327,7 +327,7 @@ describe('scope cleanup', () => {
         delete n;
       }
     `)
-    const liveHeapAllocs = [...context.memory.allocations.values()].filter(a => !a.dead && a.region === 'heap')
+    const liveHeapAllocs = [...context.memory.space.allocations.values()].filter(a => !a.dead && a.region === 'heap')
     expect(liveHeapAllocs).toHaveLength(0)
   })
 
@@ -360,7 +360,7 @@ describe('scope cleanup', () => {
         freeAll(&head);
       }
     `)
-    const liveAllocs = [...context.memory.allocations.values()].filter(a => !a.dead && a.base !== 0)
+    const liveAllocs = [...context.memory.space.allocations.values()].filter(a => !a.dead && a.base !== 0)
     expect(liveAllocs).toHaveLength(0)
   })
 })

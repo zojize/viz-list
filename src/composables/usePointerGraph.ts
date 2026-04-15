@@ -1,6 +1,5 @@
 import type { ArrowStyle, FieldDirection, InterpreterContext } from '~/composables/interpreter/types'
 import { computed } from 'vue'
-import { structFieldOffset } from '~/composables/interpreter/memory'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 interface PointerEdge {
@@ -46,32 +45,28 @@ interface PointerGraph {
 export function usePointerGraph(context: Readonly<InterpreterContext>) {
   return computed((): PointerGraph => {
     // eslint-disable-next-line ts/no-unused-expressions
-    context.memory.version // reactive dependency
+    context.memory.space.version // reactive dependency
 
     const nodes = new Map<number, GraphNode>()
     const danglingEdges: DanglingEdge[] = []
 
-    // Step 1: Find all live struct header cells and build graph nodes
+    // Step 1: Find all live struct allocations and build graph nodes
     const structHeaders = new Map<number, { structName: string, base: number }>()
 
-    for (const cell of context.memory.cells.values()) {
-      if (cell.dead)
+    for (const alloc of context.memory.space.allocations.values()) {
+      if (alloc.dead)
         continue
-      const v = cell.value
-      if (typeof v !== 'object' || v.type !== 'struct')
+      if (alloc.layout.kind !== 'struct')
         continue
-      // Only process header cells (address matches the cell's own address or it's the base)
-      // Header cell: cell.address is the base of the struct
-      if (cell.address !== v.base)
-        continue
-      const structDef = context.structs[v.name]
+      const structName = alloc.layout.structName
+      const structDef = context.structs[structName]
       if (!structDef)
         continue
 
-      structHeaders.set(v.base, { structName: v.name, base: v.base })
-      nodes.set(v.base, {
-        address: v.base,
-        structName: v.name,
+      structHeaders.set(alloc.base, { structName, base: alloc.base })
+      nodes.set(alloc.base, {
+        address: alloc.base,
+        structName,
         inEdges: [],
         outEdges: [],
       })
@@ -79,33 +74,32 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
 
     // Step 2: Build edges from pointer fields
     for (const [base, info] of structHeaders) {
-      const structDef = context.structs[info.structName]
-      if (!structDef)
+      const layout = context.memory.space.allocations.get(base)?.layout
+      if (!layout || layout.kind !== 'struct')
         continue
 
-      const fieldNames = Object.keys(structDef)
-      for (let i = 0; i < fieldNames.length; i++) {
-        const fieldType = structDef[fieldNames[i]]
-        const fieldAddr = base + 1 + structFieldOffset(fieldNames[i], structDef)
-        const meta = context.structFieldMeta[info.structName]?.[fieldNames[i]]
+      for (const field of layout.fields) {
+        const fieldAddr = base + field.offset
+        const meta = context.structFieldMeta[info.structName]?.[field.name]
 
         // Collect pointer-to-struct entries: either direct pointer or array of pointers
         interface PtrEntry { ptrAddr: number, fieldName: string }
         const ptrEntries: PtrEntry[] = []
 
-        if (typeof fieldType === 'object' && fieldType.type === 'pointer'
-          && typeof fieldType.to === 'object' && fieldType.to.type === 'struct') {
-          ptrEntries.push({ ptrAddr: fieldAddr, fieldName: fieldNames[i] })
+        if (field.node.kind === 'scalar'
+          && typeof field.node.type === 'object' && field.node.type.type === 'pointer'
+          && typeof field.node.type.to === 'object' && field.node.type.to.type === 'struct') {
+          ptrEntries.push({ ptrAddr: fieldAddr, fieldName: field.name })
         }
-        else if (typeof fieldType === 'object' && fieldType.type === 'array'
-          && typeof fieldType.of === 'object' && fieldType.of.type === 'pointer'
-          && typeof fieldType.of.to === 'object' && fieldType.of.to.type === 'struct') {
+        else if (field.node.kind === 'array'
+          && field.node.element.kind === 'scalar'
+          && typeof field.node.element.type === 'object'
+          && field.node.element.type.type === 'pointer'
+          && typeof field.node.element.type.to === 'object'
+          && field.node.element.type.to.type === 'struct') {
           // Array of pointers to structs — iterate elements
-          const fieldCell = context.memory.cells.get(fieldAddr)
-          if (fieldCell && typeof fieldCell.value === 'object' && fieldCell.value.type === 'array') {
-            for (let j = 0; j < fieldCell.value.length; j++)
-              ptrEntries.push({ ptrAddr: fieldCell.value.base + 1 + j, fieldName: `${fieldNames[i]}[${j}]` })
-          }
+          for (let j = 0; j < field.node.length; j++)
+            ptrEntries.push({ ptrAddr: fieldAddr + j * field.node.stride, fieldName: `${field.name}[${j}]` })
         }
 
         if (ptrEntries.length === 0)
@@ -116,24 +110,39 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
         const style = meta?.style
         const fallbackStyle = meta?.fallbackStyle
 
+        // Determine the scalar node carrying the pointer type:
+        // - direct pointer field: field.node is the scalar
+        // - array-of-pointers field: field.node.element is the scalar
+        const scalarNode = field.node.kind === 'scalar'
+          ? field.node
+          : (field.node.kind === 'array' ? field.node.element : null)
+        if (!scalarNode || scalarNode.kind !== 'scalar' || typeof scalarNode.type !== 'object' || scalarNode.type.type !== 'pointer')
+          continue
+        const ptrType = scalarNode.type
+
         for (const { ptrAddr, fieldName } of ptrEntries) {
-          const ptrCell = context.memory.cells.get(ptrAddr)
-          if (!ptrCell)
+          // Read the pointer value stored at ptrAddr
+          const ptrAlloc = context.memory.findAllocation(ptrAddr)
+          if (!ptrAlloc || ptrAlloc.dead)
             continue
-          const val = ptrCell.value
-          if (typeof val !== 'object' || val.type !== 'pointer' || val.address === NULL_ADDRESS)
+          let targetAddr: number
+          try {
+            targetAddr = context.memory.readScalar(ptrAddr, ptrType) as number
+          }
+          catch {
+            continue
+          }
+
+          if (targetAddr === NULL_ADDRESS)
             continue
 
-          const targetAddr = val.address
-          const targetCell = context.memory.cells.get(targetAddr)
-          if (!targetCell || targetCell.dead) {
+          const targetAlloc = context.memory.findAllocation(targetAddr)
+          if (!targetAlloc || targetAlloc.dead) {
             danglingEdges.push({ fromAddress: base, fromFieldAddress: ptrAddr, fieldName, toAddress: targetAddr, direction, color, style, fallbackStyle })
             continue
           }
 
-          const targetBase = (typeof targetCell.value === 'object' && targetCell.value.type === 'struct')
-            ? targetCell.value.base
-            : targetAddr
+          const targetBase = targetAlloc.base
 
           if (!nodes.has(targetBase))
             continue
