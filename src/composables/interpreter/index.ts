@@ -4,6 +4,7 @@ import { markRaw, reactive, readonly, ref, toValue } from 'vue'
 import { processDeclaration } from './declarations'
 import { evaluate } from './evaluate'
 import { asserts, getGeneratorReturn } from './helpers'
+import { computeStructLayout } from './layout'
 import { createAddressSpace } from './memory'
 
 export type { MemoryManager } from './memory'
@@ -82,6 +83,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
 
   const context = reactive({
     structs: {} as Record<string, Record<string, import('./types').CppType>>,
+    structLayouts: {} as Record<string, import('./layout').LayoutNode>,
     structFieldMeta: {} as Record<string, Record<string, import('./types').FieldMeta>>,
     structMeta: {} as Record<string, import('./types').StructMeta>,
     functions: {} as Record<string, import('./types').FunctionDef>,
@@ -107,6 +109,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
 
   function reset() {
     context.structs = {}
+    context.structLayouts = {}
     context.structFieldMeta = {}
     context.structMeta = {}
     context.functions = {}
@@ -163,6 +166,14 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
             }
           }
           context.structs[name] = fields
+          const layout = computeStructLayout(name, fields, (depName) => {
+            const cached = context.structLayouts[depName]
+            if (!cached)
+              throw new Error(`Struct ${depName} used before declaration in struct ${name}`)
+            return cached
+          })
+          context.structLayouts[name] = layout
+          mem.registerStructLayout(name, layout)
           context.structFieldMeta[name] = fieldMeta
 
           // Walk backwards from the struct to find a preceding comment with struct-level annotations
