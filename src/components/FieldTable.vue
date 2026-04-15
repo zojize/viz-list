@@ -131,7 +131,7 @@ const fields = computed((): FieldRow[] => {
   <div data-testid="field-table" class="flex flex-col gap-2">
     <div class="flex items-center gap-2">
       <span v-if="structName" class="text-accent-cyan font-bold">{{ structName }}</span>
-      <span class="text-xs text-gray-500 font-mono">at 0x{{ cell.address.toString(16).padStart(3, '0') }}</span>
+      <span class="text-xs text-gray-500 font-mono">at {{ formatAddr(cell.address) }}</span>
       <span
         class="rounded px-1.5 py-0.5 text-[10px]"
         :class="{
@@ -167,7 +167,6 @@ const fields = computed((): FieldRow[] => {
           <div class="pl-2 pt-0.5">
             <DSValue
               :cell="context.memory.cells.get(field.address)!"
-
               @navigate="emit('navigate', $event)"
             />
           </div>

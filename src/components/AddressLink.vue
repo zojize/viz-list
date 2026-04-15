@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { formatAddr } from '~/composables/interpreter/helpers'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
 
 const props = defineProps<{
@@ -12,7 +13,7 @@ const emit = defineEmits<{
 }>()
 
 const isNull = computed(() => props.address === NULL_ADDRESS)
-const label = computed(() => isNull.value ? 'NULL' : `0x${props.address.toString(16).padStart(3, '0')}`)
+const label = computed(() => isNull.value ? 'NULL' : formatAddr(props.address))
 </script>
 
 <template>

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { useHead } from '@unhead/vue'
-import { useIntervalFn, useLocalStorage, useMediaQuery } from '@vueuse/core'
+import { onClickOutside, useClipboard, useIntervalFn, useLocalStorage, useMediaQuery, useTimeoutFn } from '@vueuse/core'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
 import { Pane, Splitpanes } from 'splitpanes'
-import { computed, markRaw, nextTick, onMounted, onUnmounted, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, markRaw, nextTick, onMounted, shallowRef, useTemplateRef, watch } from 'vue'
 import { Language, Parser } from 'web-tree-sitter'
 import DataStructureView from '~/components/DataStructureView.vue'
 import FieldTable from '~/components/FieldTable.vue'
@@ -123,20 +123,13 @@ watch(code, () => editedWhileActive.value = isActive.value)
 // ---- Template picker dropdown ----
 
 const templatePickerOpen = shallowRef(false)
+const templatePickerRef = useTemplateRef<HTMLElement>('template-picker')
+onClickOutside(templatePickerRef, () => templatePickerOpen.value = false)
 
 function selectTemplate(name: string) {
   selectedTemplateName.value = name
   templatePickerOpen.value = false
 }
-
-// Close dropdown when clicking outside
-function handleClickOutside(e: MouseEvent) {
-  const target = e.target as HTMLElement
-  if (!target.closest('[data-testid="template-picker"]'))
-    templatePickerOpen.value = false
-}
-onMounted(() => document.addEventListener('click', handleClickOutside))
-onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
 // ---- Info modal ----
 
@@ -147,16 +140,22 @@ const infoOpen = shallowRef(false)
 const playingShareAnimation = shallowRef(false)
 const clipboardIcon = '%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'1em\' height=\'1em\' viewBox=\'0 0 24 24\'%3E%3Cg fill=\'none\' stroke=\'currentColor\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'2\'%3E%3Cpath stroke-dasharray=\'72\' stroke-dashoffset=\'72\' d=\'M12 3h7v18h-14v-18h7Z\'%3E%3Canimate fill=\'freeze\' attributeName=\'stroke-dashoffset\' dur=\'0.6s\' values=\'72;0\'/%3E%3C/path%3E%3Cpath stroke-dasharray=\'12\' stroke-dashoffset=\'12\' stroke-width=\'1\' d=\'M14.5 3.5v3h-5v-3\'%3E%3Canimate fill=\'freeze\' attributeName=\'stroke-dashoffset\' begin=\'0.7s\' dur=\'0.2s\' values=\'12;0\'/%3E%3C/path%3E%3Cpath stroke-dasharray=\'10\' stroke-dashoffset=\'10\' d=\'M9 13l2 2l4 -4\'%3E%3Canimate fill=\'freeze\' attributeName=\'stroke-dashoffset\' begin=\'0.9s\' dur=\'0.2s\' values=\'10;0\'/%3E%3C/path%3E%3C/g%3E%3C/svg%3E'
 const clipBoardIconUrl = shallowRef(`url("data:image/svg+xml,${clipboardIcon}")`)
+const { copy } = useClipboard()
+const { start: startShareAnimationTimeout } = useTimeoutFn(
+  () => playingShareAnimation.value = false,
+  2000,
+  { immediate: false },
+)
 
 function saveToUrl() {
   const savedCode = compressToEncodedURIComponent(code.value)
   const url = new URL(window.location.href)
   url.searchParams.set('code', savedCode)
   window.history.replaceState(null, '', url)
-  navigator.clipboard.writeText(window.location.href)
+  copy(window.location.href)
   playingShareAnimation.value = true
   clipBoardIconUrl.value = `url("data:image/svg+xml,%3C!-- ${Date.now()} --%3E${clipboardIcon}")`
-  setTimeout(() => playingShareAnimation.value = false, 2000)
+  startShareAnimationTimeout()
 }
 
 // ---- Actions ----
@@ -265,7 +264,7 @@ onMounted(() => nextTick(reparentMonaco))
       <!-- Left: template picker + info -->
       <div class="flex items-center gap-2">
         <!-- Template dropdown -->
-        <div data-testid="template-picker" class="relative">
+        <div ref="template-picker" data-testid="template-picker" class="relative">
           <button
             class="flex items-center gap-1.5 rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium transition-all dark:bg-white/5"
             :class="templatePickerOpen ? 'text-vitesse' : 'text-gray-600 dark:text-gray-400'"

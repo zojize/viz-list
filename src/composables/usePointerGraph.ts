@@ -179,8 +179,8 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
         // BFS to find connected component
         const component: number[] = []
         const queue = [addr]
-        while (queue.length > 0) {
-          const cur = queue.shift()!
+        for (let qi = 0; qi < queue.length; qi++) {
+          const cur = queue[qi]
           if (visited.has(cur))
             continue
           visited.add(cur)

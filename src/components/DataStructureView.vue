@@ -545,23 +545,6 @@ function animateEnterLeave(els: NodeListOf<HTMLElement>) {
     }
   }
 
-  // Removed items: clone at last position and fade out
-  for (const key of prevActiveKeys) {
-    if (currentKeys.has(key))
-      continue
-    const pos = placement.getPosition(key)
-    const size = placement.getSize(key)
-    if (!pos || !size || !contentRef.value)
-      continue
-    const ghost = document.createElement('div')
-    // Find the last rendered element to clone its innerHTML
-    // Use a minimal placeholder since the original DOM is gone
-    ghost.style.cssText = `position:absolute;transform:translate(${pos.x}px,${pos.y}px);width:${size.w}px;height:${size.h}px;pointer-events:none;`
-    contentRef.value.appendChild(ghost)
-    const anim = ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: 'ease-out', fill: 'forwards' })
-    anim.finished.then(() => ghost.remove())
-  }
-
   prevActiveKeys = currentKeys
 }
 
