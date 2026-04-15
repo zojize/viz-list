@@ -1,4 +1,4 @@
-import type { CppType, CppValue } from './types'
+import type { CppPrimitiveType, CppType, CppValue, PointerType } from './types'
 import { NULL_ADDRESS } from './types'
 
 export function asserts(condition: any, message?: string): asserts condition {
@@ -104,5 +104,26 @@ export function castIfNull(type: CppType, value: CppValue | null): CppValue {
         default:
           throw new Error(`Cannot assign null to type: ${JSON.stringify(type)}`)
       }
+  }
+}
+
+/**
+ * Decode a typed value from a DataView at a byte address.
+ *  Unguarded — callers that need safety (null/dead/bounds) should use MemoryManager.readScalar.
+ */
+export function decodeScalar(
+  view: DataView,
+  address: number,
+  type: CppPrimitiveType | PointerType,
+): number | boolean {
+  if (typeof type !== 'string')
+    return view.getInt32(address, true)
+  switch (type) {
+    case 'char': return view.getInt8(address)
+    case 'bool': return view.getUint8(address) !== 0
+    case 'int': return view.getInt32(address, true)
+    case 'float': return view.getFloat32(address, true)
+    case 'double': return view.getFloat64(address, true)
+    case 'void': return 0
   }
 }
