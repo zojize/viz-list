@@ -1,16 +1,17 @@
 <script setup lang="ts">
+import type { MemoryDiff, MemorySnapshot } from '~/composables/useMemoryDiff'
 import { useHead } from '@unhead/vue'
 import { onClickOutside, useClipboard, useIntervalFn, useLocalStorage, useMediaQuery, useTimeoutFn } from '@vueuse/core'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
 import { Pane, Splitpanes } from 'splitpanes'
-import { computed, markRaw, nextTick, onMounted, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, markRaw, nextTick, onMounted, readonly, shallowRef, useTemplateRef, watch } from 'vue'
 import { Language, Parser } from 'web-tree-sitter'
 import DataStructureView from '~/components/DataStructureView.vue'
 import FieldTable from '~/components/FieldTable.vue'
 import MemoryMap from '~/components/MemoryMap.vue'
 import { useCppInterpreter } from '~/composables/useCppInterpreter'
 import { provideInterpreterContext } from '~/composables/useInterpreterContext'
-import { useMemoryDiff } from '~/composables/useMemoryDiff'
+import { snapshotSpace, useMemoryDiff } from '~/composables/useMemoryDiff'
 import { useMonacoEditor } from '~/composables/useMonacoEditor'
 import { useStatementAddresses } from '~/composables/useStatementAddresses'
 import 'splitpanes/dist/splitpanes.css'
@@ -81,7 +82,16 @@ const tree = computed(() => {
 
 const { init, step, reset, context, isActive } = useCppInterpreter(tree)
 provideInterpreterContext(context)
-const { changedAddresses, snapshot, diff } = useMemoryDiff(() => context.memory.space)
+const previousSnapshot = shallowRef<MemorySnapshot | null>(null)
+const memoryDiff = useMemoryDiff(() => context.memory.space, previousSnapshot) satisfies { value: MemoryDiff }
+const changedAddresses = computed<ReadonlySet<number>>(() => {
+  const set = new Set<number>()
+  for (const { start, end } of memoryDiff.value.changedRanges) {
+    for (let i = start; i < end; i++)
+      set.add(i)
+  }
+  return readonly(set)
+})
 const { lhsAddresses, rhsAddresses } = useStatementAddresses(context, isActive)
 const selectedAddress = shallowRef<number | null>(null)
 /** Resolved type for the selected address, derived from its allocation layout. */
@@ -189,6 +199,7 @@ function handleReset() {
   resetTracking()
   selectedAddress.value = null
   executionError.value = null
+  previousSnapshot.value = null
 }
 
 function handleRun() {
@@ -207,9 +218,8 @@ function handlePause() {
 
 function runStep() {
   try {
-    snapshot()
+    previousSnapshot.value = snapshotSpace(context.memory.space)
     const { done, breakpoint } = step()
-    diff()
     if (done || breakpoint)
       pause()
   }
