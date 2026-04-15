@@ -14,6 +14,12 @@ export interface MemoryManager {
   writeScalar: (address: number, type: CppPrimitiveType | PointerType, value: number | boolean) => void
   fieldAddress: (structBase: number, fieldName: string) => { type: CppType, address: number }
   elementAddress: (arrayBase: number, index: number) => { type: CppType, address: number }
+  /**
+   * Like elementAddress but uses the provided array CppType for stride/element info
+   *  instead of looking up the allocation. Use for multi-dimensional arrays where the
+   *  inner array shares the same base address as the outer.
+   */
+  elementAddressTyped: (arrayBase: number, index: number, arrayType: { type: 'array', of: CppType, size: number }) => { type: CppType, address: number }
   findAllocation: (address: number) => Allocation | undefined
   describeByte: (address: number) => {
     allocation: Allocation
@@ -109,8 +115,16 @@ export function createAddressSpace(): MemoryManager {
       layout = resolveStruct(type.name)
     }
     allocations.set(base, { base, size, region, dead: false, layout })
-    if (init !== undefined && typeof type === 'string') {
-      writeScalarImpl(base, type, init as number | boolean)
+    if (init !== undefined) {
+      if (typeof type === 'string') {
+        writeScalarImpl(base, type, init as number | boolean)
+      }
+      else if (type.type === 'pointer') {
+        const addr = typeof init === 'object' && init !== null && 'address' in init
+          ? (init as { address: number }).address
+          : init as number
+        writeScalarImpl(base, type, addr)
+      }
     }
     bumpVersion()
     return base
@@ -124,6 +138,24 @@ export function createAddressSpace(): MemoryManager {
     return base
   }
 
+  /** Build an array LayoutNode without allocating memory (used for nested arrays). */
+  function buildArrayLayout(elementType: CppType, length: number): Extract<LayoutNode, { kind: 'array' }> {
+    let element: LayoutNode
+    if (typeof elementType === 'string')
+      element = { kind: 'scalar', type: elementType, size: sizeOf(elementType) }
+    else if (elementType.type === 'pointer')
+      element = { kind: 'scalar', type: elementType, size: 4 }
+    else if (elementType.type === 'struct')
+      element = resolveStruct(elementType.name)
+    else if (elementType.type === 'array')
+      element = buildArrayLayout(elementType.of, elementType.size)
+    else
+      throw new Error(`buildArrayLayout: unsupported element type ${JSON.stringify(elementType)}`)
+    const elemAlign = alignOf(elementType, resolveStruct)
+    const stride = alignUp(element.size, elemAlign)
+    return { kind: 'array', element, length, stride, size: stride * length }
+  }
+
   function allocArray(elementType: CppType, length: number, region: MemoryRegion): number {
     const elemSize = sizeOf(elementType, resolveStruct)
     const elemAlign = alignOf(elementType, resolveStruct)
@@ -132,13 +164,22 @@ export function createAddressSpace(): MemoryManager {
     const base = reserve(size, elemAlign, region)
     // Build array layout inline (small).
     let element: LayoutNode
-    if (typeof elementType === 'string')
+    if (typeof elementType === 'string') {
       element = { kind: 'scalar', type: elementType, size: elemSize }
-    else if (elementType.type === 'pointer')
+    }
+    else if (elementType.type === 'pointer') {
       element = { kind: 'scalar', type: elementType, size: 4 }
-    else if (elementType.type === 'struct')
+    }
+    else if (elementType.type === 'struct') {
       element = resolveStruct(elementType.name)
-    else throw new Error('Arrays of arrays not supported (use multi-dim via nested structs)')
+    }
+    else if (elementType.type === 'array') {
+      // Multi-dimensional array: recursively build inner layout without allocating.
+      element = buildArrayLayout(elementType.of, elementType.size)
+    }
+    else {
+      throw new Error(`allocArray: unsupported element type ${JSON.stringify(elementType)}`)
+    }
     const layout: LayoutNode = { kind: 'array', element, length, stride, size }
     allocations.set(base, { base, size, region, dead: false, layout })
     bumpVersion()
@@ -244,25 +285,107 @@ export function createAddressSpace(): MemoryManager {
   }
 
   function fieldAddress(structBase: number, fieldName: string): { type: CppType, address: number } {
-    const a = allocations.get(structBase)
-    if (!a || a.layout.kind !== 'struct')
+    // Fast path: structBase is the base of a top-level struct allocation.
+    const direct = allocations.get(structBase)
+    if (direct && direct.layout.kind === 'struct') {
+      const field = direct.layout.fields.find(f => f.name === fieldName)
+      if (!field)
+        throw new Error(`Unknown field: ${fieldName}`)
+      return { type: fieldNodeToType(field.node), address: structBase + field.offset }
+    }
+
+    // Slow path: structBase is an inline struct field within a larger allocation.
+    const owner = findAllocation(structBase)
+    if (!owner)
       throw new Error(`fieldAddress: no struct at ${structBase}`)
-    const field = a.layout.fields.find(f => f.name === fieldName)
+    const offset = structBase - owner.base
+    const structNode = findStructNodeAtOffset(owner.layout, offset)
+    if (!structNode)
+      throw new Error(`fieldAddress: no struct at offset ${offset} in allocation at ${owner.base}`)
+    const field = structNode.fields.find(f => f.name === fieldName)
     if (!field)
       throw new Error(`Unknown field: ${fieldName}`)
     return { type: fieldNodeToType(field.node), address: structBase + field.offset }
   }
 
+  function findStructNodeAtOffset(
+    layout: LayoutNode,
+    offset: number,
+  ): Extract<LayoutNode, { kind: 'struct' }> | null {
+    if (layout.kind === 'struct' && offset === 0)
+      return layout
+    if (layout.kind === 'struct') {
+      for (const f of layout.fields) {
+        if (offset === f.offset && f.node.kind === 'struct')
+          return f.node
+        if (offset >= f.offset && offset < f.offset + f.node.size)
+          return findStructNodeAtOffset(f.node, offset - f.offset)
+      }
+    }
+    if (layout.kind === 'array') {
+      // Walk into the element that contains `offset`, e.g. for struct Pt arr[3],
+      // offset 8 (= arr[1]) falls into element index 1 at intra-element offset 0.
+      const elemIdx = Math.floor(offset / layout.stride)
+      const intoElem = offset - elemIdx * layout.stride
+      if (elemIdx >= 0 && elemIdx < layout.length)
+        return findStructNodeAtOffset(layout.element, intoElem)
+    }
+    return null
+  }
+
   function elementAddress(arrayBase: number, index: number): { type: CppType, address: number } {
-    const a = allocations.get(arrayBase)
-    if (!a || a.layout.kind !== 'array')
+    // Find the allocation that owns this address.
+    const owner = findAllocation(arrayBase)
+    if (!owner)
       throw new Error(`elementAddress: no array at ${arrayBase}`)
-    if (index < 0 || index >= a.layout.length)
+
+    // Navigate the layout to find the array node that starts at arrayBase.
+    const offset = arrayBase - owner.base
+    const arrNode = findArrayNodeAtOffset(owner.layout, offset)
+    if (!arrNode)
+      throw new Error(`elementAddress: no array at offset ${offset} in allocation at ${owner.base}`)
+    if (index < 0 || index >= arrNode.length)
       throw new Error(`Array index out of bounds: ${index}`)
     return {
-      type: fieldNodeToType(a.layout.element),
-      address: arrayBase + index * a.layout.stride,
+      type: fieldNodeToType(arrNode.element),
+      address: arrayBase + index * arrNode.stride,
     }
+  }
+
+  /**
+   * Walk `layout` to find the innermost array node whose base sits at `offset`
+   * bytes from the allocation base.
+   *
+   * For a plain array at offset 0 → returns that array node (index into it).
+   * For a 2D array `int a[3][3]` at offset 0 → returns the outer node; for
+   * row-1 at offset 12 → returns the inner-array node for that row.
+   * For a struct field that is an array → returns the field's array node.
+   */
+  function findArrayNodeAtOffset(
+    layout: LayoutNode,
+    offset: number,
+  ): Extract<LayoutNode, { kind: 'array' }> | null {
+    if (layout.kind === 'array') {
+      if (offset === 0)
+        return layout
+      // offset falls inside an element
+      const elemIdx = Math.floor(offset / layout.stride)
+      const intoElem = offset - elemIdx * layout.stride
+      if (intoElem === 0 && layout.element.kind === 'array')
+        return layout.element
+      if (layout.element.kind === 'array' || layout.element.kind === 'struct')
+        return findArrayNodeAtOffset(layout.element, intoElem)
+      return null
+    }
+    if (layout.kind === 'struct') {
+      for (const f of layout.fields) {
+        if (offset === f.offset && f.node.kind === 'array')
+          return f.node
+        if (offset >= f.offset && offset < f.offset + f.node.size)
+          return findArrayNodeAtOffset(f.node, offset - f.offset)
+      }
+    }
+    return null
   }
 
   function fieldNodeToType(n: LayoutNode): CppType {
@@ -324,6 +447,22 @@ export function createAddressSpace(): MemoryManager {
     return undefined
   }
 
+  function elementAddressTyped(
+    arrayBase: number,
+    index: number,
+    arrayType: { type: 'array', of: CppType, size: number },
+  ): { type: CppType, address: number } {
+    const elemSize = sizeOf(arrayType.of, resolveStruct)
+    const elemAlign = alignOf(arrayType.of, resolveStruct)
+    const stride = alignUp(elemSize, elemAlign)
+    if (index < 0 || index >= arrayType.size)
+      throw new Error(`Array index out of bounds: ${index}`)
+    return {
+      type: arrayType.of,
+      address: arrayBase + index * stride,
+    }
+  }
+
   function reset() {
     buffer.fill(0)
     allocations.clear()
@@ -351,6 +490,7 @@ export function createAddressSpace(): MemoryManager {
     writeScalar,
     fieldAddress,
     elementAddress,
+    elementAddressTyped,
     findAllocation,
     describeByte,
     reset,

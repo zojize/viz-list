@@ -9,7 +9,7 @@ import { createAddressSpace } from './memory'
 
 export type { MemoryManager } from './memory'
 export { NULL_ADDRESS } from './types'
-export type { AddressSpace, CppType, CppValue, InterpreterContext, MemoryCell, MemoryRegion } from './types'
+export type { AddressSpace, CppType, CppValue, InterpreterContext, MemoryRegion } from './types'
 export { InterpreterError, NullPointerError, UnsupportedError, UseAfterFreeError } from './types'
 
 const positionRe = /@arrow-position\s+(right|left|dynamic)/
@@ -222,7 +222,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
               address = value.base
             }
             else {
-              address = mem.alloc(type, value!, 'global')
+              address = mem.alloc(type, 'global', value!)
             }
             context.globalEnv[name] = { type, address }
           }

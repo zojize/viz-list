@@ -74,6 +74,76 @@ class Continue extends Error {
   }
 }
 
+// ── helpers ───────────────────────────────────────────────────────
+
+/** Read a scalar or pointer value from memory at the given address+type. */
+function readValue(mem: MemoryManager, addr: number, type: CppType): CppValue {
+  if (typeof type === 'string') {
+    return mem.readScalar(addr, type)
+  }
+  if (type.type === 'pointer') {
+    const raw = mem.readScalar(addr, type) as number
+    return { type: 'pointer', address: raw }
+  }
+  if (type.type === 'array') {
+    // `type.size` is the declared length of this array dimension and `type.of` is
+    // its element type — both come from the declaration, not the allocation, so they
+    // are always correct even for inner rows of a multi-dimensional array.
+    // Using `alloc.base` / `alloc.layout.length` would give the OUTER allocation's
+    // values when `addr` points at an inner row (e.g. &a[1][0] for int a[3][4]).
+    return { type: 'array', base: addr, length: type.size, elementType: type.of }
+  }
+  if (type.type === 'struct') {
+    const alloc = mem.findAllocation(addr)
+    asserts(alloc, `readValue: no allocation at ${addr}`)
+    asserts(alloc.layout.kind === 'struct', `readValue: expected struct allocation at ${addr}`)
+    return { type: 'struct', name: alloc.layout.structName, base: alloc.base }
+  }
+  asserts(false, `readValue: unsupported type ${JSON.stringify(type)}`)
+}
+
+/**
+ * Return the byte stride for pointer arithmetic on a pointer whose current
+ * address is `ptrAddr`.  We inspect the allocation that owns that byte:
+ *   - If it is an array allocation → use the array stride.
+ *   - Otherwise → use the size of the leaf scalar/struct at that byte.
+ * Falls back to 1 if nothing can be determined.
+ */
+function pointerStride(mem: MemoryManager, ptrAddr: number): number {
+  const desc = mem.describeByte(ptrAddr)
+  if (!desc)
+    return 1
+  // Use the leaf element's size so that pointer arithmetic always moves by the
+  // size of the innermost element being pointed at.  Using alloc.layout.stride
+  // (the outer array's row stride) was wrong for int* pointing into a row of a
+  // 2D array — it gave stride=16 instead of stride=4.
+  const leafType = desc.leafType
+  if (typeof leafType === 'string') {
+    const sizes: Record<string, number> = { int: 4, float: 4, double: 8, char: 1, bool: 1, void: 1 }
+    return sizes[leafType] ?? 1
+  }
+  // pointer-to type
+  return 4
+}
+
+/** Write a CppValue to memory at the given address+type. */
+function writeValue(mem: MemoryManager, addr: number, type: CppType, value: CppValue) {
+  if (typeof type === 'string') {
+    mem.writeScalar(addr, type, value as number | boolean)
+  }
+  else if (type.type === 'pointer') {
+    // Array-to-pointer decay: `int *p = arr` stores arr.base as the pointer address.
+    if (typeof value === 'object' && value !== null && value.type === 'array') {
+      mem.writeScalar(addr, type, value.base)
+    }
+    else {
+      const ptrVal = value as { type: 'pointer', address: number }
+      mem.writeScalar(addr, type, ptrVal.address)
+    }
+  }
+  // struct/array: in-place, no write needed (they share the allocation)
+}
+
 // ── lvalue ────────────────────────────────────────────────────────
 
 function lvalue(
@@ -88,8 +158,8 @@ function lvalue(
         const env = context.envStack[i]
         if (node.text in env) {
           const { address, type } = env[node.text]
-          const cell = mem.read(address)
-          if (cell.dead)
+          const alloc = mem.findAllocation(address)
+          if (alloc?.dead)
             throw new UseAfterFreeError(address, node)
           return [type, address]
         }
@@ -104,30 +174,21 @@ function lvalue(
       const operator = node.childForFieldName('operator')!
       if (operator.text === '.') {
         const [type, addr] = lvalue(argument, context, mem)
-        const cellValue = mem.read(addr).value
-        asserts(typeof cellValue === 'object' && cellValue.type === 'struct')
         asserts(typeof type === 'object' && type.type === 'struct')
-        const structDecl = context.structs[type.name]
-        asserts(field in structDecl)
-        return mem.readField(cellValue.base, field, structDecl)
+        const { address: fieldAddr, type: fieldType } = mem.fieldAddress(addr, field)
+        return [fieldType, fieldAddr]
       }
       else if (operator.text === '->') {
         const [type, addr] = lvalue(argument, context, mem)
-        const ptrValue = mem.read(addr).value
-        asserts(typeof ptrValue === 'object' && ptrValue.type === 'pointer')
         asserts(typeof type === 'object' && type.type === 'pointer')
-        if (ptrValue.address === NULL_ADDRESS)
+        const ptrAddress = mem.readScalar(addr, type) as number
+        if (ptrAddress === NULL_ADDRESS)
           throw new NullPointerError(node)
-        const targetCell = mem.read(ptrValue.address)
-        if (targetCell.dead)
-          throw new UseAfterFreeError(ptrValue.address, node)
-        const structValue = targetCell.value
-        asserts(typeof structValue === 'object' && structValue.type === 'struct')
-        const ptrT = type.to
-        asserts(typeof ptrT === 'object' && ptrT.type === 'struct')
-        const structDecl = context.structs[ptrT.name]
-        asserts(field in structDecl)
-        return mem.readField(structValue.base, field, structDecl)
+        const targetAlloc = mem.findAllocation(ptrAddress)
+        if (targetAlloc?.dead)
+          throw new UseAfterFreeError(ptrAddress, node)
+        const { address: fieldAddr, type: fieldType } = mem.fieldAddress(ptrAddress, field)
+        return [fieldType, fieldAddr]
       }
       throw new UnsupportedError(node.text, node)
     }
@@ -136,13 +197,23 @@ function lvalue(
       const index = node.childForFieldName('indices')!
       asserts(index.namedChildCount === 1, 'Unsupported: multiple indices')
       const [type, addr] = lvalue(array, context, mem)
-      asserts(typeof type === 'object' && type.type === 'array')
-      const arrayValue = mem.read(addr).value
-      asserts(typeof arrayValue === 'object' && arrayValue.type === 'array')
       // BUG FIX: use getGeneratorReturn to properly exhaust the generator
       const indexValue = getGeneratorReturn(evaluate(index.namedChildren[0], context, mem))
       asserts(typeof indexValue === 'number')
-      return [type.of, arrayValue.base + 1 + indexValue]
+      if (typeof type === 'object' && type.type === 'array') {
+        // Use elementAddressTyped so multi-dimensional arrays (where inner rows share
+        // the same base address as the outer allocation) are indexed correctly.
+        const { address: elemAddr, type: elemType } = mem.elementAddressTyped(addr, indexValue, type)
+        return [elemType, elemAddr]
+      }
+      else if (typeof type === 'object' && type.type === 'pointer') {
+        // Pointer subscript: ptr[n] == *(ptr + n).  Read the pointer value, then
+        // offset by index * stride (same logic as binary pointer arithmetic).
+        const ptrValue = mem.readScalar(addr, type) as number
+        const stride = pointerStride(mem, ptrValue)
+        return [type.to, ptrValue + indexValue * stride]
+      }
+      throw new Error(`subscript_expression: expected array or pointer type, got ${JSON.stringify(type)}`)
     }
     case 'pointer_expression': {
       const pointer = node.childForFieldName('argument')!
@@ -150,11 +221,10 @@ function lvalue(
       const operator = node.childForFieldName('operator')!
       asserts(operator.text === '*')
       asserts(typeof type === 'object' && type.type === 'pointer')
-      const ptrValue = mem.read(addr).value
-      asserts(typeof ptrValue === 'object' && ptrValue.type === 'pointer')
-      if (ptrValue.address === NULL_ADDRESS)
+      const ptrAddress = mem.readScalar(addr, type) as number
+      if (ptrAddress === NULL_ADDRESS)
         throw new NullPointerError(node)
-      return [type.to, ptrValue.address]
+      return [type.to, ptrAddress]
     }
     default:
       throw new UnsupportedError(`not a valid lvalue: ${node.text}`, node)
@@ -171,15 +241,17 @@ function* processAssignment(
   mem: MemoryManager,
 ): Generator<void, CppValue> {
   const [type, addr] = lvalue(lhs, context, mem)
-  const currentValue = mem.read(addr).value
   if (op !== '=') {
     op = op.slice(0, -1)
-    // Pointer compound assignment (ptr += n, ptr -= n)
+    // Read current value for compound assignment
+    const currentValue = readValue(mem, addr, type)
+    // Pointer compound assignment (ptr += n, ptr -= n) — stride-scaled
     if (typeof currentValue === 'object' && currentValue.type === 'pointer' && typeof value === 'number') {
+      const stride = pointerStride(mem, currentValue.address)
       if (op === '+')
-        value = { type: 'pointer', address: currentValue.address + value }
+        value = { type: 'pointer', address: currentValue.address + value * stride }
       else if (op === '-')
-        value = { type: 'pointer', address: currentValue.address - value }
+        value = { type: 'pointer', address: currentValue.address - value * stride }
       else
         asserts(false, `Unsupported pointer operator: ${op}`)
     }
@@ -189,7 +261,7 @@ function* processAssignment(
     }
   }
   const newValue = castIfNull(type, value)
-  mem.write(addr, newValue)
+  writeValue(mem, addr, type, newValue)
   return newValue
 }
 
@@ -218,8 +290,8 @@ export function* evaluate(
       return n
     }
     case 'identifier': {
-      const [, addr] = lvalue(node, context, mem)
-      return mem.read(addr).value
+      const [type, addr] = lvalue(node, context, mem)
+      return readValue(mem, addr, type)
     }
     case 'parenthesized_expression': {
       return yield* evaluate(node.namedChildren[0], context, mem)
@@ -236,8 +308,11 @@ export function* evaluate(
       }
 
       const poppedEnv = context.envStack.pop()!
-      for (const { address } of Object.values(poppedEnv))
-        mem.read(address).dead = true
+      for (const { address } of Object.values(poppedEnv)) {
+        const alloc = mem.findAllocation(address)
+        if (alloc)
+          alloc.dead = true
+      }
 
       const isFunctionBody = node.parent!.type === 'function_definition'
       if (isFunctionBody) {
@@ -246,9 +321,9 @@ export function* evaluate(
         // the original heap address.
         for (const env of context.envStack) {
           for (const { address } of Object.values(env)) {
-            const cell = mem.read(address)
-            if (cell.region === 'stack')
-              cell.dead = true
+            const alloc = mem.findAllocation(address)
+            if (alloc && alloc.region === 'stack')
+              alloc.dead = true
           }
         }
         context.envStack = context.callStack.pop()!.env
@@ -293,20 +368,31 @@ export function* evaluate(
       const rhs = checksDefined(yield* evaluate(node.childForFieldName('right')!, context, mem))
 
       // Pointer arithmetic: ptr + int, int + ptr, ptr - int, ptr - ptr
+      // All offsets are C-style (scaled by element stride in bytes).
       const lPtr = lhs !== null && typeof lhs === 'object' && lhs.type === 'pointer'
       const rPtr = rhs !== null && typeof rhs === 'object' && rhs.type === 'pointer'
       if (lPtr || rPtr) {
         if (op === '+') {
-          if (lPtr && typeof rhs === 'number')
-            return { type: 'pointer', address: (lhs as { address: number }).address + rhs }
-          if (rPtr && typeof lhs === 'number')
-            return { type: 'pointer', address: (rhs as { address: number }).address + lhs }
+          if (lPtr && typeof rhs === 'number') {
+            const base = (lhs as { address: number }).address
+            return { type: 'pointer', address: base + rhs * pointerStride(mem, base) }
+          }
+          if (rPtr && typeof lhs === 'number') {
+            const base = (rhs as { address: number }).address
+            return { type: 'pointer', address: base + lhs * pointerStride(mem, base) }
+          }
         }
         if (op === '-') {
-          if (lPtr && typeof rhs === 'number')
-            return { type: 'pointer', address: (lhs as { address: number }).address - rhs }
-          if (lPtr && rPtr)
-            return (lhs as { address: number }).address - (rhs as { address: number }).address
+          if (lPtr && typeof rhs === 'number') {
+            const base = (lhs as { address: number }).address
+            return { type: 'pointer', address: base - rhs * pointerStride(mem, base) }
+          }
+          if (lPtr && rPtr) {
+            const la = (lhs as { address: number }).address
+            const ra = (rhs as { address: number }).address
+            const stride = pointerStride(mem, la)
+            return (la - ra) / stride
+          }
         }
         // Pointer comparison
         if (lPtr && rPtr && (op === '<' || op === '>' || op === '<=' || op === '>=')) {
@@ -333,21 +419,21 @@ export function* evaluate(
       return unaryOps[op](operand)
     }
     case 'update_expression': {
-      const [, addr] = lvalue(node.childForFieldName('argument')!, context, mem)
-      const cell = mem.read(addr)
+      const [type, addr] = lvalue(node.childForFieldName('argument')!, context, mem)
       const isPostfix = node.firstChild!.isNamed
       const op = node.childForFieldName('operator')!.text
       asserts(op === '++' || op === '--')
-      const old = cell.value
-      // Pointer increment/decrement
+      const old = readValue(mem, addr, type)
+      // Pointer increment/decrement (stride-scaled)
       if (typeof old === 'object' && old.type === 'pointer') {
-        const delta = op === '++' ? 1 : -1
+        const stride = pointerStride(mem, old.address)
+        const delta = (op === '++' ? 1 : -1) * stride
         const newVal: CppValue = { type: 'pointer', address: old.address + delta }
-        mem.write(addr, newVal)
+        writeValue(mem, addr, type, newVal)
         return isPostfix ? old : newVal
       }
       const newVal = binaryOps[op[0]](old, 1)
-      mem.write(addr, newVal)
+      writeValue(mem, addr, type, newVal)
       return isPostfix ? old : newVal
     }
     case 'assignment_expression': {
@@ -361,8 +447,8 @@ export function* evaluate(
       )
     }
     case 'subscript_expression': {
-      const [, addr] = lvalue(node, context, mem)
-      return mem.read(addr).value
+      const [type, addr] = lvalue(node, context, mem)
+      return readValue(mem, addr, type)
     }
     case 'pointer_expression': {
       const argument = node.childForFieldName('argument')!
@@ -372,10 +458,24 @@ export function* evaluate(
         asserts(typeof pointer === 'object' && pointer?.type === 'pointer')
         if (pointer.address === NULL_ADDRESS)
           throw new NullPointerError(node)
-        const targetCell = mem.read(pointer.address)
-        if (targetCell.dead)
+        const targetAlloc = mem.findAllocation(pointer.address)
+        if (targetAlloc?.dead)
           throw new UseAfterFreeError(pointer.address, node)
-        return targetCell.value
+        // Determine the pointee type: try lvalue first (works for identifiers and
+        // subscript/field expressions), fall back to describeByte for computed
+        // pointers like (p + 1) that aren't lvalues.
+        let pointeeType: CppType
+        try {
+          const [ptrType] = lvalue(argument, context, mem)
+          asserts(typeof ptrType === 'object' && ptrType.type === 'pointer')
+          pointeeType = ptrType.to
+        }
+        catch {
+          const desc = mem.describeByte(pointer.address)
+          asserts(desc, `Cannot dereference pointer at ${pointer.address}: no allocation`)
+          pointeeType = desc.leafType
+        }
+        return readValue(mem, pointer.address, pointeeType)
       }
       else if (operator.text === '&') {
         const [, addr] = lvalue(argument, context, mem)
@@ -396,14 +496,14 @@ export function* evaluate(
           mem,
         )
         asserts(!(name in context.envStack.at(-1)!), `Variable ${name} already declared`)
-        // Structs and arrays already have their header cell allocated by initializeValue;
-        // bind the variable directly to the header address instead of allocating a duplicate.
+        // Structs and arrays already have their allocation created by initializeValue;
+        // bind the variable directly to the base address instead of allocating a duplicate.
         let addr: number
         if (typeof value === 'object' && (value.type === 'struct' || value.type === 'array')) {
           addr = value.base
         }
         else {
-          addr = mem.alloc(type, value!, 'stack')
+          addr = mem.alloc(type, 'stack', value ?? undefined)
         }
         context.envStack.at(-1)![name] = { type, address: addr }
       }
@@ -445,7 +545,7 @@ export function* evaluate(
           addr = arg.value.base
         }
         else {
-          addr = mem.alloc(arg.type, arg.value, 'stack')
+          addr = mem.alloc(arg.type, 'stack', arg.value)
         }
         newEnv[name] = { type: arg.type, address: addr }
       }
@@ -459,25 +559,20 @@ export function* evaluate(
       const argument = node.childForFieldName('argument')!
       const field = node.childForFieldName('field')!.text
       const operator = node.childForFieldName('operator')!
-      const argumentValue = checksDefined(yield* evaluate(argument, context, mem))
-      asserts(typeof argumentValue === 'object' && argumentValue !== null)
-      if (operator.text === '.' && argumentValue.type === 'struct') {
-        const structDecl = context.structs[argumentValue.name]
-        asserts(field in structDecl)
-        const [, fieldAddr] = mem.readField(argumentValue.base, field, structDecl)
-        return mem.read(fieldAddr).value
+      if (operator.text === '.') {
+        const [type, addr] = lvalue(node, context, mem)
+        return readValue(mem, addr, type)
       }
-      else if (operator.text === '->' && argumentValue.type === 'pointer') {
+      else if (operator.text === '->') {
+        const argumentValue = checksDefined(yield* evaluate(argument, context, mem))
+        asserts(typeof argumentValue === 'object' && argumentValue !== null && argumentValue.type === 'pointer')
         if (argumentValue.address === NULL_ADDRESS)
           throw new NullPointerError(node)
-        const targetCell = mem.read(argumentValue.address)
-        if (targetCell.dead)
+        const targetAlloc = mem.findAllocation(argumentValue.address)
+        if (targetAlloc?.dead)
           throw new UseAfterFreeError(argumentValue.address, node)
-        const structVal = targetCell.value
-        asserts(typeof structVal === 'object' && structVal.type === 'struct')
-        asserts(field in context.structs[structVal.name])
-        const [, fieldAddr] = mem.readField(structVal.base, field, context.structs[structVal.name])
-        return mem.read(fieldAddr).value
+        const { address: fieldAddr, type: fieldType } = mem.fieldAddress(argumentValue.address, field)
+        return readValue(mem, fieldAddr, fieldType)
       }
       throw new UnsupportedError(node.text, node)
     }
@@ -489,18 +584,17 @@ export function* evaluate(
 
       if (typeof type === 'object' && type.type === 'struct') {
         asserts(type.name in context.structs, `Struct ${type.name} not found`)
-        const fieldDefs = context.structs[type.name]
-        const base = mem.allocStruct(type.name, fieldDefs, 'heap')
+        const base = mem.allocStruct(type.name, 'heap')
 
         // Support constructor arguments: write arg values to field addresses
         const argsNode = node.childForFieldName('arguments')
         if (argsNode) {
           const argNodes = argsNode.namedChildren
-          const fieldNames = Object.keys(fieldDefs)
+          const fieldNames = Object.keys(context.structs[type.name])
           for (let i = 0; i < argNodes.length && i < fieldNames.length; i++) {
             const argValue = checksDefined(yield* evaluate(argNodes[i], context, mem))
-            const [fieldType, fieldAddr] = mem.readField(base, fieldNames[i], fieldDefs)
-            mem.write(fieldAddr, castIfNull(fieldType, argValue))
+            const { address: fieldAddr, type: fieldType } = mem.fieldAddress(base, fieldNames[i])
+            writeValue(mem, fieldAddr, fieldType, castIfNull(fieldType, argValue))
           }
         }
 
@@ -512,7 +606,7 @@ export function* evaluate(
       else {
         // Primitive type on the heap
         const val = getGeneratorReturn(initializeValueForNew(type, context, mem))
-        const addr = mem.alloc(type, val, 'heap')
+        const addr = mem.alloc(type, 'heap', val)
         return {
           type: 'pointer',
           address: addr,
@@ -521,12 +615,12 @@ export function* evaluate(
     }
     case 'delete_expression': {
       asserts(node.childCount !== 4, 'Unsupported: delete expression with array')
-      const [, addr] = lvalue(node.lastNamedChild!, context, mem)
-      const ptrValue = mem.read(addr).value
-      asserts(typeof ptrValue === 'object' && ptrValue.type === 'pointer')
-      if (ptrValue.address === NULL_ADDRESS)
+      const [type, addr] = lvalue(node.lastNamedChild!, context, mem)
+      asserts(typeof type === 'object' && type.type === 'pointer')
+      const ptrAddress = mem.readScalar(addr, type) as number
+      if (ptrAddress === NULL_ADDRESS)
         throw new NullPointerError(node)
-      mem.free(ptrValue.address)
+      mem.free(ptrAddress)
       return
     }
     case 'if_statement': {

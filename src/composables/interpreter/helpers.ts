@@ -74,6 +74,16 @@ export function isPointerValue(value: CppValue): value is { type: 'pointer', add
 }
 
 export function castIfNull(type: CppType, value: CppValue | null): CppValue {
+  // Array-to-pointer decay: int *p = arr  →  p stores arr.base
+  if (
+    value != null
+    && typeof value === 'object'
+    && value.type === 'array'
+    && typeof type === 'object'
+    && type.type === 'pointer'
+  ) {
+    return { type: 'pointer', address: value.base }
+  }
   if (value != null)
     return value
 
