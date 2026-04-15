@@ -1,285 +1,308 @@
-import type { AddressSpace, CppType, CppValue, MemoryCell, MemoryRegion } from './types'
-import { MEMORY_SIZE, NULL_ADDRESS, StackOverflowError } from './types'
-
-function defaultValue(type: CppType): CppValue {
-  if (typeof type === 'string') {
-    switch (type) {
-      case 'int':
-      case 'float':
-      case 'double':
-      case 'char':
-      case 'void':
-        return 0
-      case 'bool':
-        return false
-    }
-  }
-  switch (type.type) {
-    case 'pointer':
-      return { type: 'pointer', address: NULL_ADDRESS }
-    case 'array':
-      return { type: 'array', base: 0, length: 0 }
-    case 'struct':
-      return { type: 'struct', name: type.name, base: 0 }
-  }
-}
+import type { LayoutNode } from './layout'
+import type { AddressSpace, Allocation, CppPrimitiveType, CppType, CppValue, MemoryRegion, PointerType } from './types'
+import { alignOf, alignUp, sizeOf } from './layout'
+import { MEMORY_SIZE, NULL_ADDRESS, NullPointerError, StackOverflowError, UseAfterFreeError } from './types'
 
 export interface MemoryManager {
   space: AddressSpace
-  alloc: (type: CppType, value: CppValue, region: MemoryRegion) => number
-  allocStruct: (
-    name: string,
-    fieldDefs: Record<string, CppType>,
-    region: MemoryRegion,
-  ) => number
-  allocArray: (
-    elementType: CppType,
-    size: number,
-    region: MemoryRegion,
-  ) => number
-  read: (address: number) => MemoryCell
-  write: (address: number, value: CppValue) => void
+  registerStructLayout: (name: string, layout: LayoutNode) => void
+  alloc: (type: CppType, region: MemoryRegion, init?: CppValue) => number
+  allocStruct: (name: string, region: MemoryRegion) => number
+  allocArray: (elementType: CppType, length: number, region: MemoryRegion) => number
   free: (address: number) => void
-  readField: (
-    structBase: number,
-    fieldName: string,
-    fieldDefs: Record<string, CppType>,
-  ) => [CppType, number]
-  structFieldOffset: (fieldName: string, fieldDefs: Record<string, CppType>) => number
+  readScalar: (address: number, type: CppPrimitiveType | PointerType) => number | boolean
+  writeScalar: (address: number, type: CppPrimitiveType | PointerType, value: number | boolean) => void
+  fieldAddress: (structBase: number, fieldName: string) => { type: CppType, address: number }
+  elementAddress: (arrayBase: number, index: number) => { type: CppType, address: number }
+  findAllocation: (address: number) => Allocation | undefined
   reset: () => void
 }
 
-function makeNullCell(): MemoryCell {
-  return {
-    address: NULL_ADDRESS,
-    type: 'int',
-    value: 0,
+export function createAddressSpace(): MemoryManager {
+  const buffer = new Uint8Array(MEMORY_SIZE)
+  const view = new DataView(buffer.buffer)
+  const allocations = new Map<number, Allocation>()
+  const structLayoutCache = new Map<string, LayoutNode>()
+  const space: AddressSpace = {
+    buffer,
+    view,
+    allocations,
+    stackTop: 1,
+    heapBottom: MEMORY_SIZE,
+    version: 0,
+  }
+
+  // NULL marker — single byte at address 0, permanently dead.
+  allocations.set(NULL_ADDRESS, {
+    base: 0,
+    size: 1,
     region: 'global',
     dead: true,
-  }
-}
+    layout: { kind: 'scalar', type: 'int', size: 1 },
+  })
 
-/** Compute the number of cells a field type occupies (inline arrays expand) */
-function fieldCellCount(type: CppType): number {
-  if (typeof type === 'object' && type.type === 'array')
-    return 1 + type.size // header + elements
-  return 1
-}
-
-/** Compute the cell offset of fieldName within a struct (accounting for inline arrays) */
-export function structFieldOffset(fieldName: string, fieldDefs: Record<string, CppType>): number {
-  let offset = 0
-  for (const [name, type] of Object.entries(fieldDefs)) {
-    if (name === fieldName)
-      return offset
-    offset += fieldCellCount(type)
-  }
-  return -1
-}
-
-/** Compute the total number of cells a struct occupies (header + all fields) */
-export function structTotalSize(fieldDefs: Record<string, CppType>): number {
-  let size = 1 // header
-  for (const type of Object.values(fieldDefs))
-    size += fieldCellCount(type)
-  return size
-}
-
-export function createAddressSpace(): MemoryManager {
-  const space: AddressSpace = {
-    cells: new Map(),
-    stackTop: 1,
-    version: 0,
-    heapBottom: MEMORY_SIZE - 1,
+  function bumpVersion() {
+    space.version++
   }
 
-  // Install NULL cell at address 0
-  space.cells.set(NULL_ADDRESS, makeNullCell())
-
-  function checkCollision(stackNeed: number, heapNeed: number) {
-    // stackTop is the next free stack address (grows up).
-    // heapBottom is the next free heap address (grows down).
-    // Available space = heapBottom - stackTop + 1. Collision when need > available.
-    const available = space.heapBottom - space.stackTop + 1
-    if (stackNeed + heapNeed > available)
-      throw new StackOverflowError(`Out of memory: stack (${space.stackTop}) collided with heap (${space.heapBottom})`)
+  function resolveStruct(name: string): LayoutNode {
+    const l = structLayoutCache.get(name)
+    if (!l)
+      throw new Error(`Unknown struct: ${name}`)
+    return l
   }
 
-  /** Allocate N contiguous addresses from the stack (growing up) or heap (growing down). */
-  function allocRegion(count: number, region: MemoryRegion): number {
-    if (region === 'heap') {
-      checkCollision(0, count)
-      const base = space.heapBottom
-      space.heapBottom -= count
-      return base - count + 1 // lowest address of the block
+  function checkCollision(needed: number, region: MemoryRegion) {
+    const available = space.heapBottom - space.stackTop
+    if (needed > available)
+      throw new StackOverflowError(`Out of memory (${region}): need ${needed}, have ${available}`)
+  }
+
+  function reserveStack(size: number, align: number): number {
+    space.stackTop = alignUp(space.stackTop, align)
+    checkCollision(size, 'stack')
+    const base = space.stackTop
+    space.stackTop += size
+    return base
+  }
+
+  function reserveHeap(size: number, align: number): number {
+    const unaligned = space.heapBottom - size
+    const base = unaligned & ~(align - 1)
+    if (base < space.stackTop)
+      throw new StackOverflowError(`Out of memory (heap): aligned base ${base} below stackTop ${space.stackTop}`)
+    space.heapBottom = base
+    return base
+  }
+
+  function reserve(size: number, align: number, region: MemoryRegion): number {
+    return region === 'heap'
+      ? reserveHeap(size, align)
+      : reserveStack(size, align)
+  }
+
+  function registerStructLayout(name: string, layout: LayoutNode) {
+    structLayoutCache.set(name, layout)
+  }
+
+  function alloc(type: CppType, region: MemoryRegion, init?: CppValue): number {
+    const size = sizeOf(type, resolveStruct)
+    const align = alignOf(type, resolveStruct)
+    const base = reserve(size, align, region)
+    let layout: LayoutNode
+    if (typeof type === 'string') {
+      layout = { kind: 'scalar', type, size }
+    }
+    else if (type.type === 'pointer') {
+      layout = { kind: 'scalar', type, size }
+    }
+    else if (type.type === 'array') {
+      throw new Error('Use allocArray for arrays')
     }
     else {
-      // stack or global — grow upward
-      checkCollision(count, 0)
-      const base = space.stackTop
-      space.stackTop += count
-      return base
+      layout = resolveStruct(type.name)
+    }
+    allocations.set(base, { base, size, region, dead: false, layout })
+    if (init !== undefined && typeof type === 'string') {
+      writeScalarImpl(base, type, init as number | boolean)
+    }
+    bumpVersion()
+    return base
+  }
+
+  function allocStruct(name: string, region: MemoryRegion): number {
+    const layout = resolveStruct(name)
+    const base = reserve(layout.size, alignOfLayout(layout), region)
+    allocations.set(base, { base, size: layout.size, region, dead: false, layout })
+    bumpVersion()
+    return base
+  }
+
+  function allocArray(elementType: CppType, length: number, region: MemoryRegion): number {
+    const elemSize = sizeOf(elementType, resolveStruct)
+    const elemAlign = alignOf(elementType, resolveStruct)
+    const stride = alignUp(elemSize, elemAlign)
+    const size = stride * length
+    const base = reserve(size, elemAlign, region)
+    // Build array layout inline (small).
+    let element: LayoutNode
+    if (typeof elementType === 'string')
+      element = { kind: 'scalar', type: elementType, size: elemSize }
+    else if (elementType.type === 'pointer')
+      element = { kind: 'scalar', type: elementType, size: 4 }
+    else if (elementType.type === 'struct')
+      element = resolveStruct(elementType.name)
+    else throw new Error('Arrays of arrays not supported (use multi-dim via nested structs)')
+    const layout: LayoutNode = { kind: 'array', element, length, stride, size }
+    allocations.set(base, { base, size, region, dead: false, layout })
+    bumpVersion()
+    return base
+  }
+
+  function free(address: number) {
+    const a = allocations.get(address)
+    if (!a)
+      throw new Error(`free: no allocation at ${address}`)
+    a.dead = true
+    bumpVersion()
+  }
+
+  function readScalar(address: number, type: CppPrimitiveType | PointerType): number | boolean {
+    if (address === NULL_ADDRESS)
+      throw new NullPointerError()
+    if (address < 0 || address + sizeOfScalar(type) > MEMORY_SIZE)
+      throw new Error(`Out of bounds read at ${address}`)
+    const alloc = findAllocation(address)
+    if (!alloc || alloc.dead)
+      throw new UseAfterFreeError(address)
+    return readScalarImpl(address, type)
+  }
+
+  function writeScalar(address: number, type: CppPrimitiveType | PointerType, value: number | boolean) {
+    if (address === NULL_ADDRESS)
+      throw new NullPointerError()
+    if (address < 0 || address + sizeOfScalar(type) > MEMORY_SIZE)
+      throw new Error(`Out of bounds write at ${address}`)
+    const alloc = findAllocation(address)
+    if (!alloc || alloc.dead)
+      throw new UseAfterFreeError(address)
+    writeScalarImpl(address, type, value)
+    bumpVersion()
+  }
+
+  function readScalarImpl(address: number, type: CppPrimitiveType | PointerType): number | boolean {
+    if (typeof type !== 'string')
+      return view.getInt32(address, true) // pointer
+    switch (type) {
+      case 'char': return view.getInt8(address)
+      case 'bool': return view.getUint8(address) !== 0
+      case 'int': return view.getInt32(address, true)
+      case 'float': return view.getFloat32(address, true)
+      case 'double': return view.getFloat64(address, true)
+      case 'void': return 0
     }
   }
 
-  function alloc(type: CppType, value: CppValue, region: MemoryRegion): number {
-    const address = allocRegion(1, region)
-    space.cells.set(address, { address, type, value, region, dead: false })
-    return address
+  function writeScalarImpl(address: number, type: CppPrimitiveType | PointerType, value: number | boolean) {
+    if (typeof type !== 'string') {
+      view.setInt32(address, value as number, true)
+      return
+    }
+    switch (type) {
+      case 'char':
+        view.setInt8(address, value as number)
+        break
+      case 'bool':
+        view.setUint8(address, value ? 1 : 0)
+        break
+      case 'int':
+        view.setInt32(address, value as number, true)
+        break
+      case 'float':
+        view.setFloat32(address, value as number, true)
+        break
+      case 'double':
+        view.setFloat64(address, value as number, true)
+        break
+      case 'void':
+        break
+    }
   }
 
-  function allocStruct(
-    name: string,
-    fieldDefs: Record<string, CppType>,
-    region: MemoryRegion,
-  ): number {
-    const fields = Object.entries(fieldDefs)
-    let totalSize = 1 // header
-    for (const [, type] of fields)
-      totalSize += fieldCellCount(type)
-    const base = allocRegion(totalSize, region)
+  function sizeOfScalar(type: CppPrimitiveType | PointerType): number {
+    if (typeof type !== 'string')
+      return 4
+    return sizeOf(type)
+  }
 
-    // Header cell
-    space.cells.set(base, {
-      address: base,
-      type: { type: 'struct', name },
-      value: { type: 'struct', name, base },
-      region,
-      dead: false,
-    })
-
-    // Field cells with computed offsets (inline arrays are contiguous)
-    let offset = 1
-    for (const [, fieldType] of fields) {
-      if (typeof fieldType === 'object' && fieldType.type === 'array') {
-        // Inline array: header at base+offset, elements at base+offset+1..
-        const arrBase = base + offset
-        space.cells.set(arrBase, {
-          address: arrBase,
-          type: fieldType,
-          value: { type: 'array', base: arrBase, length: fieldType.size },
-          region,
-          dead: false,
-        })
-        for (let j = 0; j < fieldType.size; j++) {
-          const elemAddr = arrBase + 1 + j
-          space.cells.set(elemAddr, {
-            address: elemAddr,
-            type: fieldType.of,
-            value: defaultValue(fieldType.of),
-            region,
-            dead: false,
-          })
+  function alignOfLayout(l: LayoutNode): number {
+    if (l.kind === 'scalar') {
+      if (typeof l.type === 'string') {
+        switch (l.type) {
+          case 'double': return 8
+          case 'int': case 'float': return 4
+          default: return 1
         }
-        offset += 1 + fieldType.size
       }
-      else {
-        const fieldAddress = base + offset
-        space.cells.set(fieldAddress, {
-          address: fieldAddress,
-          type: fieldType,
-          value: defaultValue(fieldType),
-          region,
-          dead: false,
-        })
-        offset += 1
-      }
+      return 4
     }
-    return base
-  }
-
-  function allocArray(
-    elementType: CppType,
-    size: number,
-    region: MemoryRegion,
-  ): number {
-    const totalSize = 1 + size // header + elements
-    const base = allocRegion(totalSize, region)
-
-    // Header cell
-    space.cells.set(base, {
-      address: base,
-      type: { type: 'array', of: elementType, size },
-      value: { type: 'array', base, length: size },
-      region,
-      dead: false,
-    })
-    // Element cells at base+1 through base+size
-    for (let i = 0; i < size; i++) {
-      const elemAddress = base + 1 + i
-      space.cells.set(elemAddress, {
-        address: elemAddress,
-        type: elementType,
-        value: defaultValue(elementType),
-        region,
-        dead: false,
-      })
+    if (l.kind === 'array')
+      return alignOfLayout(l.element)
+    let a = 1
+    for (const f of l.fields) {
+      const fa = alignOfLayout(f.node)
+      if (fa > a)
+        a = fa
     }
-    return base
+    return a
   }
 
-  function read(address: number): MemoryCell {
-    const cell = space.cells.get(address)
-    if (!cell)
-      throw new Error(`Invalid address: ${address}`)
-    return cell
-  }
-
-  function write(address: number, value: CppValue): void {
-    const cell = space.cells.get(address)
-    if (!cell)
-      throw new Error(`Invalid address: ${address}`)
-    cell.value = value
-  }
-
-  function free(address: number): void {
-    const cell = space.cells.get(address)
-    if (!cell)
-      throw new Error(`Invalid address: ${address}`)
-    cell.dead = true
-
-    // For structs/arrays, also mark field/element cells as dead.
-    // Fields are contiguous at base+1..base+N, same region, not struct/array headers.
-    const v = cell.value
-    if (typeof v === 'object' && v.type === 'struct') {
-      for (let i = 1; ; i++) {
-        const sub = space.cells.get(address + i)
-        if (!sub || sub.region !== cell.region)
-          break
-        // Stop if we hit another struct/array header (its own base)
-        const sv = sub.value
-        if (typeof sv === 'object' && (sv.type === 'struct' || sv.type === 'array') && sv.base === sub.address)
-          break
-        sub.dead = true
-      }
-    }
-    else if (typeof v === 'object' && v.type === 'array') {
-      for (let i = 1; i <= v.length; i++) {
-        const sub = space.cells.get(address + i)
-        if (sub)
-          sub.dead = true
-      }
-    }
-  }
-
-  function readField(
-    structBase: number,
-    fieldName: string,
-    fieldDefs: Record<string, CppType>,
-  ): [CppType, number] {
-    const offset = structFieldOffset(fieldName, fieldDefs)
-    if (offset === -1)
+  function fieldAddress(structBase: number, fieldName: string): { type: CppType, address: number } {
+    const a = allocations.get(structBase)
+    if (!a || a.layout.kind !== 'struct')
+      throw new Error(`fieldAddress: no struct at ${structBase}`)
+    const field = a.layout.fields.find(f => f.name === fieldName)
+    if (!field)
       throw new Error(`Unknown field: ${fieldName}`)
-    return [fieldDefs[fieldName], structBase + 1 + offset]
+    return { type: fieldNodeToType(field.node), address: structBase + field.offset }
   }
 
-  function reset(): void {
-    space.cells.clear()
+  function elementAddress(arrayBase: number, index: number): { type: CppType, address: number } {
+    const a = allocations.get(arrayBase)
+    if (!a || a.layout.kind !== 'array')
+      throw new Error(`elementAddress: no array at ${arrayBase}`)
+    if (index < 0 || index >= a.layout.length)
+      throw new Error(`Array index out of bounds: ${index}`)
+    return {
+      type: fieldNodeToType(a.layout.element),
+      address: arrayBase + index * a.layout.stride,
+    }
+  }
+
+  function fieldNodeToType(n: LayoutNode): CppType {
+    if (n.kind === 'scalar')
+      return n.type
+    if (n.kind === 'array')
+      return { type: 'array', of: fieldNodeToType(n.element), size: n.length }
+    return { type: 'struct', name: n.structName }
+  }
+
+  function findAllocation(address: number): Allocation | undefined {
+    for (const a of allocations.values()) {
+      if (address >= a.base && address < a.base + a.size)
+        return a
+    }
+    return undefined
+  }
+
+  function reset() {
+    buffer.fill(0)
+    allocations.clear()
+    structLayoutCache.clear()
     space.stackTop = 1
+    space.heapBottom = MEMORY_SIZE
     space.version = 0
-    space.heapBottom = MEMORY_SIZE - 1
-    space.cells.set(NULL_ADDRESS, makeNullCell())
+    allocations.set(NULL_ADDRESS, {
+      base: 0,
+      size: 1,
+      region: 'global',
+      dead: true,
+      layout: { kind: 'scalar', type: 'int', size: 1 },
+    })
   }
 
-  return { space, alloc, allocStruct, allocArray, read, write, free, readField, structFieldOffset, reset }
+  return {
+    space,
+    registerStructLayout,
+    alloc,
+    allocStruct,
+    allocArray,
+    free,
+    readScalar,
+    writeScalar,
+    fieldAddress,
+    elementAddress,
+    findAllocation,
+    reset,
+  }
 }

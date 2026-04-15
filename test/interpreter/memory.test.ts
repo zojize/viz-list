@@ -1,179 +1,138 @@
-import type { CppType } from '../../src/composables/interpreter/types'
+import type { LayoutNode } from '../../src/composables/interpreter/layout'
 import { describe, expect, it } from 'vitest'
+import { computeStructLayout } from '../../src/composables/interpreter/layout'
 import { createAddressSpace } from '../../src/composables/interpreter/memory'
 import { MEMORY_SIZE, NULL_ADDRESS } from '../../src/composables/interpreter/types'
 
-describe('addressSpace', () => {
-  it('has a NULL cell at address 0', () => {
+describe('addressSpace — byte layer', () => {
+  it('initializes a zeroed 16KB buffer with a NULL allocation at address 0', () => {
     const mem = createAddressSpace()
-    const cell = mem.read(NULL_ADDRESS)
-    expect(cell.address).toBe(0)
-    expect(cell.type).toBe('int')
-    expect(cell.value).toBe(0)
-    expect(cell.region).toBe('global')
-    expect(cell.dead).toBe(true)
+    expect(mem.space.buffer.length).toBe(MEMORY_SIZE)
+    expect(mem.space.buffer[0]).toBe(0)
+    const a = mem.findAllocation(NULL_ADDRESS)
+    expect(a?.dead).toBe(true)
+    expect(a?.base).toBe(0)
   })
 
-  it('stack allocates upward from address 1', () => {
+  it('stack allocates upward by the type size', () => {
     const mem = createAddressSpace()
-    const a1 = mem.alloc('int', 42, 'stack')
-    const a2 = mem.alloc('bool', false, 'stack')
-    expect(a1).toBe(1)
-    expect(a2).toBe(2)
-    expect(mem.read(a1).value).toBe(42)
-    expect(mem.read(a2).value).toBe(false)
+    const a = mem.alloc('int', 'stack')
+    const b = mem.alloc('bool', 'stack')
+    expect(a).toBe(4) // aligned up from 1 to 4
+    expect(b).toBe(8) // bool at 8 (after int)
+    mem.writeScalar(a, 'int', 42)
+    mem.writeScalar(b, 'bool', true)
+    expect(mem.readScalar(a, 'int')).toBe(42)
+    expect(mem.readScalar(b, 'bool')).toBe(true)
   })
 
-  it('heap allocates downward from top of memory', () => {
+  it('stack allocations respect alignment', () => {
     const mem = createAddressSpace()
-    const h1 = mem.alloc('float', 3.14, 'heap')
-    const h2 = mem.alloc('int', 7, 'heap')
-    expect(h1).toBe(MEMORY_SIZE - 1)
-    expect(h2).toBe(MEMORY_SIZE - 2)
-    expect(mem.read(h1).value).toBe(3.14)
-    expect(mem.read(h2).value).toBe(7)
+    mem.alloc('char', 'stack') // at 1
+    const dptr = mem.alloc('double', 'stack') // needs align 8: padded to 8
+    expect(dptr).toBe(8)
   })
 
-  it('stack and heap use separate address ranges', () => {
+  it('heap allocates downward from top', () => {
     const mem = createAddressSpace()
-    const s1 = mem.alloc('int', 1, 'stack')
-    const h1 = mem.alloc('int', 2, 'heap')
-    const s2 = mem.alloc('int', 3, 'stack')
-    // Stack grows up, heap grows down — they don't interleave
-    expect(s1).toBe(1)
-    expect(s2).toBe(2)
-    expect(h1).toBe(MEMORY_SIZE - 1)
-    expect(mem.read(s1).region).toBe('stack')
-    expect(mem.read(h1).region).toBe('heap')
+    const h1 = mem.alloc('int', 'heap')
+    expect(h1).toBe(MEMORY_SIZE - 4) // 4 bytes reserved at the top
+    mem.writeScalar(h1, 'int', 7)
+    expect(mem.readScalar(h1, 'int')).toBe(7)
   })
 
-  it('allocates a struct with contiguous field addresses', () => {
+  it('stores int little-endian in the buffer', () => {
     const mem = createAddressSpace()
-    const fieldDefs: Record<string, CppType> = { x: 'int', y: 'float' }
-    const base = mem.allocStruct('Point', fieldDefs, 'stack')
-
-    // Header at base
-    const header = mem.read(base)
-    expect(header.value).toEqual({ type: 'struct', name: 'Point', base })
-    expect(header.dead).toBe(false)
-
-    // Fields immediately after
-    const xCell = mem.read(base + 1)
-    const yCell = mem.read(base + 2)
-    expect(xCell.address).toBe(base + 1)
-    expect(xCell.type).toBe('int')
-    expect(xCell.value).toBe(0)
-    expect(yCell.address).toBe(base + 2)
-    expect(yCell.type).toBe('float')
-    expect(yCell.value).toBe(0)
+    const a = mem.alloc('int', 'stack')
+    mem.writeScalar(a, 'int', 1)
+    expect(mem.space.buffer[a]).toBe(1)
+    expect(mem.space.buffer[a + 1]).toBe(0)
+    expect(mem.space.buffer[a + 2]).toBe(0)
+    expect(mem.space.buffer[a + 3]).toBe(0)
   })
 
-  it('allocates a heap struct with contiguous fields in high address range', () => {
+  it('throws on null pointer read', () => {
     const mem = createAddressSpace()
-    const fieldDefs: Record<string, CppType> = { data: 'int', next: { type: 'pointer', to: 'int' } }
-    const base = mem.allocStruct('Node', fieldDefs, 'heap')
-
-    // Base should be in the high address range
-    expect(base).toBeGreaterThan(MEMORY_SIZE / 2)
-    // Fields are at base+1, base+2
-    expect(mem.read(base + 1).type).toBe('int')
-    expect(mem.read(base + 2).type).toEqual({ type: 'pointer', to: 'int' })
+    expect(() => mem.readScalar(NULL_ADDRESS, 'int')).toThrow(/null/i)
   })
 
-  it('allocates an array with contiguous element addresses', () => {
+  it('throws on use-after-free', () => {
     const mem = createAddressSpace()
-    const base = mem.allocArray('int', 3, 'heap')
+    const a = mem.alloc('int', 'heap')
+    mem.free(a)
+    expect(() => mem.readScalar(a, 'int')).toThrow(/use after free/i)
+  })
 
-    const header = mem.read(base)
-    expect(header.value).toEqual({ type: 'array', base, length: 3 })
+  it('throws on out-of-arena read', () => {
+    const mem = createAddressSpace()
+    expect(() => mem.readScalar(MEMORY_SIZE + 1, 'int')).toThrow()
+  })
 
-    for (let i = 0; i < 3; i++) {
-      const cell = mem.read(base + 1 + i)
-      expect(cell.address).toBe(base + 1 + i)
-      expect(cell.type).toBe('int')
-      expect(cell.value).toBe(0)
+  it('bumps version on every write', () => {
+    const mem = createAddressSpace()
+    const v0 = mem.space.version
+    const a = mem.alloc('int', 'stack')
+    mem.writeScalar(a, 'int', 1)
+    expect(mem.space.version).toBeGreaterThan(v0)
+  })
+})
+
+describe('addressSpace — struct layer', () => {
+  it('allocates a struct using its cached layout', () => {
+    const structLayouts: Record<string, LayoutNode> = {}
+    structLayouts.Point = computeStructLayout('Point', { x: 'int', y: 'int' }, n => structLayouts[n])
+    const mem = createAddressSpace()
+    mem.registerStructLayout('Point', structLayouts.Point)
+
+    const base = mem.allocStruct('Point', 'stack')
+    expect(base).toBe(4)
+    const { address: xAddr } = mem.fieldAddress(base, 'x')
+    const { address: yAddr } = mem.fieldAddress(base, 'y')
+    expect(xAddr).toBe(4)
+    expect(yAddr).toBe(8)
+    mem.writeScalar(xAddr, 'int', 10)
+    mem.writeScalar(yAddr, 'int', 20)
+    expect(mem.readScalar(xAddr, 'int')).toBe(10)
+    expect(mem.readScalar(yAddr, 'int')).toBe(20)
+  })
+
+  it('allocates an array', () => {
+    const mem = createAddressSpace()
+    const base = mem.allocArray('int', 4, 'stack')
+    expect(base).toBe(4)
+    for (let i = 0; i < 4; i++) {
+      const { address } = mem.elementAddress(base, i)
+      expect(address).toBe(4 + i * 4)
+      mem.writeScalar(address, 'int', i * 10)
     }
+    expect(mem.readScalar(mem.elementAddress(base, 0).address, 'int')).toBe(0)
+    expect(mem.readScalar(mem.elementAddress(base, 3).address, 'int')).toBe(30)
   })
 
-  it('reads and writes cell values', () => {
+  it('throws on array out-of-bounds', () => {
     const mem = createAddressSpace()
-    const addr = mem.alloc('int', 0, 'stack')
-    mem.write(addr, 99)
-    expect(mem.read(addr).value).toBe(99)
+    const base = mem.allocArray('int', 4, 'stack')
+    expect(() => mem.elementAddress(base, 4)).toThrow(/bounds/i)
+  })
+})
+
+describe('addressSpace — collision safety', () => {
+  it('throws StackOverflowError when stack meets heap', () => {
+    const mem = createAddressSpace()
+    // Allocate heap until one more would collide.
+    // With MEMORY_SIZE = 16384 and stackTop = 1, we have 16383 bytes available.
+    // Allocate a large heap block that nearly fills the arena, then try to add more stack.
+    mem.allocArray('char', MEMORY_SIZE - 8, 'heap')
+    // Now try allocating enough on the stack to force collision.
+    expect(() => mem.allocArray('char', 16, 'stack')).toThrow(/Out of memory/i)
   })
 
-  it('throws on read of invalid address', () => {
+  it('catches alignment-induced heap overflow (Critical-bug regression)', () => {
     const mem = createAddressSpace()
-    expect(() => mem.read(999)).toThrow('Invalid address: 999')
-  })
-
-  it('throws on write to invalid address', () => {
-    const mem = createAddressSpace()
-    expect(() => mem.write(999, 0)).toThrow('Invalid address: 999')
-  })
-
-  it('free marks cell as dead', () => {
-    const mem = createAddressSpace()
-    const addr = mem.alloc('int', 1, 'heap')
-    expect(mem.read(addr).dead).toBe(false)
-    mem.free(addr)
-    expect(mem.read(addr).dead).toBe(true)
-  })
-
-  it('readField resolves field by name to address and type', () => {
-    const mem = createAddressSpace()
-    const fieldDefs: Record<string, CppType> = { x: 'int', y: 'float', z: 'double' }
-    const base = mem.allocStruct('Vec3', fieldDefs, 'stack')
-
-    const [xType, xAddr] = mem.readField(base, 'x', fieldDefs)
-    expect(xType).toBe('int')
-    expect(xAddr).toBe(base + 1)
-
-    const [yType, yAddr] = mem.readField(base, 'y', fieldDefs)
-    expect(yType).toBe('float')
-    expect(yAddr).toBe(base + 2)
-
-    const [zType, zAddr] = mem.readField(base, 'z', fieldDefs)
-    expect(zType).toBe('double')
-    expect(zAddr).toBe(base + 3)
-  })
-
-  it('readField throws on unknown field', () => {
-    const mem = createAddressSpace()
-    const fieldDefs: Record<string, CppType> = { x: 'int' }
-    const base = mem.allocStruct('S', fieldDefs, 'stack')
-    expect(() => mem.readField(base, 'nope', fieldDefs)).toThrow('Unknown field: nope')
-  })
-
-  it('reset clears all cells and resets pointers', () => {
-    const mem = createAddressSpace()
-    mem.alloc('int', 1, 'stack')
-    mem.alloc('int', 2, 'heap')
-    mem.reset()
-
-    // NULL cell should be re-created
-    const nullCell = mem.read(NULL_ADDRESS)
-    expect(nullCell.dead).toBe(true)
-
-    // stackTop should be back to 1
-    const addr = mem.alloc('int', 10, 'stack')
-    expect(addr).toBe(1)
-
-    // heapBottom should be back to top
-    const haddr = mem.alloc('int', 20, 'heap')
-    expect(haddr).toBe(MEMORY_SIZE - 1)
-  })
-
-  it('throws on stack-heap collision', () => {
-    const mem = createAddressSpace()
-    // Fill stack up to near the top: use MEMORY_SIZE - 2 slots (addresses 1..MEMORY_SIZE-2)
-    for (let i = 0; i < MEMORY_SIZE - 2; i++)
-      mem.alloc('int', i, 'stack')
-    // stackTop is now MEMORY_SIZE-1, heapBottom is MEMORY_SIZE-1
-    // One slot left at address MEMORY_SIZE-1 — heap grabs it
-    const h = mem.alloc('int', 0, 'heap')
-    expect(h).toBe(MEMORY_SIZE - 1)
-    // Now no space left — next allocation should collide
-    expect(() => mem.alloc('int', 0, 'stack')).toThrow('Out of memory')
+    // Fill enough of both sides that heap alignment trim would overshoot stackTop.
+    mem.allocArray('char', MEMORY_SIZE - 9, 'heap')
+    // Now request a double from the heap — it needs align 8 and 8 bytes,
+    // but the only available space is 8 bytes at a non-multiple-of-8 boundary.
+    expect(() => mem.alloc('double', 'heap')).toThrow(/Out of memory/i)
   })
 })
