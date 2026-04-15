@@ -8,7 +8,7 @@ import { computed, markRaw, nextTick, onMounted, readonly, shallowRef, useTempla
 import { Language, Parser } from 'web-tree-sitter'
 import DataStructureView from '~/components/DataStructureView.vue'
 import FieldTable from '~/components/FieldTable.vue'
-import MemoryMap from '~/components/MemoryMap.vue'
+import MemoryMap from '~/components/MemoryMap/MemoryMap.vue'
 import { useCppInterpreter } from '~/composables/useCppInterpreter'
 import { provideInterpreterContext } from '~/composables/useInterpreterContext'
 import { snapshotSpace, useMemoryDiff } from '~/composables/useMemoryDiff'
@@ -454,15 +454,8 @@ onMounted(() => nextTick(reparentMonaco))
           <Pane :size="50" :min-size="15">
             <div class="h-full overflow-hidden panel-border">
               <MemoryMap
-                :changed-addresses="changedAddresses"
-                :highlighted-address="hoveredNodeAddress"
-                :highlighted-field-address="hoveredFieldAddress"
-                :statement-lhs-addresses="lhsAddresses"
-                :statement-rhs-addresses="rhsAddresses"
-                :selected-address="selectedAddress"
-                @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
-                @hover-pointer="hoveredNodeAddress = $event"
-                @hover-variable="highlightVariable($event, context.currentNode)"
+                :mem="context.memory"
+                :changed-bytes="changedAddresses as Set<number>"
               />
             </div>
           </Pane>
@@ -548,15 +541,8 @@ onMounted(() => nextTick(reparentMonaco))
         <!-- Memory map -->
         <div class="h-1/2 overflow-hidden panel-border">
           <MemoryMap
-            :changed-addresses="changedAddresses"
-            :highlighted-address="hoveredNodeAddress"
-            :highlighted-field-address="hoveredFieldAddress"
-            :statement-lhs-addresses="lhsAddresses"
-            :statement-rhs-addresses="rhsAddresses"
-            :selected-address="selectedAddress"
-            @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
-            @hover-pointer="hoveredNodeAddress = $event"
-            @hover-variable="highlightVariable($event, context.currentNode)"
+            :mem="context.memory"
+            :changed-bytes="changedAddresses as Set<number>"
           />
         </div>
         <!-- Data structure view -->
