@@ -4,7 +4,7 @@ export function alignUp(n: number, a: number): number {
   return (n + a - 1) & ~(a - 1)
 }
 
-export function sizeOfPrimitive(t: CppPrimitiveType): number {
+function sizeOfPrimitive(t: CppPrimitiveType): number {
   switch (t) {
     case 'char': case 'bool': return 1
     case 'int': case 'float': return 4
@@ -27,7 +27,7 @@ export type LayoutNode
 // Resolver pattern breaks recursion for self-referential structs:
 // callers pass a function that resolves (structName) -> layout (looking up a cache).
 // Layout computation never calls this for pointer fields — only for inline struct/array fields.
-export type StructResolver = (structName: string) => LayoutNode
+type StructResolver = (structName: string) => LayoutNode
 
 function layoutOfType(t: CppType, resolve: StructResolver): LayoutNode {
   if (typeof t === 'string') {
