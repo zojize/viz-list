@@ -15,6 +15,12 @@ export interface MemoryManager {
   fieldAddress: (structBase: number, fieldName: string) => { type: CppType, address: number }
   elementAddress: (arrayBase: number, index: number) => { type: CppType, address: number }
   findAllocation: (address: number) => Allocation | undefined
+  describeByte: (address: number) => {
+    allocation: Allocation
+    path: (string | number)[]
+    leafType: CppType
+    isPadding: boolean
+  } | undefined
   reset: () => void
 }
 
@@ -267,6 +273,49 @@ export function createAddressSpace(): MemoryManager {
     return { type: 'struct', name: n.structName }
   }
 
+  function describeByte(address: number) {
+    const alloc = findAllocation(address)
+    if (!alloc)
+      return undefined
+    const offset = address - alloc.base
+    const path: (string | number)[] = []
+    const walk = (node: LayoutNode, nodeOffset: number): {
+      leafType: CppType
+      isPadding: boolean
+    } => {
+      const relative = offset - nodeOffset
+      if (node.kind === 'scalar') {
+        if (relative >= node.size)
+          return { leafType: 'char', isPadding: true }
+        return { leafType: node.type, isPadding: false }
+      }
+      if (node.kind === 'array') {
+        const idx = Math.floor(relative / node.stride)
+        const intoElem = relative - idx * node.stride
+        if (intoElem >= node.element.size) {
+          // Stride padding between elements (only possible for weirdly-sized structs).
+          return { leafType: 'char', isPadding: true }
+        }
+        path.push(idx)
+        return walk(node.element, nodeOffset + idx * node.stride)
+      }
+      // struct
+      for (const f of node.fields) {
+        const end = f.offset + f.node.size
+        if (relative < f.offset)
+          return { leafType: 'char', isPadding: true }
+        if (relative < end) {
+          path.push(f.name)
+          return walk(f.node, nodeOffset + f.offset)
+        }
+      }
+      // beyond last field = tail padding
+      return { leafType: 'char', isPadding: true }
+    }
+    const { leafType, isPadding } = walk(alloc.layout, 0)
+    return { allocation: alloc, path, leafType, isPadding }
+  }
+
   function findAllocation(address: number): Allocation | undefined {
     for (const a of allocations.values()) {
       if (address >= a.base && address < a.base + a.size)
@@ -303,6 +352,7 @@ export function createAddressSpace(): MemoryManager {
     fieldAddress,
     elementAddress,
     findAllocation,
+    describeByte,
     reset,
   }
 }

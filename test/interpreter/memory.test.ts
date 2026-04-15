@@ -116,6 +116,48 @@ describe('addressSpace — struct layer', () => {
   })
 })
 
+describe('describeByte', () => {
+  it('returns the leaf field path for a byte inside a struct allocation', () => {
+    const layouts: Record<string, LayoutNode> = {}
+    layouts.Point = computeStructLayout('Point', { x: 'int', y: 'int' }, n => layouts[n])
+    const mem = createAddressSpace()
+    mem.registerStructLayout('Point', layouts.Point)
+    const base = mem.allocStruct('Point', 'stack')
+    // x at base..base+3, y at base+4..base+7
+    const d = mem.describeByte(base + 5)!
+    expect(d.path).toEqual(['y'])
+    expect(d.leafType).toBe('int')
+    expect(d.isPadding).toBe(false)
+  })
+
+  it('identifies padding bytes', () => {
+    // struct { char a; int b; } — bytes 1..3 are padding
+    const layouts: Record<string, LayoutNode> = {}
+    layouts.P = computeStructLayout('P', { a: 'char', b: 'int' }, () => {
+      throw new Error('unexpected struct lookup')
+    })
+    const mem = createAddressSpace()
+    mem.registerStructLayout('P', layouts.P)
+    const base = mem.allocStruct('P', 'stack')
+    const d = mem.describeByte(base + 2)!
+    expect(d.isPadding).toBe(true)
+  })
+
+  it('returns a path into nested arrays and structs', () => {
+    // struct { int n; Point pts[3]; } — pts[1].y at offset 4 + 1*8 + 4 = 16
+    const layouts: Record<string, LayoutNode> = {}
+    layouts.Point = computeStructLayout('Point', { x: 'int', y: 'int' }, n => layouts[n])
+    layouts.Bag = computeStructLayout('Bag', { n: 'int', pts: { type: 'array', of: { type: 'struct', name: 'Point' }, size: 3 } }, n => layouts[n])
+    const mem = createAddressSpace()
+    mem.registerStructLayout('Point', layouts.Point)
+    mem.registerStructLayout('Bag', layouts.Bag)
+    const base = mem.allocStruct('Bag', 'stack')
+    const d = mem.describeByte(base + 16)!
+    expect(d.path).toEqual(['pts', 1, 'y'])
+    expect(d.leafType).toBe('int')
+  })
+})
+
 describe('addressSpace — collision safety', () => {
   it('throws StackOverflowError when stack meets heap', () => {
     const mem = createAddressSpace()
