@@ -4,8 +4,10 @@ import { computed } from 'vue'
 import MemoryMapByteCell from './MemoryMapByteCell.vue'
 
 const props = defineProps<{
-  /** Address of the first byte in this 8-byte row */
+  /** Address of the first byte in this row */
   rowStart: number
+  /** Number of bytes to display per row */
+  bytesPerRow: number
   /** Total buffer length — used to clamp out-of-range addresses */
   bufferLength: number
   mem: MemoryManager
@@ -17,10 +19,10 @@ defineEmits<{
   click: [address: number]
 }>()
 
-/** Per-cell info for each of the 8 byte slots in the row */
+/** Per-cell info for each of the bytesPerRow slots in the row */
 const cells = computed(() => {
   void props.mem.space.version
-  return Array.from({ length: 8 }, (_, i) => {
+  return Array.from({ length: props.bytesPerRow }, (_, i) => {
     const addr = props.rowStart + i
     if (addr >= props.bufferLength) {
       // Out of buffer — render as empty slot

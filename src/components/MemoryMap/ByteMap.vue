@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { MemoryManager } from '~/composables/interpreter/memory'
-import { computed, ref } from 'vue'
-import ByteMapDetail from './ByteMapDetail.vue'
+import { useElementSize } from '@vueuse/core'
+import { computed, ref, useTemplateRef } from 'vue'
 import MemoryMapByteRow from './MemoryMapByteRow.vue'
 
 const props = defineProps<{
@@ -9,25 +9,46 @@ const props = defineProps<{
   changedBytes?: Set<number>
 }>()
 
-// ---- Hover / pin state (internal — no cross-view emits) ----
-const hoverAddr = ref<number | null>(null)
-const pinnedAddr = ref<number | null>(null)
+const emit = defineEmits<{
+  selectCell: [address: number]
+}>()
 
-function onHover(addr: number) {
-  hoverAddr.value = addr
+// ---- Hover state (internal — visual cue only, no cross-view emits) ----
+const hoverAddrRef = ref<number | null>(null)
+
+function onHover(addr: number): void {
+  hoverAddrRef.value = addr
 }
 function onClick(addr: number) {
-  pinnedAddr.value = pinnedAddr.value === addr ? null : addr
+  emit('selectCell', addr)
 }
 
-const shownAddr = computed(() => pinnedAddr.value ?? hoverAddr.value)
 const changed = computed(() => props.changedBytes ?? new Set<number>())
+
+// ---- Responsive bytes-per-row ----
+
+const stackColRef = useTemplateRef<HTMLElement>('stack-col')
+const heapColRef = useTemplateRef<HTMLElement>('heap-col')
+const { width: stackWidth } = useElementSize(stackColRef)
+const { width: heapWidth } = useElementSize(heapColRef)
+
+// Address label: "0x0000" text in w-14 (56px) + 6px right-padding = ~62px
+// Each byte cell: w-8 (32px) in MemoryMapByteCell
+const ADDRESS_LABEL_WIDTH = 62
+const BYTE_CELL_WIDTH = 32
+
+function bytesPerRowFor(width: number): number {
+  const available = Math.max(0, width - ADDRESS_LABEL_WIDTH - 16 /* column padding */)
+  return Math.max(4, Math.floor(available / BYTE_CELL_WIDTH))
+}
+
+const stackBytesPerRow = computed(() => bytesPerRowFor(stackWidth.value))
+const heapBytesPerRow = computed(() => bytesPerRowFor(heapWidth.value))
 
 // ---- Address ranges ----
 
 /** Number of extra "free" context bytes to show past the active region boundary */
 const CONTEXT_BYTES = 8
-const ROW_SIZE = 8
 
 function alignDown(n: number, align: number): number {
   return Math.floor(n / align) * align
@@ -38,25 +59,27 @@ function alignUp(n: number, align: number): number {
 
 /** Row start addresses for the stack column.
  *  Option A: start at 0x0000 (NULL byte is the first cell of row 0).
- *  Rows cover 0x0000..stackTop+context, aligned to 8-byte boundaries. */
+ *  Rows cover 0x0000..stackTop+context, aligned to bytesPerRow boundaries. */
 const stackRows = computed<number[]>(() => {
   void props.mem.space.version
+  const bpr = stackBytesPerRow.value
   const stackTop = props.mem.space.stackTop
-  const end = alignUp(Math.min(props.mem.space.buffer.length, stackTop + CONTEXT_BYTES), ROW_SIZE)
+  const end = alignUp(Math.min(props.mem.space.buffer.length, stackTop + CONTEXT_BYTES), bpr)
   const rows: number[] = []
-  for (let a = 0; a < end; a += ROW_SIZE) rows.push(a)
+  for (let a = 0; a < end; a += bpr) rows.push(a)
   return rows
 })
 
 /** Row start addresses for the heap column.
- *  Start at alignDown(heapBottom - context, 8), end at buffer length (already 8-aligned). */
+ *  Start at alignDown(heapBottom - context, bpr), end at buffer length. */
 const heapRows = computed<number[]>(() => {
   void props.mem.space.version
+  const bpr = heapBytesPerRow.value
   const heapBottom = props.mem.space.heapBottom
   const total = props.mem.space.buffer.length
-  const start = alignDown(Math.max(ROW_SIZE, heapBottom - CONTEXT_BYTES), ROW_SIZE)
+  const start = alignDown(Math.max(bpr, heapBottom - CONTEXT_BYTES), bpr)
   const rows: number[] = []
-  for (let a = start; a < total; a += ROW_SIZE) rows.push(a)
+  for (let a = start; a < total; a += bpr) rows.push(a)
   return rows
 })
 
@@ -90,12 +113,13 @@ const heapBytesUsed = computed(() => {
           </span>
         </div>
 
-        <!-- Scrollable 8-byte rows -->
-        <div class="scrollbar-hidden flex-1 overflow-x-auto overflow-y-auto">
+        <!-- Scrollable rows -->
+        <div ref="stack-col" class="scrollbar-hidden flex-1 overflow-x-auto overflow-y-auto">
           <MemoryMapByteRow
             v-for="rowStart in stackRows"
             :key="rowStart"
             :row-start="rowStart"
+            :bytes-per-row="stackBytesPerRow"
             :buffer-length="bufferLength"
             :mem="mem"
             :changed-bytes="changed"
@@ -123,12 +147,13 @@ const heapBytesUsed = computed(() => {
           </span>
         </div>
 
-        <!-- Scrollable 8-byte rows -->
-        <div class="scrollbar-hidden flex-1 overflow-x-auto overflow-y-auto">
+        <!-- Scrollable rows -->
+        <div ref="heap-col" class="scrollbar-hidden flex-1 overflow-x-auto overflow-y-auto">
           <MemoryMapByteRow
             v-for="rowStart in heapRows"
             :key="rowStart"
             :row-start="rowStart"
+            :bytes-per-row="heapBytesPerRow"
             :buffer-length="bufferLength"
             :mem="mem"
             :changed-bytes="changed"
@@ -144,9 +169,6 @@ const heapBytesUsed = computed(() => {
         </div>
       </div>
     </div>
-
-    <!-- Detail panel — below both columns, full width -->
-    <ByteMapDetail :mem="mem" :address="shownAddr" />
   </div>
 </template>
 

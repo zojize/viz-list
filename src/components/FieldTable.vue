@@ -13,6 +13,14 @@ const props = defineProps<{
   /** CppType for this allocation (struct, array, or scalar) */
   type: CppType
   changedAddresses: ReadonlySet<number>
+  /** Optional byte-level detail when a specific byte was clicked in the byte map */
+  byteDetail?: {
+    address: number
+    byte: number
+    path: (string | number)[]
+    leafType: CppType
+    isPadding: boolean
+  } | null
 }>()
 
 const emit = defineEmits<{
@@ -171,6 +179,54 @@ const fields = computed((): FieldRow[] => {
 
 <template>
   <div data-testid="field-table" class="flex flex-col gap-2">
+    <!-- Byte-level detail banner (shown when a specific byte was clicked in the byte map) -->
+    <div
+      v-if="byteDetail && byteDetail.address !== address"
+      class="rounded bg-gray-100 p-2 text-xs font-mono dark:bg-gray-800"
+    >
+      <div class="mb-1 text-[10px] text-gray-500 tracking-wide uppercase dark:text-gray-400">
+        Byte detail
+      </div>
+      <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+        <dt class="text-gray-500 dark:text-gray-400">
+          address
+        </dt>
+        <dd class="text-orange-600 font-semibold dark:text-orange-300">
+          0x{{ byteDetail.address.toString(16).padStart(4, '0') }}
+        </dd>
+        <dt class="text-gray-500 dark:text-gray-400">
+          offset
+        </dt>
+        <dd class="text-gray-700 dark:text-gray-300">
+          +{{ byteDetail.address - address }}
+        </dd>
+        <template v-if="byteDetail.path.length">
+          <dt class="text-gray-500 dark:text-gray-400">
+            path
+          </dt>
+          <dd class="text-gray-700 dark:text-gray-300">
+            {{ byteDetail.path.join('.') }}
+          </dd>
+        </template>
+        <dt class="text-gray-500 dark:text-gray-400">
+          type
+        </dt>
+        <dd class="text-gray-700 dark:text-gray-300">
+          <span v-if="byteDetail.isPadding" class="text-gray-400 italic dark:text-gray-500">padding byte</span>
+          <span v-else>{{ formatType(byteDetail.leafType) }}</span>
+        </dd>
+        <dt class="text-gray-500 dark:text-gray-400">
+          raw byte
+        </dt>
+        <dd>
+          <span class="text-orange-600 font-semibold dark:text-orange-300">
+            0x{{ byteDetail.byte.toString(16).padStart(2, '0') }}
+          </span>
+          <span class="ml-1 text-gray-400 dark:text-gray-500">({{ byteDetail.byte }})</span>
+        </dd>
+      </dl>
+    </div>
+
     <div class="flex items-center gap-2">
       <span v-if="structName" class="text-accent-cyan font-bold">{{ structName }}</span>
       <span class="text-xs text-gray-500 font-mono">at {{ formatAddr(address) }}</span>

@@ -94,6 +94,26 @@ const changedAddresses = computed<ReadonlySet<number>>(() => {
 })
 const { lhsAddresses, rhsAddresses } = useStatementAddresses(context, isActive)
 const selectedAddress = shallowRef<number | null>(null)
+/** Byte address selected via a click in the ByteMap view (null when using AllocationMap). */
+const selectedByteAddress = shallowRef<number | null>(null)
+/** Byte-level detail for the selected byte address, computed for FieldTable. */
+const selectedByteDetail = computed(() => {
+  const addr = selectedByteAddress.value
+  if (addr === null)
+    return null
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memory.space.version // reactive dependency
+  const d = context.memory.describeByte(addr)
+  if (!d)
+    return null
+  return {
+    address: addr,
+    byte: context.memory.space.buffer[addr],
+    path: d.path,
+    leafType: d.leafType,
+    isPadding: d.isPadding,
+  }
+})
 /** Resolved type for the selected address, derived from its allocation layout. */
 const selectedAlloc = computed(() => {
   if (selectedAddress.value === null)
@@ -192,12 +212,34 @@ function saveToUrl() {
 
 // ---- Actions ----
 
+function clearSelection() {
+  selectedAddress.value = null
+  selectedByteAddress.value = null
+}
+
+/** Handle a click on an allocation cell in AllocationMap (toggle selection). */
+function onMemoryMapSelectCell(addr: number) {
+  selectedByteAddress.value = null
+  selectedAddress.value = selectedAddress.value === addr ? null : addr
+}
+
+/** Handle a click on a raw byte cell in ByteMap. */
+function onMemoryMapSelectByteCell(addr: number) {
+  const alloc = context.memory.findAllocation(addr)
+  if (!alloc) {
+    clearSelection()
+    return
+  }
+  selectedByteAddress.value = addr
+  selectedAddress.value = alloc.base
+}
+
 function handleReset() {
   clearHighlight()
   pause()
   reset()
   resetTracking()
-  selectedAddress.value = null
+  clearSelection()
   executionError.value = null
   previousSnapshot.value = null
 }
@@ -208,7 +250,7 @@ function handleRun() {
     init()
   }
   executionError.value = null
-  selectedAddress.value = null
+  clearSelection()
   resume()
 }
 
@@ -238,7 +280,7 @@ function runStep() {
 
 function handleStep() {
   executionError.value = null
-  selectedAddress.value = null
+  clearSelection()
   if (!isActive.value || editedWhileActive.value) {
     editedWhileActive.value = false
     init()
@@ -461,7 +503,8 @@ onMounted(() => nextTick(reparentMonaco))
                 :selected-address="selectedAddress"
                 :statement-lhs-addresses="lhsAddresses"
                 :statement-rhs-addresses="rhsAddresses"
-                @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
+                @select-cell="onMemoryMapSelectCell($event)"
+                @select-byte-cell="onMemoryMapSelectByteCell($event)"
                 @hover-pointer="hoveredNodeAddress = $event"
                 @hover-variable="highlightVariable($event, context.currentNode)"
               />
@@ -492,13 +535,14 @@ onMounted(() => nextTick(reparentMonaco))
                     data-testid="detail-close"
                     class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                     title="Close"
-                    @click="selectedAddress = null"
+                    @click="clearSelection()"
                   />
                 </div>
                 <FieldTable
                   :address="selectedAddress!"
                   :type="selectedType!"
                   :changed-addresses="changedAddresses"
+                  :byte-detail="selectedByteDetail"
                   @navigate="selectedAddress = $event"
                   @hover-field="hoveredFieldAddress = $event"
                   @hover-pointer="hoveredNodeAddress = $event"
@@ -556,7 +600,8 @@ onMounted(() => nextTick(reparentMonaco))
             :selected-address="selectedAddress"
             :statement-lhs-addresses="lhsAddresses"
             :statement-rhs-addresses="rhsAddresses"
-            @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
+            @select-cell="onMemoryMapSelectCell($event)"
+            @select-byte-cell="onMemoryMapSelectByteCell($event)"
             @hover-pointer="hoveredNodeAddress = $event"
             @hover-variable="highlightVariable($event, context.currentNode)"
           />
@@ -589,13 +634,14 @@ onMounted(() => nextTick(reparentMonaco))
                 data-testid="detail-close"
                 class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                 title="Close"
-                @click="selectedAddress = null"
+                @click="clearSelection()"
               />
             </div>
             <FieldTable
               :address="selectedAddress!"
               :type="selectedType!"
               :changed-addresses="changedAddresses"
+              :byte-detail="selectedByteDetail"
               @navigate="selectedAddress = $event"
               @hover-field="hoveredFieldAddress = $event"
               @hover-pointer="hoveredNodeAddress = $event"

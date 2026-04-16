@@ -17,6 +17,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   selectCell: [address: number]
+  selectByteCell: [address: number]
   hoverPointer: [address: number | null]
   hoverVariable: [name: string | null]
 }>()
@@ -64,6 +65,7 @@ const mode = useLocalStorage<'allocation' | 'byte'>('viz-list.memory-map-mode', 
         v-else
         :mem="props.mem"
         :changed-bytes="changedBytes ?? (changedAddresses as Set<number> | undefined) ?? new Set()"
+        @select-cell="emit('selectByteCell', $event)"
       />
     </div>
   </div>

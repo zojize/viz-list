@@ -56,9 +56,9 @@ const rowClasses = computed(() => {
       cs.push('border-l-2', 'border-gray-400', 'dark:border-gray-500')
   }
 
-  // Changed byte: amber ring
+  // Changed byte: amber ring (inset so it doesn't bleed outside the cell bounds)
   if (props.isChanged)
-    cs.push('ring-2', 'ring-amber-400', 'dark:ring-amber-400')
+    cs.push('ring-2', 'ring-inset', 'ring-amber-400', 'dark:ring-amber-500')
 
   return cs
 })
