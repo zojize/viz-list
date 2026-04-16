@@ -1,6 +1,6 @@
 export type HighlightKind = 'lhs' | 'rhs' | 'changed' | 'hover' | 'selected'
 
-export interface SvgStyle {
+interface SvgStyle {
   fill: string | null
   stroke: string
   strokeWidth: number

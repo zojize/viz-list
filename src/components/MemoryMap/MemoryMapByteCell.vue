@@ -8,7 +8,6 @@ const props = defineProps<{
   allocation: Allocation | undefined
   isPadding: boolean
   isDead: boolean
-  isChanged: boolean
   /** When true, show a border-left allocation-boundary indicator */
   isBoundary?: boolean
   /** Leaf type of this byte per describeByte(); drives colour-coding */
@@ -16,7 +15,7 @@ const props = defineProps<{
 }>()
 
 defineEmits<{
-  hover: [address: number]
+  hover: [address: number | null]
   click: [address: number]
 }>()
 
@@ -96,10 +95,6 @@ const rowClasses = computed(() => {
   if (props.isBoundary && props.allocation && !props.isDead && kind.value)
     cs.push('border-l-2', ...KIND_BORDER[kind.value])
 
-  // Changed byte: amber ring (inset so it doesn't bleed outside the cell bounds)
-  if (props.isChanged)
-    cs.push('ring-2', 'ring-inset', 'ring-amber-400', 'dark:ring-amber-500')
-
   return cs
 })
 
@@ -126,6 +121,7 @@ const hexClasses = computed(() => {
     class="h-7 flex cursor-pointer items-center gap-1.5 px-1.5 transition-colors hover:brightness-95 dark:hover:brightness-110"
     :class="rowClasses"
     @mouseenter="$emit('hover', address)"
+    @mouseleave="$emit('hover', null)"
     @click="$emit('click', address)"
   >
     <span :class="hexClasses">{{ hex }}</span>

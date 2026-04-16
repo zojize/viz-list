@@ -4,6 +4,7 @@ import { useElementSize, useVirtualList } from '@vueuse/core'
 import { Pane, Splitpanes } from 'splitpanes'
 import { computed, nextTick, useTemplateRef, watch } from 'vue'
 import { MEMORY_SIZE } from '~/composables/interpreter/types'
+import { useHoverHighlight } from '~/composables/useHoverHighlight'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import ByteMapOverlay from './ByteMapOverlay.vue'
 import MemoryMapByteRow from './MemoryMapByteRow.vue'
@@ -20,9 +21,30 @@ const emit = defineEmits<{
   selectCell: [address: number]
 }>()
 
-function onHover(_addr: number): void {
-  // hover state intentionally not tracked at this level
+const hover = useHoverHighlight()
+
+/** Resolve a byte address to its owning allocation's base, or the byte itself
+ *  if unallocated. Padding bytes inside a struct resolve to the struct's base
+ *  so the DS view lights up the enclosing node rather than a stray byte. */
+function resolveForHover(addr: number): number {
+  const alloc = props.mem.findAllocation(addr)
+  return alloc ? alloc.base : addr
 }
+
+function onHoverStack(addr: number | null) {
+  if (addr === null)
+    hover.setHover(null, null)
+  else
+    hover.setHover(resolveForHover(addr), 'byte-stack')
+}
+
+function onHoverHeap(addr: number | null) {
+  if (addr === null)
+    hover.setHover(null, null)
+  else
+    hover.setHover(resolveForHover(addr), 'byte-heap')
+}
+
 function onClick(addr: number) {
   emit('selectCell', addr)
 }
@@ -158,8 +180,7 @@ watch(heapBytesPerRow, (bpr) => {
               :bytes-per-row="stackBytesPerRow"
               :buffer-length="bufferLength"
               :mem="mem"
-              :changed-bytes="changed"
-              @hover="onHover"
+              @hover="onHoverStack"
               @click="onClick"
             />
           </div>
@@ -216,8 +237,7 @@ watch(heapBytesPerRow, (bpr) => {
               :bytes-per-row="heapBytesPerRow"
               :buffer-length="bufferLength"
               :mem="mem"
-              :changed-bytes="changed"
-              @hover="onHover"
+              @hover="onHoverHeap"
               @click="onClick"
             />
           </div>

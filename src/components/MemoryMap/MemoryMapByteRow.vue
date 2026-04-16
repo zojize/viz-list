@@ -12,11 +12,10 @@ const props = defineProps<{
   /** Total buffer length — used to clamp out-of-range addresses */
   bufferLength: number
   mem: MemoryManager
-  changedBytes: Set<number>
 }>()
 
 defineEmits<{
-  hover: [address: number]
+  hover: [address: number | null]
   click: [address: number]
 }>()
 
@@ -87,7 +86,6 @@ const addrLabel = computed(() =>
         :allocation="cell.allocation"
         :is-padding="cell.isPadding"
         :is-dead="cell.isDead"
-        :is-changed="changedBytes.has(cell.addr)"
         :is-boundary="cell.isBoundary"
         :leaf-type="cell.leafType"
         class="w-8 shrink-0"

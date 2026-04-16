@@ -1,7 +1,7 @@
 import type { InjectionKey, Ref } from 'vue'
 import { inject, provide, readonly, shallowRef } from 'vue'
 
-export type HoverSource
+type HoverSource
   = | 'stack'
     | 'heap'
     | 'byte-stack'
@@ -9,7 +9,7 @@ export type HoverSource
     | 'ds'
     | 'field-table'
 
-export interface HoverHighlight {
+interface HoverHighlight {
   address: Readonly<Ref<number | null>>
   fieldAddress: Readonly<Ref<number | null>>
   source: Readonly<Ref<HoverSource | null>>
