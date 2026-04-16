@@ -4,14 +4,13 @@ import { computed, nextTick, onUpdated, shallowRef, watch } from 'vue'
 import CanvasArrow from '~/components/CanvasArrow.vue'
 import DSValue from '~/components/DSValue.vue'
 import { formatAddr, formatType } from '~/composables/interpreter/helpers'
+import { useHoverHighlight } from '~/composables/useHoverHighlight'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { usePannableCanvas } from '~/composables/usePannableCanvas'
 import { usePlacementEngine } from '~/composables/usePlacementEngine'
 import { usePointerGraph } from '~/composables/usePointerGraph'
 
 const props = defineProps<{
-  highlightedAddress?: number | null
-  highlightedFieldAddress?: number | null
   selectedAddress?: number | null
   statementLhsAddresses?: ReadonlySet<number>
   statementRhsAddresses?: ReadonlySet<number>
@@ -19,12 +18,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   selectNode: [address: number]
-  hoverNode: [address: number | null]
-  hoverField: [address: number | null]
   hoverVariable: [name: string | null]
 }>()
 
 const context = useInterpreterContext()
+const hover = useHoverHighlight()
 const pointerGraph = usePointerGraph(context)
 
 // ---- Standalone data items (in-scope stack + live heap) ----
@@ -151,7 +149,7 @@ const standaloneItems = computed((): DataItem[] => {
 const hasContent = computed(() => standaloneItems.value.length > 0)
 
 function isNodeHighlighted(address: number): boolean {
-  return props.highlightedAddress === address
+  return hover.address.value === address
 }
 
 function isNodeSelected(address: number): boolean {
@@ -850,8 +848,8 @@ const kindBg: Record<DataItem['kind'], string> = {
           ]"
           :style="getItemStyle(`item-${item.address}`)"
           @click="!didDrag && emit('selectNode', item.address)"
-          @pointerenter="emit('hoverNode', item.address); item.varName && emit('hoverVariable', item.varName)"
-          @pointerleave="emit('hoverNode', null); emit('hoverVariable', null)"
+          @pointerenter="hover.setHover(item.address, 'ds'); item.varName && emit('hoverVariable', item.varName)"
+          @pointerleave="hover.setHover(null, null); emit('hoverVariable', null)"
         >
           <div class="mb-0.5 flex items-baseline gap-1.5 text-[10px]">
             <span class="text-gray-600 font-semibold dark:text-gray-400">{{ item.label }}</span>
@@ -860,11 +858,11 @@ const kindBg: Record<DataItem['kind'], string> = {
           <DSValue
             :address="item.address"
             :type="item.type"
-            :highlighted-field-address="highlightedFieldAddress"
+            :highlighted-field-address="hover.fieldAddress.value"
             :statement-lhs-addresses="statementLhsAddresses"
             :statement-rhs-addresses="statementRhsAddresses"
             @navigate="emit('selectNode', $event)"
-            @hover-node="emit('hoverNode', $event)"
+            @hover-node="hover.setHover($event, 'ds')"
           />
         </div>
       </div>
@@ -876,7 +874,7 @@ const kindBg: Record<DataItem['kind'], string> = {
           v-for="edge in arrowEdges"
           :key="edge.id"
           v-bind="getArrowProps(edge)"
-          @hover-field="emit('hoverField', $event)"
+          @hover-field="hover.setField($event)"
         />
       </svg>
     </div>

@@ -1,18 +1,17 @@
 <script setup lang="ts">
 import type { LayoutNode } from '~/composables/interpreter/layout'
 import type { Allocation, CppType, CppValue } from '~/composables/interpreter/types'
-import { computed, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, useTemplateRef, watch } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
 import DSValue from '~/components/DSValue.vue'
 import MemoryCell from '~/components/MemoryCell.vue'
 import { formatAddr, formatType, isPointerValue } from '~/composables/interpreter/helpers'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
+import { useHoverHighlight } from '~/composables/useHoverHighlight'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 
 const props = defineProps<{
   changedAddresses: ReadonlySet<number>
-  highlightedAddress?: number | null
-  highlightedFieldAddress?: number | null
   /** Addresses involved in the current statement: LHS (write targets) */
   statementLhsAddresses?: ReadonlySet<number>
   /** Addresses involved in the current statement: RHS (read sources) */
@@ -23,14 +22,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   selectCell: [address: number]
-  hoverPointer: [address: number | null]
   hoverVariable: [name: string | null]
 }>()
 
 const context = useInterpreterContext()
-
-const hoveredTarget = shallowRef<number | null>(null)
-const hoverSource = shallowRef<'stack' | 'heap' | null>(null)
+const hover = useHoverHighlight()
 
 // ---- Synthetic cell type (mirrors the shim in MemoryCell.vue) ----
 
@@ -116,12 +112,12 @@ function getFieldValues(address: number, alloc: Allocation): Map<string, { type:
 }
 
 function isFieldHighlighted(fieldAddress: number): boolean {
-  return props.highlightedFieldAddress === fieldAddress
+  return hover.fieldAddress.value === fieldAddress
 }
 
 /** Whether this cell is being hovered from DS view or pointer hover */
 function isHoverTarget(address: number): boolean {
-  return hoveredTarget.value === address || props.highlightedAddress === address
+  return hover.address.value === address
 }
 
 /** Whether this cell has a code execution highlight (LHS/RHS/changed) */
@@ -137,15 +133,11 @@ function isHoverBoosted(address: number): boolean {
 }
 
 function handleHoverPointerStack(address: number | null) {
-  hoveredTarget.value = address
-  hoverSource.value = address !== null ? 'stack' : null
-  emit('hoverPointer', address)
+  hover.setHover(address, 'stack')
 }
 
 function handleHoverPointerHeap(address: number | null) {
-  hoveredTarget.value = address
-  hoverSource.value = address !== null ? 'heap' : null
-  emit('hoverPointer', address)
+  hover.setHover(address, 'heap')
 }
 
 function handleClickPointer(address: number) {
@@ -283,46 +275,32 @@ const heapAllocCount = computed(() => heapEntries.value.length)
 // Scroll highlighted cell into view
 const containerRef = useTemplateRef('memory-map-container')
 
-watch(() => props.highlightedAddress, (addr) => {
-  if (addr === null || addr === undefined || !containerRef.value)
-    return
-  // Suppress the scroll when the hover originated in AllocationMap and the
-  // target lives in the same column — otherwise the AddressLink button chases
-  // the cursor (hover prop round-trips through index.vue and lands here).
-  if (hoverSource.value) {
-    const targetAlloc = context.memory.findAllocation(addr)
-    const targetColumn = targetAlloc?.region === 'heap' ? 'heap' : 'stack'
-    if (hoverSource.value === targetColumn)
-      return
-  }
-  const el = containerRef.value.querySelector(`[data-address="${addr}"]`)
-  if (el)
-    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-})
+/** Which column (if any) contains this address — used to suppress same-column
+ *  scroll when the hover originated here. */
+function columnOf(addr: number): 'stack' | 'heap' | null {
+  const a = context.memory.findAllocation(addr)
+  if (!a)
+    return null
+  return a.region === 'heap' ? 'heap' : 'stack'
+}
 
-// Scroll when hovering pointer values — only cross-column (stack→heap or heap→stack)
-watch(hoveredTarget, (addr) => {
-  if (addr === null || addr === undefined || addr === NULL_ADDRESS || !containerRef.value)
+watch(hover.address, (addr) => {
+  if (addr === null || addr === NULL_ADDRESS || !containerRef.value)
     return
-  // Determine which column the target is in
-  const targetAlloc = context.memory.findAllocation(addr)
-  if (!targetAlloc)
-    return
-  const targetColumn = targetAlloc.region === 'heap' ? 'heap' : 'stack'
-  // Only scroll if target is in a different column than where the hover originated
-  if (hoverSource.value === targetColumn)
+  // Suppress self-column scroll: if hover originated in this column's
+  // AllocationMap, don't chase the pointer with auto-scroll.
+  const src = hover.source.value
+  if ((src === 'stack' || src === 'heap') && src === columnOf(addr))
     return
   const el = containerRef.value.querySelector(`[data-address="${addr}"]`)
-  if (el)
-    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 })
 
-watch(() => props.highlightedFieldAddress, (addr) => {
-  if (addr === null || addr === undefined || !containerRef.value)
+watch(hover.fieldAddress, (addr) => {
+  if (addr === null || !containerRef.value)
     return
   const el = containerRef.value.querySelector(`[data-field-address="${addr}"]`)
-  if (el)
-    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 })
 </script>
 
@@ -384,7 +362,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
                       <DSValue
                         :address="field.address"
                         :type="field.type"
-                        :highlighted-field-address="highlightedFieldAddress"
+                        :highlighted-field-address="hover.fieldAddress.value"
                         :statement-lhs-addresses="statementLhsAddresses"
                         :statement-rhs-addresses="statementRhsAddresses"
                         @navigate="handleClickPointer"
@@ -420,7 +398,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
                 <DSValue
                   :address="entry.address"
                   :type="entry.type"
-                  :highlighted-field-address="highlightedFieldAddress"
+                  :highlighted-field-address="hover.fieldAddress.value"
                   :statement-lhs-addresses="statementLhsAddresses"
                   :statement-rhs-addresses="statementRhsAddresses"
                   @navigate="handleClickPointer"
@@ -471,7 +449,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
             :cell="entry.cell"
             :field-values="entry.fields"
             :changed="changedAddresses.has(entry.cell.address)"
-            :highlighted-field-address="highlightedFieldAddress"
+            :highlighted-field-address="hover.fieldAddress.value"
             :class="{
               'outline outline-2 outline-blue-400': selectedAddress === entry.cell.address,
               'border-l-blue-500!': isStatementLhs(entry.cell.address),

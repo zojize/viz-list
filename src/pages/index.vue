@@ -10,6 +10,7 @@ import DataStructureView from '~/components/DataStructureView.vue'
 import FieldTable from '~/components/FieldTable.vue'
 import MemoryMap from '~/components/MemoryMap/MemoryMap.vue'
 import { useCppInterpreter } from '~/composables/useCppInterpreter'
+import { provideHoverHighlight } from '~/composables/useHoverHighlight'
 import { provideInterpreterContext } from '~/composables/useInterpreterContext'
 import { snapshotSpace, useMemoryDiff } from '~/composables/useMemoryDiff'
 import { useMonacoEditor } from '~/composables/useMonacoEditor'
@@ -141,8 +142,11 @@ function fieldNodeToType(node: import('~/composables/interpreter/layout').Layout
     return { type: 'array' as const, of: fieldNodeToType(node.element), size: node.length }
   return { type: 'struct' as const, name: node.structName }
 }
-const hoveredNodeAddress = shallowRef<number | null>(null)
-const hoveredFieldAddress = shallowRef<number | null>(null)
+
+// Provide the shared hover-highlight store. Descendants (MemoryMap,
+// DataStructureView, FieldTable) inject via useHoverHighlight() instead of
+// round-tripping hover state through props/emits.
+provideHoverHighlight()
 
 const executionError = shallowRef<{ message: string, line?: number } | null>(null)
 
@@ -503,14 +507,11 @@ onMounted(() => nextTick(reparentMonaco))
               <MemoryMap
                 :mem="context.memory"
                 :changed-addresses="changedAddresses"
-                :highlighted-address="hoveredNodeAddress"
-                :highlighted-field-address="hoveredFieldAddress"
                 :selected-address="selectedAddress"
                 :statement-lhs-addresses="lhsAddresses"
                 :statement-rhs-addresses="rhsAddresses"
                 @select-cell="onMemoryMapSelectCell($event)"
                 @select-byte-cell="onMemoryMapSelectByteCell($event)"
-                @hover-pointer="hoveredNodeAddress = $event"
                 @hover-variable="highlightVariable($event, context.currentNode)"
               />
             </div>
@@ -521,14 +522,10 @@ onMounted(() => nextTick(reparentMonaco))
               <Pane :min-size="30">
                 <div class="h-full overflow-hidden panel-border">
                   <DataStructureView
-                    :highlighted-address="hoveredNodeAddress"
-                    :highlighted-field-address="hoveredFieldAddress"
                     :selected-address="selectedAddress"
                     :statement-lhs-addresses="lhsAddresses"
                     :statement-rhs-addresses="rhsAddresses"
                     @select-node="selectedAddress = $event"
-                    @hover-node="hoveredNodeAddress = $event"
-                    @hover-field="hoveredFieldAddress = $event"
                     @hover-variable="highlightVariable($event, context.currentNode)"
                   />
                 </div>
@@ -549,8 +546,6 @@ onMounted(() => nextTick(reparentMonaco))
                   :changed-addresses="changedAddresses"
                   :byte-detail="selectedByteDetail"
                   @navigate="selectedAddress = $event"
-                  @hover-field="hoveredFieldAddress = $event"
-                  @hover-pointer="hoveredNodeAddress = $event"
                 />
               </Pane>
             </Splitpanes>
@@ -600,28 +595,21 @@ onMounted(() => nextTick(reparentMonaco))
           <MemoryMap
             :mem="context.memory"
             :changed-addresses="changedAddresses"
-            :highlighted-address="hoveredNodeAddress"
-            :highlighted-field-address="hoveredFieldAddress"
             :selected-address="selectedAddress"
             :statement-lhs-addresses="lhsAddresses"
             :statement-rhs-addresses="rhsAddresses"
             @select-cell="onMemoryMapSelectCell($event)"
             @select-byte-cell="onMemoryMapSelectByteCell($event)"
-            @hover-pointer="hoveredNodeAddress = $event"
             @hover-variable="highlightVariable($event, context.currentNode)"
           />
         </div>
         <!-- Data structure view -->
         <div class="min-h-0 flex-1 overflow-hidden panel-border">
           <DataStructureView
-            :highlighted-address="hoveredNodeAddress"
-            :highlighted-field-address="hoveredFieldAddress"
             :selected-address="selectedAddress"
             :statement-lhs-addresses="lhsAddresses"
             :statement-rhs-addresses="rhsAddresses"
             @select-node="selectedAddress = $event"
-            @hover-node="hoveredNodeAddress = $event"
-            @hover-field="hoveredFieldAddress = $event"
             @hover-variable="highlightVariable($event, context.currentNode)"
           />
         </div>
@@ -648,8 +636,6 @@ onMounted(() => nextTick(reparentMonaco))
               :changed-addresses="changedAddresses"
               :byte-detail="selectedByteDetail"
               @navigate="selectedAddress = $event"
-              @hover-field="hoveredFieldAddress = $event"
-              @hover-pointer="hoveredNodeAddress = $event"
             />
           </div>
         </Transition>

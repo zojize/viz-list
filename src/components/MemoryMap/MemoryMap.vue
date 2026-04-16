@@ -9,8 +9,6 @@ const props = defineProps<{
   mem: MemoryManager
   changedAddresses?: ReadonlySet<number>
   changedBytes?: Set<number>
-  highlightedAddress?: number | null
-  highlightedFieldAddress?: number | null
   statementLhsAddresses?: ReadonlySet<number>
   statementRhsAddresses?: ReadonlySet<number>
   selectedAddress?: number | null
@@ -19,7 +17,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   selectCell: [address: number]
   selectByteCell: [address: number]
-  hoverPointer: [address: number | null]
   hoverVariable: [name: string | null]
 }>()
 
@@ -71,13 +68,10 @@ function toggleEndianness() {
       <AllocationMap
         v-if="mode === 'allocation'"
         :changed-addresses="changedAddresses ?? new Set()"
-        :highlighted-address="highlightedAddress"
-        :highlighted-field-address="highlightedFieldAddress"
         :statement-lhs-addresses="statementLhsAddresses"
         :statement-rhs-addresses="statementRhsAddresses"
         :selected-address="selectedAddress"
         @select-cell="emit('selectCell', $event)"
-        @hover-pointer="emit('hoverPointer', $event)"
         @hover-variable="emit('hoverVariable', $event)"
       />
       <ByteMap

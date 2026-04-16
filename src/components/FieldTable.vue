@@ -4,6 +4,7 @@ import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
 import DSValue from '~/components/DSValue.vue'
 import { formatAddr, formatType } from '~/composables/interpreter/helpers'
+import { useHoverHighlight } from '~/composables/useHoverHighlight'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { useMemoryDecoder } from '~/composables/useMemoryDecoder'
 
@@ -25,11 +26,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   navigate: [address: number]
-  hoverField: [address: number | null]
-  hoverPointer: [address: number | null]
 }>()
 
 const context = useInterpreterContext()
+const hover = useHoverHighlight()
 const { decode } = useMemoryDecoder(() => context.memory)
 
 const alloc = computed(() => {
@@ -307,7 +307,7 @@ const fields = computed((): FieldRow[] => {
           :address="ref.address"
           class="text-xs"
           @navigate="emit('navigate', $event)"
-          @hover="(addr) => { emit('hoverField', addr); emit('hoverPointer', addr) }"
+          @hover="(addr) => { hover.setField(addr); hover.setHover(addr, 'field-table') }"
         />
       </div>
     </div>
