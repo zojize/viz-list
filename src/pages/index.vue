@@ -219,6 +219,11 @@ function clearSelection() {
 
 /** Handle a click on an allocation cell in AllocationMap (toggle selection). */
 function onMemoryMapSelectCell(addr: number) {
+  const alloc = context.memory.findAllocation(addr)
+  if (!alloc || alloc.dead) {
+    clearSelection()
+    return
+  }
   selectedByteAddress.value = null
   selectedAddress.value = selectedAddress.value === addr ? null : addr
 }
@@ -226,7 +231,7 @@ function onMemoryMapSelectCell(addr: number) {
 /** Handle a click on a raw byte cell in ByteMap. */
 function onMemoryMapSelectByteCell(addr: number) {
   const alloc = context.memory.findAllocation(addr)
-  if (!alloc) {
+  if (!alloc || alloc.dead) {
     clearSelection()
     return
   }

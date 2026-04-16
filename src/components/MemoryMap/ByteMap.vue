@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { MemoryManager } from '~/composables/interpreter/memory'
 import { useElementSize, useVirtualList } from '@vueuse/core'
-import { computed, nextTick, onMounted, useTemplateRef } from 'vue'
+import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 import { MEMORY_SIZE } from '~/composables/interpreter/types'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import MemoryMapByteRow from './MemoryMapByteRow.vue'
@@ -91,17 +91,28 @@ const {
 
 const {
   list: heapList,
+  scrollTo: heapScrollToIdx,
   containerProps: heapContainerProps,
   wrapperProps: heapWrapperProps,
 } = useVirtualList(heapRows, { itemHeight: ROW_HEIGHT })
 
 // ---- Initial scroll: stack to top (default), heap to bottom ----
+// Wait for useElementSize to report the real width before scrolling — with
+// `immediate: true` the watch would fire with the fallback bpr and land at a
+// stale position that never matches the final row count. Watching heapWidth
+// (without `immediate`) only fires after the ResizeObserver's first real
+// measurement, at which point heapRows has its final length.
 
-onMounted(async () => {
-  await nextTick()
-  const heapEl = heapContainerProps.ref.value
-  if (heapEl)
-    heapEl.scrollTo({ top: heapEl.scrollHeight })
+const heapInitialScrollDone = ref(false)
+watch(heapWidth, (w) => {
+  if (heapInitialScrollDone.value)
+    return
+  if (w <= 0)
+    return
+  nextTick().then(() => {
+    heapScrollToIdx(heapRows.value.length - 1)
+    heapInitialScrollDone.value = true
+  })
 })
 </script>
 
