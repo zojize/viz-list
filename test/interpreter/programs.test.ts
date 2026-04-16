@@ -33,6 +33,7 @@ function runProgram(code: string) {
     memory: mem,
     currentNode: undefined,
     memoryVersion: 0,
+    endianness: 'le',
   }
 
   const { rootNode } = tree

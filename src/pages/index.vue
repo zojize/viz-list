@@ -80,8 +80,8 @@ const tree = computed(() => {
 
 // ---- Interpreter ----
 
-const { init, step, reset, context, isActive } = useCppInterpreter(tree)
-provideInterpreterContext(context)
+const { init, step, reset, setEndianness, context, isActive } = useCppInterpreter(tree)
+provideInterpreterContext(context, setEndianness)
 const previousSnapshot = shallowRef<MemorySnapshot | null>(null)
 const memoryDiff = useMemoryDiff(() => context.memory.space, previousSnapshot) satisfies { value: MemoryDiff }
 const changedAddresses = computed<ReadonlySet<number>>(() => {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { MemoryManager } from '~/composables/interpreter/memory'
 import { useLocalStorage } from '@vueuse/core'
+import { useInterpreterContext, useSetEndianness } from '~/composables/useInterpreterContext'
 import AllocationMap from './AllocationMap.vue'
 import ByteMap from './ByteMap.vue'
 
@@ -24,6 +25,14 @@ const emit = defineEmits<{
 
 // Persist view preference across sessions.
 const mode = useLocalStorage<'allocation' | 'byte'>('viz-list.memory-map-mode', 'allocation')
+
+const context = useInterpreterContext()
+const setEndianness = useSetEndianness()
+// Toggling triggers a live byte-swap of every scalar in the arena, keeping
+// stored values semantically consistent across the switch.
+function toggleEndianness() {
+  setEndianness(context.endianness === 'le' ? 'be' : 'le')
+}
 </script>
 
 <template>
@@ -46,6 +55,16 @@ const mode = useLocalStorage<'allocation' | 'byte'>('viz-list.memory-map-mode', 
         @click="mode = 'byte'"
       >
         Bytes
+      </button>
+      <!-- Endianness toggle — only shown in Bytes mode -->
+      <button
+        v-if="mode === 'byte'"
+        class="mm-endian"
+        type="button"
+        :title="`Switch to ${context.endianness === 'le' ? 'big' : 'little'}-endian (live byte-swaps every scalar)`"
+        @click="toggleEndianness"
+      >
+        {{ context.endianness === 'le' ? 'LE' : 'BE' }}
       </button>
     </div>
     <div class="mm-body">
@@ -84,6 +103,21 @@ const mode = useLocalStorage<'allocation' | 'byte'>('viz-list.memory-map-mode', 
   padding: 0.25rem 0.5rem;
   border-bottom: 1px solid rgba(127, 127, 127, 0.15);
   font-size: 0.75rem;
+}
+.mm-endian {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+}
+.mm-endian:hover {
+  background: rgba(127, 127, 127, 0.12);
 }
 .mm-tab {
   background: transparent;

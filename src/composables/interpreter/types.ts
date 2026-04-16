@@ -101,6 +101,11 @@ export interface InterpreterContext {
   hitBreakpoint?: boolean
   /** Monotonically-increasing counter bumped by step() / init() — drives Vue reactivity in views that consume memory. */
   memoryVersion: number
+  /**
+   * Byte order used by subsequent scalar reads/writes. Toggling this at
+   * runtime triggers a byte-swap of every existing scalar in the arena.
+   */
+  endianness: 'le' | 'be'
 }
 
 export interface UseCppInterpreterReturn {

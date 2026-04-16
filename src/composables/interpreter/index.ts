@@ -94,17 +94,31 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     currentNode: undefined as import('web-tree-sitter').Node | undefined,
     hitBreakpoint: false,
     memoryVersion: 0,
+    endianness: 'le' as 'le' | 'be',
   })
 
   let gen: Generator | undefined
 
   const isActive = ref(false)
 
+  /**
+   * Toggle endianness live. Byte-swaps every existing scalar so stored values
+   *  remain semantically consistent; subsequent reads/writes use the new order.
+   */
+  function setEndianness(e: 'le' | 'be') {
+    if (context.endianness === e)
+      return
+    mem.setEndianness(e)
+    context.endianness = e
+    context.memoryVersion++
+  }
+
   return {
     context: readonly(context) as Readonly<typeof context>,
     init,
     step,
     reset,
+    setEndianness,
     isActive: readonly(isActive),
   }
 
@@ -119,6 +133,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     context.callStack = []
     context.currentNode = undefined
     context.memoryVersion = 0
+    context.endianness = 'le'
     mem.reset()
     gen = undefined
     isActive.value = false

@@ -27,6 +27,13 @@ export interface MemoryManager {
     leafType: CppType
     isPadding: boolean
   } | undefined
+  /** Current endianness used by subsequent scalar reads/writes. */
+  getEndianness: () => 'le' | 'be'
+  /**
+   * Switch endianness. Byte-swaps every existing scalar so live values
+   *  stay semantically consistent; subsequent reads/writes use the new order.
+   */
+  setEndianness: (e: 'le' | 'be') => void
   reset: () => void
 }
 
@@ -53,8 +60,53 @@ export function createAddressSpace(): MemoryManager {
     layout: { kind: 'scalar', type: 'int', size: 1 },
   })
 
+  // Internal endianness state — drives DataView getters/setters. Mutated via
+  // setEndianness(), which also byte-swaps every existing scalar so live values
+  // remain semantically consistent across a toggle.
+  let littleEndian = true
+
   function bumpVersion() {
     space.version++
+  }
+
+  function byteSwapScalar(addr: number, size: number) {
+    if (size <= 1)
+      return
+    for (let i = 0, j = size - 1; i < j; i++, j--) {
+      const t = buffer[addr + i]
+      buffer[addr + i] = buffer[addr + j]
+      buffer[addr + j] = t
+    }
+  }
+
+  function byteSwapByLayout(base: number, layout: LayoutNode) {
+    if (layout.kind === 'scalar') {
+      byteSwapScalar(base, layout.size)
+      return
+    }
+    if (layout.kind === 'array') {
+      for (let i = 0; i < layout.length; i++)
+        byteSwapByLayout(base + i * layout.stride, layout.element)
+      return
+    }
+    for (const field of layout.fields)
+      byteSwapByLayout(base + field.offset, field.node)
+  }
+
+  function setEndianness(e: 'le' | 'be') {
+    const nextLE = e === 'le'
+    if (nextLE === littleEndian)
+      return
+    // Swap scalars in every allocation (live, dead, and the NULL sentinel).
+    // Padding/char bytes are naturally skipped by byteSwapScalar's size check.
+    for (const alloc of allocations.values())
+      byteSwapByLayout(alloc.base, alloc.layout)
+    littleEndian = nextLE
+    bumpVersion()
+  }
+
+  function getEndianness(): 'le' | 'be' {
+    return littleEndian ? 'le' : 'be'
   }
 
   function resolveStruct(name: string): LayoutNode {
@@ -219,20 +271,20 @@ export function createAddressSpace(): MemoryManager {
 
   function readScalarImpl(address: number, type: CppPrimitiveType | PointerType): number | boolean {
     if (typeof type !== 'string')
-      return view.getInt32(address, true) // pointer
+      return view.getInt32(address, littleEndian) // pointer
     switch (type) {
       case 'char': return view.getInt8(address)
       case 'bool': return view.getUint8(address) !== 0
-      case 'int': return view.getInt32(address, true)
-      case 'float': return view.getFloat32(address, true)
-      case 'double': return view.getFloat64(address, true)
+      case 'int': return view.getInt32(address, littleEndian)
+      case 'float': return view.getFloat32(address, littleEndian)
+      case 'double': return view.getFloat64(address, littleEndian)
       case 'void': return 0
     }
   }
 
   function writeScalarImpl(address: number, type: CppPrimitiveType | PointerType, value: number | boolean) {
     if (typeof type !== 'string') {
-      view.setInt32(address, value as number, true)
+      view.setInt32(address, value as number, littleEndian)
       return
     }
     switch (type) {
@@ -243,13 +295,13 @@ export function createAddressSpace(): MemoryManager {
         view.setUint8(address, value ? 1 : 0)
         break
       case 'int':
-        view.setInt32(address, value as number, true)
+        view.setInt32(address, value as number, littleEndian)
         break
       case 'float':
-        view.setFloat32(address, value as number, true)
+        view.setFloat32(address, value as number, littleEndian)
         break
       case 'double':
-        view.setFloat64(address, value as number, true)
+        view.setFloat64(address, value as number, littleEndian)
         break
       case 'void':
         break
@@ -470,6 +522,7 @@ export function createAddressSpace(): MemoryManager {
     space.stackTop = 1
     space.heapBottom = MEMORY_SIZE
     space.version = 0
+    littleEndian = true
     allocations.set(NULL_ADDRESS, {
       base: 0,
       size: 1,
@@ -493,6 +546,8 @@ export function createAddressSpace(): MemoryManager {
     elementAddressTyped,
     findAllocation,
     describeByte,
+    getEndianness,
+    setEndianness,
     reset,
   }
 }
