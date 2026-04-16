@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { MemoryManager } from '~/composables/interpreter/memory'
 import { useElementSize, useVirtualList } from '@vueuse/core'
-import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
+import { Pane, Splitpanes } from 'splitpanes'
+import { computed, nextTick, useTemplateRef, watch } from 'vue'
 import { MEMORY_SIZE } from '~/composables/interpreter/types'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import MemoryMapByteRow from './MemoryMapByteRow.vue'
@@ -96,32 +97,27 @@ const {
   wrapperProps: heapWrapperProps,
 } = useVirtualList(heapRows, { itemHeight: ROW_HEIGHT })
 
-// ---- Initial scroll: stack to top (default), heap to bottom ----
-// Wait for useElementSize to report the real width before scrolling — with
-// `immediate: true` the watch would fire with the fallback bpr and land at a
-// stale position that never matches the final row count. Watching heapWidth
-// (without `immediate`) only fires after the ResizeObserver's first real
-// measurement, at which point heapRows has its final length.
+// ---- Heap scroll: snap to bottom on every width/bpr change ----
+// Fires on initial measurement AND whenever the splitpane drag changes bpr.
+// Without this, a mid-session drag would leave scrollTop pointing beyond the
+// new total content height and the heap would render empty.
 
-const heapInitialScrollDone = ref(false)
-watch(heapWidth, (w) => {
-  if (heapInitialScrollDone.value)
-    return
-  if (w <= 0)
+watch(heapBytesPerRow, (bpr) => {
+  if (bpr <= 0)
     return
   nextTick().then(() => {
     heapScrollToIdx(heapRows.value.length - 1)
-    heapInitialScrollDone.value = true
   })
 })
 </script>
 
 <template>
-  <div class="h-full flex flex-col gap-2 overflow-hidden p-2">
-    <!-- Two-column layout: stack (left) + heap (right) -->
-    <div class="min-h-0 flex flex-1 flex-col gap-2 md:flex-row">
+  <div class="h-full flex flex-col overflow-hidden p-2">
+    <!-- Splitpane-wrapped stack / heap columns so the user can drag the divider
+         to change bytes-per-row ratio. -->
+    <Splitpanes class="min-h-0 flex-1">
       <!-- ── Stack column (+ globals) ── -->
-      <div class="min-h-0 flex flex-1 flex-col border border-gray-200 rounded-lg dark:border-gray-800">
+      <Pane :size="50" :min-size="15" class="min-h-0 flex flex-col border border-gray-200 rounded-lg dark:border-gray-800">
         <!-- Sticky header -->
         <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 rounded-t-lg bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900">
           <span class="text-[10px] text-gray-500 font-semibold tracking-wide uppercase dark:text-gray-400">
@@ -154,10 +150,10 @@ watch(heapWidth, (w) => {
             />
           </div>
         </div>
-      </div>
+      </Pane>
 
       <!-- ── Heap column ── -->
-      <div class="min-h-0 flex flex-1 flex-col border border-gray-200 rounded-lg dark:border-gray-800">
+      <Pane :size="50" :min-size="15" class="min-h-0 flex flex-col border border-gray-200 rounded-lg dark:border-gray-800">
         <!-- Sticky header -->
         <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 rounded-t-lg bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900">
           <span class="text-[10px] text-gray-500 font-semibold tracking-wide uppercase dark:text-gray-400">
@@ -190,8 +186,8 @@ watch(heapWidth, (w) => {
             />
           </div>
         </div>
-      </div>
-    </div>
+      </Pane>
+    </Splitpanes>
   </div>
 </template>
 
