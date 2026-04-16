@@ -823,11 +823,12 @@ const kindBg: Record<DataItem['kind'], string> = {
       <div class="i-carbon-flow h-3.5 w-3.5" />
     </button>
 
-    <div ref="contentRef" :style="{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }" class="relative">
-      <div v-if="!hasContent" class="text-sm text-gray-500 italic">
-        No data to display
-      </div>
+    <!-- Empty state (outside the pan-transformed layer so it stays centered) -->
+    <div v-if="!hasContent" class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-gray-500 italic">
+      No data to display
+    </div>
 
+    <div ref="contentRef" :style="{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }" class="relative">
       <!-- Data items -->
       <div class="contents">
         <div

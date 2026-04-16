@@ -322,14 +322,14 @@ watch(() => props.highlightedFieldAddress, (addr) => {
         </span>
       </div>
       <!-- Scrollable body -->
-      <div class="scrollbar-hidden min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
+      <div class="scrollbar-hidden min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
         <TransitionGroup name="stack-cell">
           <div
             v-for="entry in stackEntries"
             :key="entry.address"
             :data-address="entry.address"
             :data-testid="`stack-entry-${entry.address}`"
-            class="cursor-pointer border-l-3 border-transparent rounded bg-gray-200/80 font-mono transition-all duration-200 dark:bg-gray-800"
+            class="cursor-pointer border border-l-3 border-gray-200 border-l-transparent rounded-md bg-white font-mono shadow-sm transition-all duration-200 dark:border-gray-700 dark:bg-gray-900"
             :class="{
               'outline outline-2 outline-blue-400 bg-blue-500/20!': selectedAddress === entry.address,
               'border-l-blue-500!': isStatementLhs(entry.address),
@@ -344,7 +344,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
             @pointerleave="emit('hoverVariable', null)"
           >
             <!-- Address bar: address left, var name + type right -->
-            <div class="flex items-center justify-between rounded-t bg-gray-200/80 px-2 py-0.5 text-[10px] dark:bg-gray-700/50">
+            <div class="flex items-center justify-between border-b border-gray-200 rounded-t-md bg-gray-100 px-2 py-0.5 text-[10px] dark:border-gray-700 dark:bg-gray-800/80">
               <span class="text-gray-500 dark:text-gray-400">{{ formatAddr(entry.address) }}</span>
               <div class="flex items-center gap-1">
                 <span class="text-blue-600/80 dark:text-blue-300/80">{{ entry.name }}</span>
@@ -429,7 +429,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
           </div>
         </TransitionGroup>
 
-        <div v-if="stackEntries.length === 0" class="text-xs text-gray-500 italic">
+        <div v-if="stackEntries.length === 0" class="flex flex-1 items-center justify-center text-xs text-gray-500 italic">
           No stack variables
         </div>
       </div>
@@ -445,7 +445,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
         </span>
       </div>
       <!-- Scrollable body -->
-      <div class="scrollbar-hidden min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-0.5">
+      <div class="scrollbar-hidden min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
         <TransitionGroup name="heap-cell">
           <MemoryCell
             v-for="entry in heapEntries"
@@ -468,7 +468,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
             @click-cell="emit('selectCell', $event)"
           />
         </TransitionGroup>
-        <div v-if="heapEntries.length === 0" class="text-xs text-gray-500 italic">
+        <div v-if="heapEntries.length === 0" class="flex flex-1 items-center justify-center text-xs text-gray-500 italic">
           No heap allocations
         </div>
       </div>
