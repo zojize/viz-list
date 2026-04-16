@@ -123,7 +123,7 @@ const hexClasses = computed(() => {
 
 <template>
   <div
-    class="h-7 flex cursor-pointer items-center gap-1.5 border-l-2 border-transparent px-1.5 transition-colors hover:brightness-95 dark:hover:brightness-110"
+    class="h-7 flex cursor-pointer items-center gap-1.5 px-1.5 transition-colors hover:brightness-95 dark:hover:brightness-110"
     :class="rowClasses"
     @mouseenter="$emit('hover', address)"
     @click="$emit('click', address)"
