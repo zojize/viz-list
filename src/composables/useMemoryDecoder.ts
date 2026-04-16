@@ -2,13 +2,15 @@ import type { MaybeRefOrGetter } from 'vue'
 import type { MemoryManager } from './interpreter/memory'
 import type { CppType } from './interpreter/types'
 import { computed, toValue } from 'vue'
+import { useInterpreterContext } from './useInterpreterContext'
 
 export function useMemoryDecoder(mem: MaybeRefOrGetter<MemoryManager>) {
   const m = computed(() => toValue(mem))
+  const context = useInterpreterContext()
 
   function decode(address: number, type: CppType): string {
-    // Depend on version for reactivity.
-    void m.value.space.version
+    // Depend on memoryVersion for reactivity.
+    void context.memoryVersion
     if (typeof type === 'string') {
       const v = m.value.readScalar(address, type)
       return formatPrimitive(v, type)
@@ -21,8 +23,8 @@ export function useMemoryDecoder(mem: MaybeRefOrGetter<MemoryManager>) {
   }
 
   function hex(address: number, size: number): string {
-    // Depend on version for reactivity.
-    void m.value.space.version
+    // Depend on memoryVersion for reactivity.
+    void context.memoryVersion
     const bytes: string[] = []
     for (let i = 0; i < size; i++)
       bytes.push(m.value.space.buffer[address + i].toString(16).padStart(2, '0'))

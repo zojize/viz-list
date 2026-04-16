@@ -102,7 +102,7 @@ const selectedByteDetail = computed(() => {
   if (addr === null)
     return null
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   const d = context.memory.describeByte(addr)
   if (!d)
     return null
@@ -119,7 +119,7 @@ const selectedAlloc = computed(() => {
   if (selectedAddress.value === null)
     return null
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   return context.memory.findAllocation(selectedAddress.value) ?? null
 })
 const selectedType = computed(() => {
@@ -414,7 +414,7 @@ onMounted(() => nextTick(reparentMonaco))
           <button v-else data-testid="btn-run" class="icon-btn" title="Run" @click="handleRun()">
             <div class="i-carbon-play-filled" />
           </button>
-          <button data-testid="btn-step" :data-step="context.memory.space.version" class="icon-btn" title="Step" @click="handleStep()">
+          <button data-testid="btn-step" :data-step="context.memoryVersion" class="icon-btn" title="Step" @click="handleStep()">
             <div class="i-carbon-skip-forward-filled" />
           </button>
         </div>

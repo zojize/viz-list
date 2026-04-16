@@ -44,7 +44,7 @@ interface DataItem {
 const subCellAddresses = computed(() => {
   const sub = new Set<number>()
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   for (const alloc of context.memory.space.allocations.values()) {
     if (alloc.dead)
       continue
@@ -135,7 +135,7 @@ const standaloneItems = computed((): DataItem[] => {
 
   // Live heap data (allocations not owned by any in-scope variable)
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   for (const alloc of context.memory.space.allocations.values()) {
     if (alloc.dead || alloc.region !== 'heap')
       continue

@@ -42,7 +42,7 @@ const structName = computed(() => {
 /** Formatted primitive value (re-reads from reactive memory each step) */
 const primitiveDisplay = computed(() => {
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   if (!isPrimitive.value)
     return ''
   try {
@@ -57,7 +57,7 @@ const primitiveDisplay = computed(() => {
 /** Pointer target address */
 const pointerAddress = computed(() => {
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   if (!isPointer.value || typeof props.type !== 'object' || props.type.type !== 'pointer')
     return 0
   try {
@@ -78,7 +78,7 @@ const structFields = computed((): FieldEntry[] => {
   if (!structName.value)
     return []
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency — re-evaluate each step
+  context.memoryVersion // reactive dependency — re-evaluate each step
   const layout = context.structLayouts[structName.value]
   if (!layout || layout.kind !== 'struct')
     return []
@@ -124,7 +124,7 @@ interface ArrayEntry {
 
 const arrayElements = computed((): ArrayEntry[] => {
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency — re-evaluate each step
+  context.memoryVersion // reactive dependency — re-evaluate each step
   if (typeof props.type !== 'object' || props.type.type !== 'array')
     return []
   const alloc = context.memory.findAllocation(props.address)

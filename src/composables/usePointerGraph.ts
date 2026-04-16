@@ -45,7 +45,7 @@ interface PointerGraph {
 export function usePointerGraph(context: Readonly<InterpreterContext>) {
   return computed((): PointerGraph => {
     // eslint-disable-next-line ts/no-unused-expressions
-    context.memory.space.version // reactive dependency
+    context.memoryVersion // reactive dependency
 
     const nodes = new Map<number, GraphNode>()
     const danglingEdges: DanglingEdge[] = []

@@ -167,7 +167,7 @@ interface StackEntry {
 
 const stackEntries = computed(() => {
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   const entries: StackEntry[] = []
   const envLen = context.envStack.length
 
@@ -238,7 +238,7 @@ interface HeapEntry {
 
 const heapEntries = computed(() => {
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   const entries: HeapEntry[] = []
   const subAllocationBases = new Set<number>()
 

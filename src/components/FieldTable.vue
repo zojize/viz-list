@@ -34,7 +34,7 @@ const { decode } = useMemoryDecoder(() => context.memory)
 
 const alloc = computed(() => {
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   return context.memory.findAllocation(props.address)
 })
 
@@ -78,7 +78,7 @@ interface RefEntry {
 
 const referencedBy = computed((): RefEntry[] => {
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   const targetAddr = props.address
   const refs: RefEntry[] = []
   for (const a of context.memory.space.allocations.values()) {
@@ -105,7 +105,7 @@ const fields = computed((): FieldRow[] => {
   if (!structName.value)
     return []
   // eslint-disable-next-line ts/no-unused-expressions
-  context.memory.space.version // reactive dependency
+  context.memoryVersion // reactive dependency
   const layout = context.structLayouts[structName.value]
   if (!layout || layout.kind !== 'struct')
     return []

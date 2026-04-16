@@ -93,6 +93,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     memory: markRaw(mem),
     currentNode: undefined as import('web-tree-sitter').Node | undefined,
     hitBreakpoint: false,
+    memoryVersion: 0,
   })
 
   let gen: Generator | undefined
@@ -117,6 +118,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     context.envStack = []
     context.callStack = []
     context.currentNode = undefined
+    context.memoryVersion = 0
     mem.reset()
     gen = undefined
     isActive.value = false
@@ -239,6 +241,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     context.callStack.push({ env: [] })
     // Trigger reactivity for memory allocated during init
     mem.space.version++
+    context.memoryVersion++
   }
 
   function step(): { done: boolean, breakpoint: boolean } {
@@ -248,6 +251,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
       // Trigger Vue reactivity: version bump on mem.space propagates through
       // the reactive context.memory.space reference.
       mem.space.version++
+      context.memoryVersion++
       const bp = !!context.hitBreakpoint
       context.hitBreakpoint = false
       if (done)

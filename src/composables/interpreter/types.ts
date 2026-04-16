@@ -99,6 +99,8 @@ export interface InterpreterContext {
   currentNode?: SyntaxNode
   /** Set by breakpoint() builtin — signals play mode to pause */
   hitBreakpoint?: boolean
+  /** Monotonically-increasing counter bumped by step() / init() — drives Vue reactivity in views that consume memory. */
+  memoryVersion: number
 }
 
 export interface UseCppInterpreterReturn {

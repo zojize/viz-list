@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { MemoryManager } from '~/composables/interpreter/memory'
 import { computed } from 'vue'
+import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import MemoryMapByteCell from './MemoryMapByteCell.vue'
 
 const props = defineProps<{
@@ -19,9 +20,11 @@ defineEmits<{
   click: [address: number]
 }>()
 
+const context = useInterpreterContext()
+
 /** Per-cell info for each of the bytesPerRow slots in the row */
 const cells = computed(() => {
-  void props.mem.space.version
+  void context.memoryVersion
   return Array.from({ length: props.bytesPerRow }, (_, i) => {
     const addr = props.rowStart + i
     if (addr >= props.bufferLength) {

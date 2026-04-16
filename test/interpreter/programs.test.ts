@@ -32,6 +32,7 @@ function runProgram(code: string) {
     callStack: [],
     memory: mem,
     currentNode: undefined,
+    memoryVersion: 0,
   }
 
   const { rootNode } = tree
