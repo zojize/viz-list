@@ -103,14 +103,18 @@ const shapes = computed<OverlayShape[]>(() => {
     class="pointer-events-none absolute inset-0 h-full w-full"
     xmlns="http://www.w3.org/2000/svg"
   >
+    <!-- SVG strokes are centered on the rect edge; if we paint at y=0 with a
+         2px stroke, the top half lands at y<0 and the scroll container clips
+         it. Inset each rect by half its stroke width so the full stroke stays
+         inside the visible region. -->
     <g v-for="shape in shapes" :key="shape.key">
       <rect
         v-for="(r, i) in shape.rects"
         :key="i"
-        :x="r.x"
-        :y="r.y"
-        :width="r.width"
-        :height="r.height"
+        :x="r.x + SVG_STYLES[shape.kind].strokeWidth / 2"
+        :y="r.y + SVG_STYLES[shape.kind].strokeWidth / 2"
+        :width="r.width - SVG_STYLES[shape.kind].strokeWidth"
+        :height="r.height - SVG_STYLES[shape.kind].strokeWidth"
         :fill="SVG_STYLES[shape.kind].fill ?? 'none'"
         :stroke="SVG_STYLES[shape.kind].stroke"
         :stroke-width="SVG_STYLES[shape.kind].strokeWidth"
@@ -119,10 +123,10 @@ const shapes = computed<OverlayShape[]>(() => {
       <rect
         v-for="(r, i) in (shape.boost ? shape.rects : [])"
         :key="`b${i}`"
-        :x="r.x - 2"
-        :y="r.y - 2"
-        :width="r.width + 4"
-        :height="r.height + 4"
+        :x="r.x - 2 + BOOST_WIDTH / 2"
+        :y="r.y - 2 + BOOST_WIDTH / 2"
+        :width="r.width + 4 - BOOST_WIDTH"
+        :height="r.height + 4 - BOOST_WIDTH"
         fill="none"
         :stroke="BOOST_STROKE"
         :stroke-width="BOOST_WIDTH"
