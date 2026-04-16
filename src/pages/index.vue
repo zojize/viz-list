@@ -455,7 +455,15 @@ onMounted(() => nextTick(reparentMonaco))
             <div class="h-full overflow-hidden panel-border">
               <MemoryMap
                 :mem="context.memory"
-                :changed-bytes="changedAddresses as Set<number>"
+                :changed-addresses="changedAddresses"
+                :highlighted-address="hoveredNodeAddress"
+                :highlighted-field-address="hoveredFieldAddress"
+                :selected-address="selectedAddress"
+                :statement-lhs-addresses="lhsAddresses"
+                :statement-rhs-addresses="rhsAddresses"
+                @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
+                @hover-pointer="hoveredNodeAddress = $event"
+                @hover-variable="highlightVariable($event, context.currentNode)"
               />
             </div>
           </Pane>
@@ -542,7 +550,15 @@ onMounted(() => nextTick(reparentMonaco))
         <div class="h-1/2 overflow-hidden panel-border">
           <MemoryMap
             :mem="context.memory"
-            :changed-bytes="changedAddresses as Set<number>"
+            :changed-addresses="changedAddresses"
+            :highlighted-address="hoveredNodeAddress"
+            :highlighted-field-address="hoveredFieldAddress"
+            :selected-address="selectedAddress"
+            :statement-lhs-addresses="lhsAddresses"
+            :statement-rhs-addresses="rhsAddresses"
+            @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
+            @hover-pointer="hoveredNodeAddress = $event"
+            @hover-variable="highlightVariable($event, context.currentNode)"
           />
         </div>
         <!-- Data structure view -->
