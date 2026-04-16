@@ -2,7 +2,7 @@
 import type { MemoryManager } from '~/composables/interpreter/memory'
 import { refThrottled, useElementSize, useVirtualList } from '@vueuse/core'
 import { Pane, Splitpanes } from 'splitpanes'
-import { computed, nextTick, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
 import { MEMORY_SIZE } from '~/composables/interpreter/types'
 import { useHoverHighlight } from '~/composables/useHoverHighlight'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
@@ -62,12 +62,37 @@ const stackColRef = useTemplateRef<HTMLElement>('stack-col-sizer')
 const heapColRef = useTemplateRef<HTMLElement>('heap-col-sizer')
 const { width: stackWidthRaw } = useElementSize(stackColRef)
 const { width: heapWidthRaw } = useElementSize(heapColRef)
-// Throttle width observation so splitpane drag doesn't cascade into
-// per-frame row/overlay re-renders. 60ms = ~16fps — fast enough to feel live
-// while cutting re-render work by ~4x vs an unthrottled ResizeObserver that
-// fires every frame.
-const stackWidth = refThrottled(stackWidthRaw, 60)
-const heapWidth = refThrottled(heapWidthRaw, 60)
+// Throttled fallback for non-drag resizes (e.g. window resize) so
+// rapid ResizeObserver events don't cascade into per-frame re-renders.
+const stackWidthThrottled = refThrottled(stackWidthRaw, 60)
+const heapWidthThrottled = refThrottled(heapWidthRaw, 60)
+// Committed widths drive bytesPerRow. While the splitpane divider is
+// actively being dragged we FREEZE these values, so the byte grid keeps
+// its current bpr mid-drag (columns still resize visually because they're
+// driven by splitpanes CSS). On drag end we snap to the final widths and
+// recompute once. Trade-off: mid-drag the cell grid doesn't reflow.
+const isDragging = shallowRef(false)
+const stackWidth = shallowRef(0)
+const heapWidth = shallowRef(0)
+watch(stackWidthThrottled, (w) => {
+  if (!isDragging.value)
+    stackWidth.value = w
+}, { immediate: true })
+watch(heapWidthThrottled, (w) => {
+  if (!isDragging.value)
+    heapWidth.value = w
+}, { immediate: true })
+
+function onSplitStart() {
+  isDragging.value = true
+}
+function onSplitEnd() {
+  isDragging.value = false
+  // Snap to latest observed widths (not the throttled ones, which may be
+  // a few ms stale).
+  stackWidth.value = stackWidthRaw.value
+  heapWidth.value = heapWidthRaw.value
+}
 
 // Address label: w-14 (56px) — padding is inside the span's box.
 // Each byte cell: w-8 (32px) in MemoryMapByteCell.
@@ -157,7 +182,7 @@ watch(heapBytesPerRow, (bpr) => {
   <div class="h-full flex flex-col overflow-hidden p-2">
     <!-- Splitpane-wrapped stack / heap columns so the user can drag the divider
          to change bytes-per-row ratio. -->
-    <Splitpanes class="min-h-0 flex-1">
+    <Splitpanes class="min-h-0 flex-1" @resize="onSplitStart" @resized="onSplitEnd">
       <!-- ── Stack column (+ globals) ── -->
       <Pane :size="50" :min-size="15" class="min-h-0 flex flex-col border border-gray-200 rounded-lg dark:border-gray-800">
         <!-- Sticky header -->
