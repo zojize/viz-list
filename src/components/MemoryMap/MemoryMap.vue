@@ -78,6 +78,9 @@ function toggleEndianness() {
         v-else
         :mem="props.mem"
         :changed-bytes="changedBytes ?? (changedAddresses as Set<number> | undefined) ?? new Set()"
+        :statement-lhs-addresses="statementLhsAddresses"
+        :statement-rhs-addresses="statementRhsAddresses"
+        :selected-address="selectedAddress"
         @select-cell="emit('selectByteCell', $event)"
       />
     </div>

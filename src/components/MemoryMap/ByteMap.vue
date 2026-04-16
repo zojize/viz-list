@@ -5,11 +5,15 @@ import { Pane, Splitpanes } from 'splitpanes'
 import { computed, nextTick, useTemplateRef, watch } from 'vue'
 import { MEMORY_SIZE } from '~/composables/interpreter/types'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
+import ByteMapOverlay from './ByteMapOverlay.vue'
 import MemoryMapByteRow from './MemoryMapByteRow.vue'
 
 const props = defineProps<{
   mem: MemoryManager
   changedBytes?: Set<number>
+  statementLhsAddresses?: ReadonlySet<number>
+  statementRhsAddresses?: ReadonlySet<number>
+  selectedAddress?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +28,9 @@ function onClick(addr: number) {
 }
 
 const changed = computed(() => props.changedBytes ?? new Set<number>())
+const lhsSet = computed<ReadonlySet<number>>(() => props.statementLhsAddresses ?? new Set<number>())
+const rhsSet = computed<ReadonlySet<number>>(() => props.statementRhsAddresses ?? new Set<number>())
+const selected = computed<number | null>(() => props.selectedAddress ?? null)
 
 const context = useInterpreterContext()
 
@@ -71,6 +78,13 @@ const heapRows = computed<number[]>(() => {
 })
 
 const bufferLength = computed(() => props.mem.space.buffer.length)
+
+// Full virtual-content height for each column (row count × row height). The
+// overlay SVG spans this height so its coordinate system matches the scroll
+// container's internal content frame — scrolling the container moves both the
+// virtual-list wrapper and the absolutely-positioned overlay together.
+const stackTotalHeight = computed(() => stackRows.value.length * ROW_HEIGHT)
+const heapTotalHeight = computed(() => heapRows.value.length * ROW_HEIGHT)
 
 const stackBytesUsed = computed(() => {
   void context.memoryVersion
@@ -134,7 +148,7 @@ watch(heapBytesPerRow, (bpr) => {
         <!-- Virtual-list scrollable container -->
         <div
           v-bind="stackContainerProps"
-          class="scrollbar-hidden min-h-0 flex-1 overflow-x-auto overflow-y-auto"
+          class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto"
         >
           <div v-bind="stackWrapperProps">
             <MemoryMapByteRow
@@ -147,6 +161,28 @@ watch(heapBytesPerRow, (bpr) => {
               :changed-bytes="changed"
               @hover="onHover"
               @click="onClick"
+            />
+          </div>
+          <!-- Overlay: absolute within the scroll container, spans the full
+               virtual-content height so its coordinate frame matches rows in
+               the wrapper. Scrolls with content; pointer-events disabled. -->
+          <div
+            class="pointer-events-none absolute left-0 top-0 w-full"
+            :style="{ height: `${stackTotalHeight}px` }"
+          >
+            <ByteMapOverlay
+              :mem="mem"
+              region="stack"
+              :region-start="0"
+              :region-end="MEMORY_SIZE / 2"
+              :bytes-per-row="stackBytesPerRow"
+              :cell-width="BYTE_CELL_WIDTH"
+              :row-height="ROW_HEIGHT"
+              :label-width="ADDRESS_LABEL_WIDTH"
+              :lhs="lhsSet"
+              :rhs="rhsSet"
+              :changed="changed"
+              :selected-address="selected"
             />
           </div>
         </div>
@@ -170,7 +206,7 @@ watch(heapBytesPerRow, (bpr) => {
         <!-- Virtual-list scrollable container -->
         <div
           v-bind="heapContainerProps"
-          class="scrollbar-hidden min-h-0 flex-1 overflow-x-auto overflow-y-auto"
+          class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto"
         >
           <div v-bind="heapWrapperProps">
             <MemoryMapByteRow
@@ -183,6 +219,25 @@ watch(heapBytesPerRow, (bpr) => {
               :changed-bytes="changed"
               @hover="onHover"
               @click="onClick"
+            />
+          </div>
+          <div
+            class="pointer-events-none absolute left-0 top-0 w-full"
+            :style="{ height: `${heapTotalHeight}px` }"
+          >
+            <ByteMapOverlay
+              :mem="mem"
+              region="heap"
+              :region-start="MEMORY_SIZE / 2"
+              :region-end="MEMORY_SIZE"
+              :bytes-per-row="heapBytesPerRow"
+              :cell-width="BYTE_CELL_WIDTH"
+              :row-height="ROW_HEIGHT"
+              :label-width="ADDRESS_LABEL_WIDTH"
+              :lhs="lhsSet"
+              :rhs="rhsSet"
+              :changed="changed"
+              :selected-address="selected"
             />
           </div>
         </div>
