@@ -61,22 +61,28 @@ function layoutToType(alloc: Allocation): CppType {
   return { type: 'struct', name: l.structName }
 }
 
-function readValue(address: number, alloc: Allocation): CppValue {
-  const l = alloc.layout
-  if (l.kind === 'struct') {
-    return { type: 'struct', name: l.structName, base: address }
+function readByLayout(address: number, node: LayoutNode): CppValue {
+  if (node.kind === 'struct') {
+    return { type: 'struct', name: node.structName, base: address }
   }
-  if (l.kind === 'array') {
-    return { type: 'array', base: address, length: l.length, elementType: fieldNodeToType(l.element) }
+  if (node.kind === 'array') {
+    return { type: 'array', base: address, length: node.length, elementType: fieldNodeToType(node.element) }
   }
-  // scalar (including pointer)
+  // scalar — node.type is CppPrimitiveType | PointerType
   try {
-    const v = context.memory.readScalar(address, l.type)
-    return v
+    const raw = context.memory.readScalar(address, node.type)
+    // Wrap pointer reads into the transient CppValue object shape so isPointerValue() works downstream.
+    if (typeof node.type === 'object' && node.type.type === 'pointer')
+      return { type: 'pointer', address: raw as number }
+    return raw
   }
   catch {
     return 0
   }
+}
+
+function readValue(address: number, alloc: Allocation): CppValue {
+  return readByLayout(address, alloc.layout)
 }
 
 function makeSyntheticCell(address: number, alloc: Allocation): SyntheticCell {
@@ -101,8 +107,9 @@ function getFieldValues(address: number, alloc: Allocation): Map<string, { type:
   for (const field of layout.fields) {
     const fieldAddr = address + field.offset
     const fieldType = fieldNodeToType(field.node)
-    const fieldAlloc = context.memory.findAllocation(fieldAddr)
-    const fieldValue: CppValue = fieldAlloc ? readValue(fieldAddr, fieldAlloc) : 0
+    // Read based on the FIELD'S own layout node — findAllocation would return
+    // the enclosing struct, which would mis-type primitive/pointer fields as structs.
+    const fieldValue = readByLayout(fieldAddr, field.node)
     map.set(field.name, { type: fieldType, value: fieldValue, address: fieldAddr })
   }
   return map
