@@ -325,7 +325,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
       <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 rounded-t-lg bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900">
         <span class="text-[10px] text-gray-500 font-semibold tracking-wide uppercase dark:text-gray-400">Stack</span>
         <span class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-900/60 dark:text-blue-300">
-          {{ stackAllocCount }} allocations
+          {{ stackAllocCount }} {{ stackAllocCount === 1 ? 'allocation' : 'allocations' }}
         </span>
       </div>
       <!-- Scrollable body -->
@@ -448,7 +448,7 @@ watch(() => props.highlightedFieldAddress, (addr) => {
       <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 rounded-t-lg bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900">
         <span class="text-[10px] text-gray-500 font-semibold tracking-wide uppercase dark:text-gray-400">Heap</span>
         <span class="rounded bg-green-100 px-1.5 py-0.5 text-[10px] text-green-700 dark:bg-green-900/60 dark:text-green-300">
-          {{ heapAllocCount }} allocations
+          {{ heapAllocCount }} {{ heapAllocCount === 1 ? 'allocation' : 'allocations' }}
         </span>
       </div>
       <!-- Scrollable body -->

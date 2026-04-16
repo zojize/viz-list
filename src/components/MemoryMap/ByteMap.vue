@@ -124,7 +124,7 @@ watch(heapBytesPerRow, (bpr) => {
             Stack &amp; Globals
           </span>
           <span class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-900/60 dark:text-blue-300">
-            {{ stackBytesUsed }} bytes used
+            {{ stackBytesUsed }} {{ stackBytesUsed === 1 ? 'byte' : 'bytes' }} used
           </span>
         </div>
 
@@ -160,7 +160,7 @@ watch(heapBytesPerRow, (bpr) => {
             Heap
           </span>
           <span class="rounded bg-green-100 px-1.5 py-0.5 text-[10px] text-green-700 dark:bg-green-900/60 dark:text-green-300">
-            {{ heapBytesUsed }} bytes used
+            {{ heapBytesUsed }} {{ heapBytesUsed === 1 ? 'byte' : 'bytes' }} used
           </span>
         </div>
 
