@@ -286,6 +286,15 @@ const containerRef = useTemplateRef('memory-map-container')
 watch(() => props.highlightedAddress, (addr) => {
   if (addr === null || addr === undefined || !containerRef.value)
     return
+  // Suppress the scroll when the hover originated in AllocationMap and the
+  // target lives in the same column — otherwise the AddressLink button chases
+  // the cursor (hover prop round-trips through index.vue and lands here).
+  if (hoverSource.value) {
+    const targetAlloc = context.memory.findAllocation(addr)
+    const targetColumn = targetAlloc?.region === 'heap' ? 'heap' : 'stack'
+    if (hoverSource.value === targetColumn)
+      return
+  }
   const el = containerRef.value.querySelector(`[data-address="${addr}"]`)
   if (el)
     el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
