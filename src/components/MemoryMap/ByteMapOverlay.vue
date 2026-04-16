@@ -6,7 +6,7 @@ import { computed } from 'vue'
 import { useHoverHighlight } from '~/composables/useHoverHighlight'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { BOOST_STROKE, BOOST_WIDTH, SVG_STYLES } from './highlightColors'
-import { allocationRects } from './overlayGeometry'
+import { allocationPath } from './overlayGeometry'
 
 const props = defineProps<{
   mem: MemoryManager
@@ -31,7 +31,8 @@ interface OverlayShape {
   key: string
   kind: HighlightKind
   boost: boolean
-  rects: ReturnType<typeof allocationRects>
+  /** SVG path `d` tracing the allocation's perimeter, already stroke-inset. */
+  d: string
 }
 
 const geometry = computed<OverlayGeometry>(() => ({
@@ -79,6 +80,7 @@ const shapes = computed<OverlayShape[]>(() => {
   context.memoryVersion
 
   const out: OverlayShape[] = []
+  const g = geometry.value
   for (const alloc of props.mem.space.allocations.values()) {
     if (alloc.dead)
       continue
@@ -87,11 +89,15 @@ const shapes = computed<OverlayShape[]>(() => {
     const pick = kindFor(alloc.base, alloc.size)
     if (!pick)
       continue
+    // Inset the path by half the stroke width so the centered stroke fits
+    // inside the drawable region (prevents top/bottom clipping at row 0 and
+    // last row).
+    const inset = SVG_STYLES[pick.kind].strokeWidth / 2
     out.push({
       key: `${alloc.base}-${pick.kind}-${pick.boost ? 'b' : ''}`,
       kind: pick.kind,
       boost: pick.boost,
-      rects: allocationRects(alloc.base, alloc.size, geometry.value),
+      d: allocationPath(alloc.base, alloc.size, g, inset),
     })
   }
   return out
@@ -103,34 +109,27 @@ const shapes = computed<OverlayShape[]>(() => {
     class="pointer-events-none absolute inset-0 h-full w-full"
     xmlns="http://www.w3.org/2000/svg"
   >
-    <!-- SVG strokes are centered on the rect edge; if we paint at y=0 with a
-         2px stroke, the top half lands at y<0 and the scroll container clips
-         it. Inset each rect by half its stroke width so the full stroke stays
-         inside the visible region. -->
+    <!-- One <path> per shape traces the whole allocation's perimeter, so the
+         row-boundary edges between head/middle/tail don't render as internal
+         borders. Stroke-inset (applied in `shapes`) keeps the centered stroke
+         inside the scroll container's clip region.
+         Boost halo: a wider stroke on the same path, drawn UNDER the base
+         so its outer 2px shows as a glow around the base stroke. -->
     <g v-for="shape in shapes" :key="shape.key">
-      <rect
-        v-for="(r, i) in shape.rects"
-        :key="i"
-        :x="r.x + SVG_STYLES[shape.kind].strokeWidth / 2"
-        :y="r.y + SVG_STYLES[shape.kind].strokeWidth / 2"
-        :width="r.width - SVG_STYLES[shape.kind].strokeWidth"
-        :height="r.height - SVG_STYLES[shape.kind].strokeWidth"
+      <path
+        v-if="shape.boost"
+        :d="shape.d"
+        fill="none"
+        :stroke="BOOST_STROKE"
+        :stroke-width="SVG_STYLES[shape.kind].strokeWidth + BOOST_WIDTH * 2"
+        stroke-linejoin="round"
+      />
+      <path
+        :d="shape.d"
         :fill="SVG_STYLES[shape.kind].fill ?? 'none'"
         :stroke="SVG_STYLES[shape.kind].stroke"
         :stroke-width="SVG_STYLES[shape.kind].strokeWidth"
-        rx="3"
-      />
-      <rect
-        v-for="(r, i) in (shape.boost ? shape.rects : [])"
-        :key="`b${i}`"
-        :x="r.x - 2 + BOOST_WIDTH / 2"
-        :y="r.y - 2 + BOOST_WIDTH / 2"
-        :width="r.width + 4 - BOOST_WIDTH"
-        :height="r.height + 4 - BOOST_WIDTH"
-        fill="none"
-        :stroke="BOOST_STROKE"
-        :stroke-width="BOOST_WIDTH"
-        rx="5"
+        stroke-linejoin="round"
       />
     </g>
   </svg>
