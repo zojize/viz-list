@@ -17,9 +17,11 @@ async function stepN(page: import('@playwright/test').Page, n: number) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
-  // Wait for the parser to initialize (Tree-Sitter WASM load)
-  await expect(page.getByTestId('btn-step')).toBeVisible({ timeout: 15_000 })
-  await page.waitForTimeout(500)
+  // The Step button renders immediately, but tree-sitter WASM loads
+  // asynchronously and the first click is a no-op until `tree` is populated.
+  // `data-ready` flips to "true" once the parser has loaded and produced a
+  // tree — wait on it deterministically instead of a fixed timeout.
+  await expect(page.getByTestId('btn-step')).toHaveAttribute('data-ready', 'true', { timeout: 15_000 })
 })
 
 test.describe('memory map', () => {

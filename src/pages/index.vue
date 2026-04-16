@@ -423,7 +423,7 @@ onMounted(() => nextTick(reparentMonaco))
           <button v-else data-testid="btn-run" class="icon-btn" title="Run" @click="handleRun()">
             <div class="i-carbon-play-filled" />
           </button>
-          <button data-testid="btn-step" :data-step="context.memoryVersion" class="icon-btn" title="Step" @click="handleStep()">
+          <button data-testid="btn-step" :data-step="context.memoryVersion" :data-ready="!!tree" class="icon-btn" title="Step" @click="handleStep()">
             <div class="i-carbon-skip-forward-filled" />
           </button>
         </div>
