@@ -299,13 +299,15 @@ function handleStep() {
 
 const speedLabel = computed(() => {
   const ms = speedMs.value
-  if (ms <= 150)
-    return 'fast'
+  if (ms <= 100)
+    return 'fastest'
   if (ms <= 300)
+    return 'fast'
+  if (ms <= 600)
     return 'med'
-  if (ms <= 500)
+  if (ms <= 1000)
     return 'slow'
-  return 'slower'
+  return 'slowest'
 })
 
 // ---- Mobile layout ----
@@ -401,14 +403,14 @@ onMounted(() => nextTick(reparentMonaco))
         <div class="hidden items-center gap-1.5 sm:flex">
           <span class="text-[10px] text-gray-500 font-mono uppercase">{{ speedLabel }}</span>
           <input
-            :value="520 - speedMs"
+            :value="1550 - speedMs"
             type="range"
-            min="20"
-            max="500"
-            step="10"
+            min="50"
+            max="1500"
+            step="50"
             class="w-16"
             title="Simulation speed"
-            @input="speedMs = 520 - Number(($event.target as HTMLInputElement).value)"
+            @input="speedMs = 1550 - Number(($event.target as HTMLInputElement).value)"
           >
         </div>
 
