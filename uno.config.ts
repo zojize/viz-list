@@ -36,6 +36,7 @@ export default defineConfig({
     ['icon-btn', 'inline-flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer select-none transition-all duration-150 text-gray-500 dark:text-gray-400 hover:text-vitesse hover:bg-vitesse/10 !outline-none disabled:cursor-default disabled:opacity-40'],
     ['toolbar-group', 'flex items-center gap-0.5 bg-gray-100 dark:bg-white/5 rounded-lg p-0.5'],
     ['panel-border', 'border border-gray-200 dark:border-gray-800 rounded-lg'],
+    ['scrollbar-hidden', '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden'],
   ],
   presets: [
     presetUno(),

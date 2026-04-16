@@ -4,6 +4,7 @@ import type { OverlayGeometry } from './overlayGeometry'
 import type { MemoryManager } from '~/composables/interpreter/memory'
 import { computed } from 'vue'
 import { useHoverHighlight } from '~/composables/useHoverHighlight'
+import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { BOOST_STROKE, BOOST_WIDTH, SVG_STYLES } from './highlightColors'
 import { allocationRects } from './overlayGeometry'
 
@@ -24,6 +25,7 @@ const props = defineProps<{
 }>()
 
 const hover = useHoverHighlight()
+const context = useInterpreterContext()
 
 interface OverlayShape {
   key: string
@@ -71,8 +73,10 @@ function kindFor(base: number, size: number): { kind: HighlightKind, boost: bool
 }
 
 const shapes = computed<OverlayShape[]>(() => {
-  // Reactive dep — bumped on every memory write
-  void props.mem.space.version
+  // Reactive dep — mem is markRaw so space.version wouldn't track; use the
+  // interpreter's memoryVersion which the whole codebase uses for this.
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memoryVersion
 
   const out: OverlayShape[] = []
   for (const alloc of props.mem.space.allocations.values()) {

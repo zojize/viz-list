@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { MemoryManager } from '~/composables/interpreter/memory'
-import { useElementSize, useVirtualList } from '@vueuse/core'
+import { refThrottled, useElementSize, useVirtualList } from '@vueuse/core'
 import { Pane, Splitpanes } from 'splitpanes'
 import { computed, nextTick, useTemplateRef, watch } from 'vue'
 import { MEMORY_SIZE } from '~/composables/interpreter/types'
@@ -60,12 +60,18 @@ const context = useInterpreterContext()
 
 const stackColRef = useTemplateRef<HTMLElement>('stack-col-sizer')
 const heapColRef = useTemplateRef<HTMLElement>('heap-col-sizer')
-const { width: stackWidth } = useElementSize(stackColRef)
-const { width: heapWidth } = useElementSize(heapColRef)
+const { width: stackWidthRaw } = useElementSize(stackColRef)
+const { width: heapWidthRaw } = useElementSize(heapColRef)
+// Throttle width observation so splitpane drag doesn't cascade into
+// per-frame row/overlay re-renders. 60ms = ~16fps — fast enough to feel live
+// while cutting re-render work by ~4x vs an unthrottled ResizeObserver that
+// fires every frame.
+const stackWidth = refThrottled(stackWidthRaw, 60)
+const heapWidth = refThrottled(heapWidthRaw, 60)
 
-// Address label: "0x0000" text in w-14 (56px) + 6px right-padding = ~62px
-// Each byte cell: w-8 (32px) in MemoryMapByteCell
-const ADDRESS_LABEL_WIDTH = 62
+// Address label: w-14 (56px) — padding is inside the span's box.
+// Each byte cell: w-8 (32px) in MemoryMapByteCell.
+const ADDRESS_LABEL_WIDTH = 56
 const BYTE_CELL_WIDTH = 32
 const ROW_HEIGHT = 28 // h-7 = 28px
 
@@ -265,12 +271,3 @@ watch(heapBytesPerRow, (bpr) => {
     </Splitpanes>
   </div>
 </template>
-
-<style scoped>
-.scrollbar-hidden {
-  scrollbar-width: none;
-}
-.scrollbar-hidden::-webkit-scrollbar {
-  display: none;
-}
-</style>

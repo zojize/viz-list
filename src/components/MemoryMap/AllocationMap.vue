@@ -471,13 +471,6 @@ watch(hover.fieldAddress, (addr) => {
 </template>
 
 <style scoped>
-.scrollbar-hidden {
-  scrollbar-width: none;
-}
-.scrollbar-hidden::-webkit-scrollbar {
-  display: none;
-}
-
 .stack-cell-enter-from {
   opacity: 0;
   transform: translateX(-12px);
