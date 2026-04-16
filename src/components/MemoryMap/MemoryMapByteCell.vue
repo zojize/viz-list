@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Allocation } from '~/composables/interpreter/types'
+import type { Allocation, CppType } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 
 const props = defineProps<{
@@ -11,6 +11,8 @@ const props = defineProps<{
   isChanged: boolean
   /** When true, show a border-left allocation-boundary indicator */
   isBoundary?: boolean
+  /** Leaf type of this byte per describeByte(); drives colour-coding */
+  leafType?: CppType
 }>()
 
 defineEmits<{
@@ -20,14 +22,64 @@ defineEmits<{
 
 const hex = computed(() => props.byte.toString(16).padStart(2, '0'))
 
-/** Region of the owning allocation, if any */
-const region = computed(() => props.allocation?.region)
+/** Classify a CppType into one of the DSView kinds (int/float/char/bool/pointer/struct/array). */
+type Kind = 'int' | 'float' | 'char' | 'bool' | 'pointer' | 'struct' | 'array'
+function classify(t: CppType | undefined): Kind | null {
+  if (t === undefined)
+    return null
+  if (typeof t === 'string') {
+    if (t === 'float' || t === 'double')
+      return 'float'
+    if (t === 'char')
+      return 'char'
+    if (t === 'bool')
+      return 'bool'
+    return 'int' // int, void
+  }
+  if (t.type === 'pointer')
+    return 'pointer'
+  if (t.type === 'array')
+    return 'array'
+  return 'struct'
+}
+
+const kind = computed<Kind | null>(() => classify(props.leafType))
+
+/** Background tint per kind — matches DataStructureView's kindBg sensibility but tuned for inline byte cells. */
+const KIND_BG: Record<Kind, string[]> = {
+  int: ['bg-blue-500/10', 'dark:bg-blue-400/15'],
+  float: ['bg-amber-500/10', 'dark:bg-amber-400/15'],
+  char: ['bg-purple-500/10', 'dark:bg-purple-400/15'],
+  bool: ['bg-rose-500/10', 'dark:bg-rose-400/15'],
+  pointer: ['bg-green-500/10', 'dark:bg-green-400/15'],
+  struct: ['bg-cyan-500/10', 'dark:bg-cyan-400/15'],
+  array: ['bg-orange-500/10', 'dark:bg-orange-400/15'],
+}
+
+const KIND_TEXT: Record<Kind, string[]> = {
+  int: ['text-blue-700', 'dark:text-blue-300'],
+  float: ['text-amber-700', 'dark:text-amber-300'],
+  char: ['text-purple-700', 'dark:text-purple-300'],
+  bool: ['text-rose-700', 'dark:text-rose-300'],
+  pointer: ['text-green-700', 'dark:text-green-300'],
+  struct: ['text-cyan-700', 'dark:text-cyan-300'],
+  array: ['text-orange-700', 'dark:text-orange-300'],
+}
+
+const KIND_BORDER: Record<Kind, string[]> = {
+  int: ['border-blue-400', 'dark:border-blue-500'],
+  float: ['border-amber-400', 'dark:border-amber-500'],
+  char: ['border-purple-400', 'dark:border-purple-500'],
+  bool: ['border-rose-400', 'dark:border-rose-500'],
+  pointer: ['border-green-400', 'dark:border-green-500'],
+  struct: ['border-cyan-400', 'dark:border-cyan-500'],
+  array: ['border-orange-400', 'dark:border-orange-500'],
+}
 
 const rowClasses = computed(() => {
   const cs: string[] = []
 
   if (!props.allocation) {
-    // Free / unallocated
     cs.push('bg-transparent')
   }
   else if (props.isDead) {
@@ -36,25 +88,13 @@ const rowClasses = computed(() => {
   else if (props.isPadding) {
     cs.push('byte-cell-padding', 'bg-gray-100', 'dark:bg-gray-800/40')
   }
-  else if (region.value === 'stack') {
-    cs.push('bg-blue-500/5', 'dark:bg-blue-400/10')
-  }
-  else if (region.value === 'heap') {
-    cs.push('bg-green-500/5', 'dark:bg-green-400/10')
-  }
-  else if (region.value === 'global') {
-    cs.push('bg-gray-500/5', 'dark:bg-gray-400/10')
+  else if (kind.value) {
+    cs.push(...KIND_BG[kind.value])
   }
 
-  // Allocation boundary: stronger left border
-  if (props.isBoundary && props.allocation && !props.isDead) {
-    if (region.value === 'stack')
-      cs.push('border-l-2', 'border-blue-400', 'dark:border-blue-500')
-    else if (region.value === 'heap')
-      cs.push('border-l-2', 'border-green-400', 'dark:border-green-500')
-    else if (region.value === 'global')
-      cs.push('border-l-2', 'border-gray-400', 'dark:border-gray-500')
-  }
+  // Allocation boundary: stronger left border in the kind colour
+  if (props.isBoundary && props.allocation && !props.isDead && kind.value)
+    cs.push('border-l-2', ...KIND_BORDER[kind.value])
 
   // Changed byte: amber ring (inset so it doesn't bleed outside the cell bounds)
   if (props.isChanged)
@@ -74,14 +114,8 @@ const hexClasses = computed(() => {
   else if (props.isPadding) {
     cs.push('text-gray-400', 'dark:text-gray-500')
   }
-  else if (region.value === 'stack') {
-    cs.push('text-blue-700', 'dark:text-blue-300')
-  }
-  else if (region.value === 'heap') {
-    cs.push('text-green-700', 'dark:text-green-300')
-  }
-  else if (region.value === 'global') {
-    cs.push('text-gray-600', 'dark:text-gray-300')
+  else if (kind.value) {
+    cs.push(...KIND_TEXT[kind.value])
   }
   return cs
 })
@@ -99,7 +133,6 @@ const hexClasses = computed(() => {
 </template>
 
 <style scoped>
-/* Diagonal stripe for padding bytes */
 .byte-cell-padding {
   background-image: repeating-linear-gradient(
     45deg,

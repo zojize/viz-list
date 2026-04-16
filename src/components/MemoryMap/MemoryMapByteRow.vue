@@ -28,12 +28,10 @@ const cells = computed(() => {
   return Array.from({ length: props.bytesPerRow }, (_, i) => {
     const addr = props.rowStart + i
     if (addr >= props.bufferLength) {
-      // Out of buffer — render as empty slot
-      return { addr, inBuffer: false, isNull: false, byte: 0, allocation: undefined, isPadding: false, isDead: false, isBoundary: false }
+      return { addr, inBuffer: false, isNull: false, byte: 0, allocation: undefined, isPadding: false, isDead: false, isBoundary: false, leafType: undefined }
     }
     if (addr === 0) {
-      // NULL sentinel byte — rendered specially, not interactive
-      return { addr, inBuffer: true, isNull: true, byte: 0, allocation: undefined, isPadding: false, isDead: false, isBoundary: false }
+      return { addr, inBuffer: true, isNull: true, byte: 0, allocation: undefined, isPadding: false, isDead: false, isBoundary: false, leafType: undefined }
     }
     const alloc = props.mem.findAllocation(addr)
     const desc = props.mem.describeByte(addr)
@@ -46,6 +44,7 @@ const cells = computed(() => {
       isPadding: desc?.isPadding ?? false,
       isDead: alloc?.dead ?? false,
       isBoundary: alloc?.base === addr,
+      leafType: desc?.leafType,
     }
   })
 })
@@ -90,6 +89,7 @@ const addrLabel = computed(() =>
         :is-dead="cell.isDead"
         :is-changed="changedBytes.has(cell.addr)"
         :is-boundary="cell.isBoundary"
+        :leaf-type="cell.leafType"
         class="w-8 shrink-0"
         @hover="$emit('hover', $event)"
         @click="$emit('click', $event)"
