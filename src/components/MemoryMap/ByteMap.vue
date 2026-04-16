@@ -179,9 +179,14 @@ watch(heapBytesPerRow, (bpr) => {
           class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto"
         >
           <div v-bind="stackWrapperProps">
+            <!-- Key by virtual-list index, NOT item.data (row-start address).
+                 When bytesPerRow changes (splitpane drag), row addresses shift
+                 so keying by address would unmount/re-mount every visible row.
+                 Keying by index reuses the same components and just updates
+                 their props. -->
             <MemoryMapByteRow
               v-for="item in stackList"
-              :key="item.data"
+              :key="item.index"
               :row-start="item.data"
               :bytes-per-row="stackBytesPerRow"
               :buffer-length="bufferLength"
@@ -238,7 +243,7 @@ watch(heapBytesPerRow, (bpr) => {
           <div v-bind="heapWrapperProps">
             <MemoryMapByteRow
               v-for="item in heapList"
-              :key="item.data"
+              :key="item.index"
               :row-start="item.data"
               :bytes-per-row="heapBytesPerRow"
               :buffer-length="bufferLength"
