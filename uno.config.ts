@@ -31,6 +31,10 @@ export default defineConfig({
       },
     },
   },
+  // Prevent the extractor from misreading decrement operators (`i--`) as
+  // icon classes — `i-` is the presetIcons prefix, so plain code tokens like
+  // `i--` in `for (…; i--)` loops trip the icon loader and log warnings.
+  blocklist: [/^i-+$/],
   shortcuts: [
     ['btn', 'px-4 py-1.5 rounded-lg inline-flex items-center gap-1.5 cursor-pointer transition-all duration-150 text-sm font-medium disabled:cursor-default disabled:opacity-40'],
     ['icon-btn', 'inline-flex items-center justify-center w-8 h-8 rounded-lg cursor-pointer select-none transition-all duration-150 text-gray-500 dark:text-gray-400 hover:text-vitesse hover:bg-vitesse/10 !outline-none disabled:cursor-default disabled:opacity-40'],
