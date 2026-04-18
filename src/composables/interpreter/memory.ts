@@ -26,6 +26,10 @@ export interface MemoryManager {
     path: (string | number)[]
     leafType: CppType
     isPadding: boolean
+    /** Absolute address of the leaf scalar that contains this byte. */
+    leafBase: number
+    /** Size in bytes of that leaf scalar. */
+    leafSize: number
   } | undefined
   /** Current endianness used by subsequent scalar reads/writes. */
   getEndianness: () => 'le' | 'be'
@@ -457,19 +461,21 @@ export function createAddressSpace(): MemoryManager {
     const walk = (node: LayoutNode, nodeOffset: number): {
       leafType: CppType
       isPadding: boolean
+      leafOffset: number
+      leafSize: number
     } => {
       const relative = offset - nodeOffset
       if (node.kind === 'scalar') {
         if (relative >= node.size)
-          return { leafType: 'char', isPadding: true }
-        return { leafType: node.type, isPadding: false }
+          return { leafType: 'char', isPadding: true, leafOffset: nodeOffset, leafSize: node.size }
+        return { leafType: node.type, isPadding: false, leafOffset: nodeOffset, leafSize: node.size }
       }
       if (node.kind === 'array') {
         const idx = Math.floor(relative / node.stride)
         const intoElem = relative - idx * node.stride
         if (intoElem >= node.element.size) {
           // Stride padding between elements (only possible for weirdly-sized structs).
-          return { leafType: 'char', isPadding: true }
+          return { leafType: 'char', isPadding: true, leafOffset: nodeOffset + idx * node.stride, leafSize: node.stride - intoElem }
         }
         path.push(idx)
         return walk(node.element, nodeOffset + idx * node.stride)
@@ -478,17 +484,24 @@ export function createAddressSpace(): MemoryManager {
       for (const f of node.fields) {
         const end = f.offset + f.node.size
         if (relative < f.offset)
-          return { leafType: 'char', isPadding: true }
+          return { leafType: 'char', isPadding: true, leafOffset: nodeOffset + relative, leafSize: 1 }
         if (relative < end) {
           path.push(f.name)
           return walk(f.node, nodeOffset + f.offset)
         }
       }
       // beyond last field = tail padding
-      return { leafType: 'char', isPadding: true }
+      return { leafType: 'char', isPadding: true, leafOffset: nodeOffset + relative, leafSize: 1 }
     }
-    const { leafType, isPadding } = walk(alloc.layout, 0)
-    return { allocation: alloc, path, leafType, isPadding }
+    const { leafType, isPadding, leafOffset, leafSize } = walk(alloc.layout, 0)
+    return {
+      allocation: alloc,
+      path,
+      leafType,
+      isPadding,
+      leafBase: alloc.base + leafOffset,
+      leafSize,
+    }
   }
 
   function findAllocation(address: number): Allocation | undefined {
