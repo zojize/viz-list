@@ -188,9 +188,11 @@ function bowFor(length: number): number {
   return Math.min(max, Math.max(min, k / Math.max(length, 1)))
 }
 
-/** Quadratic bezier from a to b, bowed to the right of the segment direction
- *  so rightward-pointing arrows bow downward and return trips bow the other
- *  way — avoids two opposing arrows overlapping into a single line. */
+/** Quadratic bezier from a to b, always bowed up-and-left of the straight
+ *  segment. Force the perpendicular displacement into the upper-left
+ *  quadrant (negative x, negative y) so two anti-parallel arrows never
+ *  collapse onto each other and the arch direction stays consistent
+ *  regardless of which column the source or target lives in. */
 function bezierPath(a: Point, b: Point): string {
   const dx = b.x - a.x
   const dy = b.y - a.y
@@ -198,9 +200,11 @@ function bezierPath(a: Point, b: Point): string {
   if (len === 0)
     return ''
   const bow = bowFor(len)
-  // Perpendicular unit vector rotated 90° clockwise from (dx, dy).
-  const nx = dy / len
-  const ny = -dx / len
+  // Perpendicular to (dx, dy). Flip signs to force the control point into
+  // the upper-left quadrant relative to the midpoint — the curve's magnitude
+  // still tracks the arrow's orientation, but the bow direction is fixed.
+  const nx = -Math.abs(dy / len)
+  const ny = -Math.abs(dx / len)
   const mx = (a.x + b.x) / 2
   const my = (a.y + b.y) / 2
   const cx = mx + nx * bow
