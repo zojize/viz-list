@@ -1,16 +1,18 @@
 <script setup lang="ts">
+import type { MemoryDiff, MemorySnapshot } from '~/composables/useMemoryDiff'
 import { useHead } from '@unhead/vue'
-import { useIntervalFn, useLocalStorage, useMediaQuery } from '@vueuse/core'
+import { onClickOutside, useClipboard, useIntervalFn, useLocalStorage, useMediaQuery, useTimeoutFn } from '@vueuse/core'
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string'
 import { Pane, Splitpanes } from 'splitpanes'
-import { computed, markRaw, nextTick, onMounted, onUnmounted, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, markRaw, nextTick, onMounted, readonly, shallowRef, useTemplateRef, watch } from 'vue'
 import { Language, Parser } from 'web-tree-sitter'
 import DataStructureView from '~/components/DataStructureView.vue'
 import FieldTable from '~/components/FieldTable.vue'
-import MemoryMap from '~/components/MemoryMap.vue'
+import MemoryMap from '~/components/MemoryMap/MemoryMap.vue'
 import { useCppInterpreter } from '~/composables/useCppInterpreter'
+import { provideHoverHighlight } from '~/composables/useHoverHighlight'
 import { provideInterpreterContext } from '~/composables/useInterpreterContext'
-import { useMemoryDiff } from '~/composables/useMemoryDiff'
+import { snapshotSpace, useMemoryDiff } from '~/composables/useMemoryDiff'
 import { useMonacoEditor } from '~/composables/useMonacoEditor'
 import { useStatementAddresses } from '~/composables/useStatementAddresses'
 import 'splitpanes/dist/splitpanes.css'
@@ -79,18 +81,72 @@ const tree = computed(() => {
 
 // ---- Interpreter ----
 
-const { init, step, reset, context, isActive } = useCppInterpreter(tree)
-provideInterpreterContext(context)
-const { changedAddresses, snapshot, diff } = useMemoryDiff(() => context.memory)
+const { init, step, reset, setEndianness, context, isActive } = useCppInterpreter(tree)
+provideInterpreterContext(context, setEndianness)
+const previousSnapshot = shallowRef<MemorySnapshot | null>(null)
+const memoryDiff = useMemoryDiff(() => context.memory.space, previousSnapshot) satisfies { value: MemoryDiff }
+const changedAddresses = computed<ReadonlySet<number>>(() => {
+  const set = new Set<number>()
+  for (const { start, end } of memoryDiff.value.changedRanges) {
+    for (let i = start; i < end; i++)
+      set.add(i)
+  }
+  return readonly(set)
+})
 const { lhsAddresses, rhsAddresses } = useStatementAddresses(context, isActive)
 const selectedAddress = shallowRef<number | null>(null)
-const selectedCell = computed(() => {
+/** Byte address selected via a click in the ByteMap view (null when using AllocationMap). */
+const selectedByteAddress = shallowRef<number | null>(null)
+/** Byte-level detail for the selected byte address, computed for FieldTable. */
+const selectedByteDetail = computed(() => {
+  const addr = selectedByteAddress.value
+  if (addr === null)
+    return null
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memoryVersion // reactive dependency
+  const d = context.memory.describeByte(addr)
+  if (!d)
+    return null
+  return {
+    address: addr,
+    byte: context.memory.space.buffer[addr],
+    path: d.path,
+    leafType: d.leafType,
+    isPadding: d.isPadding,
+  }
+})
+/** Resolved type for the selected address, derived from its allocation layout. */
+const selectedAlloc = computed(() => {
   if (selectedAddress.value === null)
     return null
-  return context.memory.cells.get(selectedAddress.value) ?? null
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memoryVersion // reactive dependency
+  return context.memory.findAllocation(selectedAddress.value) ?? null
 })
-const hoveredNodeAddress = shallowRef<number | null>(null)
-const hoveredFieldAddress = shallowRef<number | null>(null)
+const selectedType = computed(() => {
+  const a = selectedAlloc.value
+  if (!a)
+    return null
+  const l = a.layout
+  if (l.kind === 'scalar')
+    return l.type
+  if (l.kind === 'array')
+    return { type: 'array' as const, of: fieldNodeToType(l.element), size: l.length }
+  return { type: 'struct' as const, name: l.structName }
+})
+
+function fieldNodeToType(node: import('~/composables/interpreter/layout').LayoutNode): import('~/composables/interpreter/types').CppType {
+  if (node.kind === 'scalar')
+    return node.type
+  if (node.kind === 'array')
+    return { type: 'array' as const, of: fieldNodeToType(node.element), size: node.length }
+  return { type: 'struct' as const, name: node.structName }
+}
+
+// Provide the shared hover-highlight store. Descendants (MemoryMap,
+// DataStructureView, FieldTable) inject via useHoverHighlight() instead of
+// round-tripping hover state through props/emits.
+provideHoverHighlight()
 
 const executionError = shallowRef<{ message: string, line?: number } | null>(null)
 
@@ -123,20 +179,13 @@ watch(code, () => editedWhileActive.value = isActive.value)
 // ---- Template picker dropdown ----
 
 const templatePickerOpen = shallowRef(false)
+const templatePickerRef = useTemplateRef<HTMLElement>('template-picker')
+onClickOutside(templatePickerRef, () => templatePickerOpen.value = false)
 
 function selectTemplate(name: string) {
   selectedTemplateName.value = name
   templatePickerOpen.value = false
 }
-
-// Close dropdown when clicking outside
-function handleClickOutside(e: MouseEvent) {
-  const target = e.target as HTMLElement
-  if (!target.closest('[data-testid="template-picker"]'))
-    templatePickerOpen.value = false
-}
-onMounted(() => document.addEventListener('click', handleClickOutside))
-onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
 // ---- Info modal ----
 
@@ -147,27 +196,61 @@ const infoOpen = shallowRef(false)
 const playingShareAnimation = shallowRef(false)
 const clipboardIcon = '%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'1em\' height=\'1em\' viewBox=\'0 0 24 24\'%3E%3Cg fill=\'none\' stroke=\'currentColor\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'2\'%3E%3Cpath stroke-dasharray=\'72\' stroke-dashoffset=\'72\' d=\'M12 3h7v18h-14v-18h7Z\'%3E%3Canimate fill=\'freeze\' attributeName=\'stroke-dashoffset\' dur=\'0.6s\' values=\'72;0\'/%3E%3C/path%3E%3Cpath stroke-dasharray=\'12\' stroke-dashoffset=\'12\' stroke-width=\'1\' d=\'M14.5 3.5v3h-5v-3\'%3E%3Canimate fill=\'freeze\' attributeName=\'stroke-dashoffset\' begin=\'0.7s\' dur=\'0.2s\' values=\'12;0\'/%3E%3C/path%3E%3Cpath stroke-dasharray=\'10\' stroke-dashoffset=\'10\' d=\'M9 13l2 2l4 -4\'%3E%3Canimate fill=\'freeze\' attributeName=\'stroke-dashoffset\' begin=\'0.9s\' dur=\'0.2s\' values=\'10;0\'/%3E%3C/path%3E%3C/g%3E%3C/svg%3E'
 const clipBoardIconUrl = shallowRef(`url("data:image/svg+xml,${clipboardIcon}")`)
+const { copy } = useClipboard()
+const { start: startShareAnimationTimeout } = useTimeoutFn(
+  () => playingShareAnimation.value = false,
+  2000,
+  { immediate: false },
+)
 
 function saveToUrl() {
   const savedCode = compressToEncodedURIComponent(code.value)
   const url = new URL(window.location.href)
   url.searchParams.set('code', savedCode)
   window.history.replaceState(null, '', url)
-  navigator.clipboard.writeText(window.location.href)
+  copy(window.location.href)
   playingShareAnimation.value = true
   clipBoardIconUrl.value = `url("data:image/svg+xml,%3C!-- ${Date.now()} --%3E${clipboardIcon}")`
-  setTimeout(() => playingShareAnimation.value = false, 2000)
+  startShareAnimationTimeout()
 }
 
 // ---- Actions ----
+
+function clearSelection() {
+  selectedAddress.value = null
+  selectedByteAddress.value = null
+}
+
+/** Handle a click on an allocation cell in AllocationMap (toggle selection). */
+function onMemoryMapSelectCell(addr: number) {
+  const alloc = context.memory.findAllocation(addr)
+  if (!alloc || alloc.dead) {
+    clearSelection()
+    return
+  }
+  selectedByteAddress.value = null
+  selectedAddress.value = selectedAddress.value === addr ? null : addr
+}
+
+/** Handle a click on a raw byte cell in ByteMap. */
+function onMemoryMapSelectByteCell(addr: number) {
+  const alloc = context.memory.findAllocation(addr)
+  if (!alloc || alloc.dead) {
+    clearSelection()
+    return
+  }
+  selectedByteAddress.value = addr
+  selectedAddress.value = alloc.base
+}
 
 function handleReset() {
   clearHighlight()
   pause()
   reset()
   resetTracking()
-  selectedAddress.value = null
+  clearSelection()
   executionError.value = null
+  previousSnapshot.value = null
 }
 
 function handleRun() {
@@ -176,7 +259,7 @@ function handleRun() {
     init()
   }
   executionError.value = null
-  selectedAddress.value = null
+  clearSelection()
   resume()
 }
 
@@ -186,9 +269,8 @@ function handlePause() {
 
 function runStep() {
   try {
-    snapshot()
+    previousSnapshot.value = snapshotSpace(context.memory.space)
     const { done, breakpoint } = step()
-    diff()
     if (done || breakpoint)
       pause()
   }
@@ -207,7 +289,7 @@ function runStep() {
 
 function handleStep() {
   executionError.value = null
-  selectedAddress.value = null
+  clearSelection()
   if (!isActive.value || editedWhileActive.value) {
     editedWhileActive.value = false
     init()
@@ -217,13 +299,15 @@ function handleStep() {
 
 const speedLabel = computed(() => {
   const ms = speedMs.value
-  if (ms <= 150)
-    return 'fast'
+  if (ms <= 100)
+    return 'fastest'
   if (ms <= 300)
+    return 'fast'
+  if (ms <= 600)
     return 'med'
-  if (ms <= 500)
+  if (ms <= 1000)
     return 'slow'
-  return 'slower'
+  return 'slowest'
 })
 
 // ---- Mobile layout ----
@@ -265,7 +349,7 @@ onMounted(() => nextTick(reparentMonaco))
       <!-- Left: template picker + info -->
       <div class="flex items-center gap-2">
         <!-- Template dropdown -->
-        <div data-testid="template-picker" class="relative">
+        <div ref="template-picker" data-testid="template-picker" class="relative">
           <button
             class="flex items-center gap-1.5 rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium transition-all dark:bg-white/5"
             :class="templatePickerOpen ? 'text-vitesse' : 'text-gray-600 dark:text-gray-400'"
@@ -319,14 +403,14 @@ onMounted(() => nextTick(reparentMonaco))
         <div class="hidden items-center gap-1.5 sm:flex">
           <span class="text-[10px] text-gray-500 font-mono uppercase">{{ speedLabel }}</span>
           <input
-            :value="520 - speedMs"
+            :value="1550 - speedMs"
             type="range"
-            min="20"
-            max="500"
-            step="10"
+            min="50"
+            max="1500"
+            step="50"
             class="w-16"
             title="Simulation speed"
-            @input="speedMs = 520 - Number(($event.target as HTMLInputElement).value)"
+            @input="speedMs = 1550 - Number(($event.target as HTMLInputElement).value)"
           >
         </div>
 
@@ -341,7 +425,7 @@ onMounted(() => nextTick(reparentMonaco))
           <button v-else data-testid="btn-run" class="icon-btn" title="Run" @click="handleRun()">
             <div class="i-carbon-play-filled" />
           </button>
-          <button data-testid="btn-step" :data-step="context.memory.version" class="icon-btn" title="Step" @click="handleStep()">
+          <button data-testid="btn-step" :data-step="context.memoryVersion" :data-ready="!!tree" class="icon-btn" title="Step" @click="handleStep()">
             <div class="i-carbon-skip-forward-filled" />
           </button>
         </div>
@@ -423,14 +507,14 @@ onMounted(() => nextTick(reparentMonaco))
           <Pane :size="50" :min-size="15">
             <div class="h-full overflow-hidden panel-border">
               <MemoryMap
+                :mem="context.memory"
                 :changed-addresses="changedAddresses"
-                :highlighted-address="hoveredNodeAddress"
-                :highlighted-field-address="hoveredFieldAddress"
+                :selected-address="selectedAddress"
+                :selected-byte-address="selectedByteAddress"
                 :statement-lhs-addresses="lhsAddresses"
                 :statement-rhs-addresses="rhsAddresses"
-                :selected-address="selectedAddress"
-                @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
-                @hover-pointer="hoveredNodeAddress = $event"
+                @select-cell="onMemoryMapSelectCell($event)"
+                @select-byte-cell="onMemoryMapSelectByteCell($event)"
                 @hover-variable="highlightVariable($event, context.currentNode)"
               />
             </div>
@@ -441,34 +525,30 @@ onMounted(() => nextTick(reparentMonaco))
               <Pane :min-size="30">
                 <div class="h-full overflow-hidden panel-border">
                   <DataStructureView
-                    :highlighted-address="hoveredNodeAddress"
-                    :highlighted-field-address="hoveredFieldAddress"
                     :selected-address="selectedAddress"
                     :statement-lhs-addresses="lhsAddresses"
                     :statement-rhs-addresses="rhsAddresses"
                     @select-node="selectedAddress = $event"
-                    @hover-node="hoveredNodeAddress = $event"
-                    @hover-field="hoveredFieldAddress = $event"
                     @hover-variable="highlightVariable($event, context.currentNode)"
                   />
                 </div>
               </Pane>
-              <Pane v-if="selectedCell && !running" :size="35" :min-size="15" class="overflow-auto p-2">
+              <Pane v-if="selectedAlloc && selectedType && !running" :size="35" :min-size="15" class="overflow-auto p-2">
                 <div class="mb-1.5 flex items-center justify-between">
                   <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
                   <button
                     data-testid="detail-close"
                     class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                     title="Close"
-                    @click="selectedAddress = null"
+                    @click="clearSelection()"
                   />
                 </div>
                 <FieldTable
-                  :cell="selectedCell"
+                  :address="selectedAddress!"
+                  :type="selectedType!"
                   :changed-addresses="changedAddresses"
+                  :byte-detail="selectedByteDetail"
                   @navigate="selectedAddress = $event"
-                  @hover-field="hoveredFieldAddress = $event"
-                  @hover-pointer="hoveredNodeAddress = $event"
                 />
               </Pane>
             </Splitpanes>
@@ -516,28 +596,23 @@ onMounted(() => nextTick(reparentMonaco))
         <!-- Memory map -->
         <div class="h-1/2 overflow-hidden panel-border">
           <MemoryMap
+            :mem="context.memory"
             :changed-addresses="changedAddresses"
-            :highlighted-address="hoveredNodeAddress"
-            :highlighted-field-address="hoveredFieldAddress"
+            :selected-address="selectedAddress"
             :statement-lhs-addresses="lhsAddresses"
             :statement-rhs-addresses="rhsAddresses"
-            :selected-address="selectedAddress"
-            @select-cell="selectedAddress = selectedAddress === $event ? null : $event"
-            @hover-pointer="hoveredNodeAddress = $event"
+            @select-cell="onMemoryMapSelectCell($event)"
+            @select-byte-cell="onMemoryMapSelectByteCell($event)"
             @hover-variable="highlightVariable($event, context.currentNode)"
           />
         </div>
         <!-- Data structure view -->
         <div class="min-h-0 flex-1 overflow-hidden panel-border">
           <DataStructureView
-            :highlighted-address="hoveredNodeAddress"
-            :highlighted-field-address="hoveredFieldAddress"
             :selected-address="selectedAddress"
             :statement-lhs-addresses="lhsAddresses"
             :statement-rhs-addresses="rhsAddresses"
             @select-node="selectedAddress = $event"
-            @hover-node="hoveredNodeAddress = $event"
-            @hover-field="hoveredFieldAddress = $event"
             @hover-variable="highlightVariable($event, context.currentNode)"
           />
         </div>
@@ -548,22 +623,22 @@ onMounted(() => nextTick(reparentMonaco))
           leave-active-class="transition-all duration-150 ease-in"
           leave-to-class="translate-y-full"
         >
-          <div v-if="selectedCell && !running" class="max-h-1/3 overflow-auto border-t border-gray-200 bg-white p-2 dark:border-gray-800 dark:bg-gray-900">
+          <div v-if="selectedAlloc && selectedType && !running" class="max-h-1/3 overflow-auto border-t border-gray-200 bg-white p-2 dark:border-gray-800 dark:bg-gray-900">
             <div class="mb-1.5 flex items-center justify-between">
               <span class="text-[10px] text-gray-500 tracking-wide uppercase">Detail</span>
               <button
                 data-testid="detail-close"
                 class="i-mdi-close h-4 w-4 cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                 title="Close"
-                @click="selectedAddress = null"
+                @click="clearSelection()"
               />
             </div>
             <FieldTable
-              :cell="selectedCell"
+              :address="selectedAddress!"
+              :type="selectedType!"
               :changed-addresses="changedAddresses"
+              :byte-detail="selectedByteDetail"
               @navigate="selectedAddress = $event"
-              @hover-field="hoveredFieldAddress = $event"
-              @hover-pointer="hoveredNodeAddress = $event"
             />
           </div>
         </Transition>

@@ -1,18 +1,16 @@
 <script setup lang="ts">
-import type { ArrowAnchor, ArrowStyle, FieldDirection, MemoryCell } from '~/composables/interpreter/types'
+import type { ArrowAnchor, ArrowStyle, CppType, FieldDirection } from '~/composables/interpreter/types'
 import { computed, nextTick, onUpdated, shallowRef, watch } from 'vue'
 import CanvasArrow from '~/components/CanvasArrow.vue'
 import DSValue from '~/components/DSValue.vue'
-import { formatAddr, formatType, formatValue } from '~/composables/interpreter/helpers'
-import { structTotalSize } from '~/composables/interpreter/memory'
+import { formatAddr, formatType } from '~/composables/interpreter/helpers'
+import { useHoverHighlight } from '~/composables/useHoverHighlight'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
 import { usePannableCanvas } from '~/composables/usePannableCanvas'
 import { usePlacementEngine } from '~/composables/usePlacementEngine'
 import { usePointerGraph } from '~/composables/usePointerGraph'
 
 const props = defineProps<{
-  highlightedAddress?: number | null
-  highlightedFieldAddress?: number | null
   selectedAddress?: number | null
   statementLhsAddresses?: ReadonlySet<number>
   statementRhsAddresses?: ReadonlySet<number>
@@ -20,64 +18,74 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   selectNode: [address: number]
-  hoverNode: [address: number | null]
-  hoverField: [address: number | null]
   hoverVariable: [name: string | null]
 }>()
 
 const context = useInterpreterContext()
+const hover = useHoverHighlight()
 const pointerGraph = usePointerGraph(context)
 
 // ---- Standalone data items (in-scope stack + live heap) ----
 
 interface DataItem {
   address: number
-  cell: MemoryCell
+  type: CppType
   label: string
   kind: 'int' | 'float' | 'char' | 'bool' | 'pointer' | 'struct' | 'array'
-  display: string
   dimmed: boolean
   /** Variable name for editor highlighting (only for stack variables) */
   varName: string | null
 }
 
-/** Addresses that are struct fields or array elements (sub-cells) */
+/** Addresses that are sub-allocations (struct fields or array elements within a larger allocation).
+ *  Sub-allocations don't get their own top-level cards. */
 const subCellAddresses = computed(() => {
   const sub = new Set<number>()
-  for (const cell of context.memory.cells.values()) {
-    if (cell.dead)
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memoryVersion // reactive dependency
+  for (const alloc of context.memory.space.allocations.values()) {
+    if (alloc.dead)
       continue
-    const v = cell.value
-    if (typeof v === 'object' && v.type === 'struct') {
-      const structDef = context.structs[v.name]
-      if (structDef) {
-        const total = structTotalSize(structDef)
-        for (let i = 1; i < total; i++)
-          sub.add(v.base + i)
-      }
-    }
-    else if (typeof v === 'object' && v.type === 'array') {
-      for (let i = 0; i < v.length; i++)
-        sub.add(v.base + 1 + i)
+    // Mark all byte addresses within a struct or array allocation (except the base) as sub-addresses.
+    // Only top-level allocations are shown as cards.
+    if (alloc.layout.kind === 'struct' || alloc.layout.kind === 'array') {
+      for (let i = 1; i < alloc.size; i++)
+        sub.add(alloc.base + i)
     }
   }
   return sub
 })
 
-function getKind(cell: MemoryCell): DataItem['kind'] {
-  const t = cell.type
-  if (typeof t === 'string') {
-    if (t === 'float' || t === 'double')
+function layoutToType(alloc: import('~/composables/interpreter/types').Allocation): CppType {
+  const l = alloc.layout
+  if (l.kind === 'scalar')
+    return l.type
+  if (l.kind === 'array')
+    return { type: 'array', of: fieldNodeToType(l.element), size: l.length }
+  return { type: 'struct', name: l.structName }
+}
+
+function fieldNodeToType(node: import('~/composables/interpreter/layout').LayoutNode): CppType {
+  if (node.kind === 'scalar')
+    return node.type
+  if (node.kind === 'array')
+    return { type: 'array', of: fieldNodeToType(node.element), size: node.length }
+  return { type: 'struct', name: node.structName }
+}
+
+function getKind(type: CppType): DataItem['kind'] {
+  if (typeof type === 'string') {
+    if (type === 'float' || type === 'double')
       return 'float'
-    if (t === 'char')
+    if (type === 'char')
       return 'char'
-    if (t === 'bool')
+    if (type === 'bool')
       return 'bool'
     return 'int'
   }
-  if (t.type === 'pointer')
+  if (type.type === 'pointer')
     return 'pointer'
-  if (t.type === 'array')
+  if (type.type === 'array')
     return 'array'
   return 'struct'
 }
@@ -87,18 +95,18 @@ const standaloneItems = computed((): DataItem[] => {
   const subCells = subCellAddresses.value
   const seen = new Set<number>()
 
-  function addItem(name: string, cell: MemoryCell, dimmed: boolean, varName: string | null = null) {
-    if (cell.dead || seen.has(cell.address))
+  function addItem(name: string, address: number, type: CppType, dimmed: boolean, varName: string | null = null) {
+    const alloc = context.memory.findAllocation(address)
+    if (!alloc || alloc.dead || seen.has(address))
       return
-    if (subCells.has(cell.address))
+    if (subCells.has(address))
       return
-    seen.add(cell.address)
+    seen.add(address)
     items.push({
-      address: cell.address,
-      cell,
+      address,
+      type,
       label: name,
-      kind: getKind(cell),
-      display: formatValue(cell.value),
+      kind: getKind(type),
       dimmed,
       varName,
     })
@@ -108,9 +116,7 @@ const standaloneItems = computed((): DataItem[] => {
   for (let i = context.envStack.length - 1; i >= 0; i--) {
     const env = context.envStack[i]
     for (const [name, entry] of Object.entries(env)) {
-      const cell = context.memory.cells.get(entry.address)
-      if (cell)
-        addItem(name, cell, false, name)
+      addItem(name, entry.address, entry.type, false, name)
     }
   }
 
@@ -120,18 +126,19 @@ const standaloneItems = computed((): DataItem[] => {
     for (let i = savedEnvs.length - 1; i >= 0; i--) {
       const env = savedEnvs[i]
       for (const [name, entry] of Object.entries(env)) {
-        const cell = context.memory.cells.get(entry.address)
-        if (cell)
-          addItem(name, cell, true, name)
+        addItem(name, entry.address, entry.type, true, name)
       }
     }
   }
 
-  // Live heap data
-  for (const cell of context.memory.cells.values()) {
-    if (cell.dead || cell.region !== 'heap')
+  // Live heap data (allocations not owned by any in-scope variable)
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memoryVersion // reactive dependency
+  for (const alloc of context.memory.space.allocations.values()) {
+    if (alloc.dead || alloc.region !== 'heap')
       continue
-    addItem(formatType(cell.type), cell, false)
+    const type = layoutToType(alloc)
+    addItem(formatType(type), alloc.base, type, false)
   }
 
   return items
@@ -142,7 +149,7 @@ const standaloneItems = computed((): DataItem[] => {
 const hasContent = computed(() => standaloneItems.value.length > 0)
 
 function isNodeHighlighted(address: number): boolean {
-  return props.highlightedAddress === address
+  return hover.address.value === address
 }
 
 function isNodeSelected(address: number): boolean {
@@ -545,23 +552,6 @@ function animateEnterLeave(els: NodeListOf<HTMLElement>) {
     }
   }
 
-  // Removed items: clone at last position and fade out
-  for (const key of prevActiveKeys) {
-    if (currentKeys.has(key))
-      continue
-    const pos = placement.getPosition(key)
-    const size = placement.getSize(key)
-    if (!pos || !size || !contentRef.value)
-      continue
-    const ghost = document.createElement('div')
-    // Find the last rendered element to clone its innerHTML
-    // Use a minimal placeholder since the original DOM is gone
-    ghost.style.cssText = `position:absolute;transform:translate(${pos.x}px,${pos.y}px);width:${size.w}px;height:${size.h}px;pointer-events:none;`
-    contentRef.value.appendChild(ghost)
-    const anim = ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: 'ease-out', fill: 'forwards' })
-    anim.finished.then(() => ghost.remove())
-  }
-
   prevActiveKeys = currentKeys
 }
 
@@ -831,11 +821,12 @@ const kindBg: Record<DataItem['kind'], string> = {
       <div class="i-carbon-flow h-3.5 w-3.5" />
     </button>
 
-    <div ref="contentRef" :style="{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }" class="relative">
-      <div v-if="!hasContent" class="text-sm text-gray-500 italic">
-        No data to display
-      </div>
+    <!-- Empty state (outside the pan-transformed layer so it stays centered) -->
+    <div v-if="!hasContent" class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-gray-500 italic">
+      No data to display
+    </div>
 
+    <div ref="contentRef" :style="{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }" class="relative">
       <!-- Data items -->
       <div class="contents">
         <div
@@ -857,20 +848,21 @@ const kindBg: Record<DataItem['kind'], string> = {
           ]"
           :style="getItemStyle(`item-${item.address}`)"
           @click="!didDrag && emit('selectNode', item.address)"
-          @pointerenter="emit('hoverNode', item.address); item.varName && emit('hoverVariable', item.varName)"
-          @pointerleave="emit('hoverNode', null); emit('hoverVariable', null)"
+          @pointerenter="hover.setHover(item.address, 'ds'); item.varName && emit('hoverVariable', item.varName)"
+          @pointerleave="hover.setHover(null, null); emit('hoverVariable', null)"
         >
           <div class="mb-0.5 flex items-baseline gap-1.5 text-[10px]">
             <span class="text-gray-600 font-semibold dark:text-gray-400">{{ item.label }}</span>
             <span class="text-gray-400">{{ formatAddr(item.address) }}</span>
           </div>
           <DSValue
-            :cell="item.cell"
-            :highlighted-field-address="highlightedFieldAddress"
+            :address="item.address"
+            :type="item.type"
+            :highlighted-field-address="hover.fieldAddress.value"
             :statement-lhs-addresses="statementLhsAddresses"
             :statement-rhs-addresses="statementRhsAddresses"
             @navigate="emit('selectNode', $event)"
-            @hover-node="emit('hoverNode', $event)"
+            @hover-node="hover.setHover($event, 'ds')"
           />
         </div>
       </div>
@@ -882,7 +874,7 @@ const kindBg: Record<DataItem['kind'], string> = {
           v-for="edge in arrowEdges"
           :key="edge.id"
           v-bind="getArrowProps(edge)"
-          @hover-field="emit('hoverField', $event)"
+          @hover-field="hover.setField($event)"
         />
       </svg>
     </div>

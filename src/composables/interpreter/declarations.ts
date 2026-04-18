@@ -2,7 +2,6 @@ import type { Node as SyntaxNode } from 'web-tree-sitter'
 import type { MemoryManager } from './memory'
 import type { CppType, CppValue, InterpreterContext } from './types'
 import { asserts, castIfNull, checksDefined, getGeneratorReturn } from './helpers'
-import { structFieldOffset } from './memory'
 import { NULL_ADDRESS } from './types'
 
 // Circular dependency resolution: evaluate.ts calls processDeclaration,
@@ -129,27 +128,16 @@ export function* initializeValue(
             return { type: 'pointer', address: NULL_ADDRESS }
           case 'array': {
             const base = mem.allocArray(type.of, type.size, 'stack')
-            // For nested arrays/structs, allocate each element properly
-            if (typeof type.of === 'object') {
-              for (let i = 0; i < type.size; i++) {
-                const elemAddr = base + 1 + i
-                const elemValue = yield* initializeValue(type.of, context, mem)
-                mem.write(elemAddr, elemValue)
-              }
-            }
-            return { type: 'array', base, length: type.size }
+            // allocArray carves out the full flat block for all elements.
+            // Scalar/pointer elements default to zero (buffer is zeroed on alloc).
+            // Nested struct/array elements are already inline — no separate allocation needed.
+            return { type: 'array', base, length: type.size, elementType: type.of }
           }
           case 'struct': {
             asserts(type.name in context.structs, `Struct ${type.name} not found`)
-            const fieldDefs = context.structs[type.name]
-            const base = mem.allocStruct(type.name, fieldDefs, 'stack')
-            // Recursively initialize nested struct/array fields
-            for (const [fieldName, fieldType] of Object.entries(fieldDefs)) {
-              if (typeof fieldType === 'object' && (fieldType.type === 'struct' || fieldType.type === 'array')) {
-                const fieldValue = yield* initializeValue(fieldType, context, mem)
-                mem.write(base + 1 + structFieldOffset(fieldName, fieldDefs), fieldValue)
-              }
-            }
+            const base = mem.allocStruct(type.name, 'stack')
+            // allocStruct carves out the full flat block for all fields (including nested
+            // struct/array fields inline). No separate per-field allocation is needed.
             return { type: 'struct', name: type.name, base }
           }
         }

@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import type { CppType, CppValue, MemoryCell } from '~/composables/interpreter/types'
+import type { CppType, CppValue } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
 import { formatAddr, formatType, formatValue, isPointerValue } from '~/composables/interpreter/helpers'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
+
+/** Temporary shim — MemoryCell was removed in the byte-addressed refactor.
+ *  MemoryCell.vue and its caller MemoryMap.vue will be replaced in Task 16. */
+interface MemoryCell {
+  address: number
+  type: CppType
+  value: CppValue
+  region: import('~/composables/interpreter/types').MemoryRegion
+  dead: boolean
+}
 
 const props = defineProps<{
   cell: MemoryCell
@@ -15,7 +25,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   clickPointer: [address: number]
-  hoverPointer: [address: number | null]
+  /** Emitted when the user hovers a pointer field/value inside this cell.
+   *  `target` is the pointed-to address (null on leave); `source` is the
+   *  byte address of the pointer itself, for arrow rendering. */
+  hoverPointer: [target: number | null, source: number]
   clickCell: [address: number]
 }>()
 
@@ -28,7 +41,7 @@ const structName = computed(() => {
 
 <template>
   <div
-    class="cursor-pointer border-l-3 border-transparent rounded bg-gray-100 p-2 text-xs transition-all dark:bg-gray-800"
+    class="cursor-pointer border border-l-3 border-gray-200 border-l-transparent rounded-md bg-white p-2 text-xs shadow-sm transition-all dark:border-gray-700 dark:bg-gray-900"
     :class="{
       'border-l-yellow-400!': changed,
     }"
@@ -56,8 +69,9 @@ const structName = computed(() => {
         <AddressLink
           v-if="isPointerValue(field.value)"
           :address="field.value.address"
+          :source-address="field.address"
           @navigate="emit('clickPointer', $event)"
-          @hover="emit('hoverPointer', $event)"
+          @hover="emit('hoverPointer', $event, field.address)"
         />
         <span v-else class="text-orange-600 font-semibold font-mono dark:text-orange-300">{{ formatValue(field.value) }}</span>
       </div>
@@ -71,8 +85,8 @@ const structName = computed(() => {
           class="cursor-pointer hover:underline"
           :class="cell.value.address === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
           @click.stop="emit('clickPointer', cell.value.address)"
-          @pointerenter="emit('hoverPointer', cell.value.address)"
-          @pointerleave="emit('hoverPointer', null)"
+          @pointerenter="emit('hoverPointer', cell.value.address, cell.address)"
+          @pointerleave="emit('hoverPointer', null, cell.address)"
         >{{ formatValue(cell.value) }}</span>
         <span v-else class="text-orange-300 font-semibold">{{ formatValue(cell.value) }}</span>
       </div>

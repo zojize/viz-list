@@ -5,6 +5,12 @@ body,
   margin: 0;
   padding: 0;
   overflow: hidden;
+  /* Suppress the browser's rubber-band bounce (macOS / touchpads) — an
+     overscroll visually offsets the scroll container, but the arrow overlay
+     computes endpoints from getBoundingClientRect without any bounce-aware
+     adjustment, so the rendered paths look off by a few pixels during the
+     rebound. No bounce, no drift. */
+  overscroll-behavior: none;
 }
 
 html {

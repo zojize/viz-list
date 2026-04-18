@@ -1,46 +1,58 @@
 import type { Ref } from 'vue'
 import type { Node as SyntaxNode } from 'web-tree-sitter'
+import type { LayoutNode } from './layout'
+// NOTE: import type (erased at runtime) avoids a circular value-level import;
+// MemoryManager is only referenced in the InterpreterContext type.
+import type { MemoryManager } from './memory'
 
 // eslint-disable-next-line unused-imports/no-unused-vars
 const CppPrimitiveTypes = ['int', 'float', 'double', 'char', 'bool', 'void'] as const
 export type CppPrimitiveType = (typeof CppPrimitiveTypes)[number]
 
+export interface PointerType { type: 'pointer', to: CppType }
+
 export type CppType
   = | CppPrimitiveType
-    | { type: 'pointer', to: CppType }
+    | PointerType
     | { type: 'array', of: CppType, size: number }
     | { type: 'struct', name: string }
 
 export const NULL_ADDRESS = 0
 
+/**
+ * Transient carry type for expression evaluation.
+ *  Storage representation is always bytes in AddressSpace.buffer.
+ */
 export type CppValue
   = | number
     | boolean
     | { type: 'pointer', address: number }
-    | { type: 'array', base: number, length: number }
+    | { type: 'array', base: number, length: number, elementType: CppType }
     | { type: 'struct', name: string, base: number }
 
 export type MemoryRegion = 'global' | 'stack' | 'heap'
 
-export interface MemoryCell {
-  address: number
-  type: CppType
-  value: CppValue
+export interface Allocation {
+  base: number
+  size: number
   region: MemoryRegion
   dead: boolean
+  layout: LayoutNode
 }
 
-/** Stack grows up from 1, heap grows down from MEMORY_SIZE-1. */
-export const MEMORY_SIZE = 4096
+/** Stack grows up from 1, heap grows down from MEMORY_SIZE. */
+export const MEMORY_SIZE = 16384
 
 export interface AddressSpace {
-  cells: Map<number, MemoryCell>
+  buffer: Uint8Array
+  view: DataView
+  allocations: Map<number, Allocation>
   /** Next stack/global address (grows upward from 1) */
   stackTop: number
-  /** Bumped after each step to invalidate reactive cell reads */
-  version: number
-  /** Next heap address (grows downward from MEMORY_SIZE-1) */
+  /** Next heap address (grows downward from MEMORY_SIZE) */
   heapBottom: number
+  /** Bumped after each write to invalidate reactive reads */
+  version: number
 }
 
 export interface EnvEntry {
@@ -72,18 +84,28 @@ export interface StructMeta {
 
 export interface InterpreterContext {
   structs: Record<string, Record<string, CppType>>
-  /** Per-field metadata parsed from JSDoc annotations (e.g. `@arrow-position right`) */
+  /** Per-struct cached layout (added in this refactor) */
+  structLayouts: Record<string, LayoutNode>
+  /** Per-field metadata parsed from JSDoc annotations */
   structFieldMeta: Record<string, Record<string, FieldMeta>>
-  /** Per-struct metadata parsed from JSDoc annotations (e.g. `@arrow-anchor closest`) */
+  /** Per-struct metadata parsed from JSDoc annotations */
   structMeta: Record<string, StructMeta>
   functions: Record<string, FunctionDef>
   globalEnv: Record<string, EnvEntry>
   envStack: Record<string, EnvEntry>[]
   callStack: { env: Record<string, EnvEntry>[] }[]
-  memory: AddressSpace
+  /** The full MemoryManager — call .findAllocation(), .readScalar(), .space.version etc. */
+  memory: MemoryManager
   currentNode?: SyntaxNode
   /** Set by breakpoint() builtin — signals play mode to pause */
   hitBreakpoint?: boolean
+  /** Monotonically-increasing counter bumped by step() / init() — drives Vue reactivity in views that consume memory. */
+  memoryVersion: number
+  /**
+   * Byte order used by subsequent scalar reads/writes. Toggling this at
+   * runtime triggers a byte-swap of every existing scalar in the arena.
+   */
+  endianness: 'le' | 'be'
 }
 
 export interface UseCppInterpreterReturn {

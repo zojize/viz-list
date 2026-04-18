@@ -4,6 +4,7 @@ import { Language, Parser } from 'web-tree-sitter'
 import { processDeclaration } from '../../src/composables/interpreter/declarations'
 import { evaluate } from '../../src/composables/interpreter/evaluate'
 import { asserts, getGeneratorReturn } from '../../src/composables/interpreter/helpers'
+import { computeStructLayout } from '../../src/composables/interpreter/layout'
 import { createAddressSpace } from '../../src/composables/interpreter/memory'
 import { NULL_ADDRESS } from '../../src/composables/interpreter/types'
 
@@ -22,14 +23,17 @@ function runProgram(code: string) {
 
   const context: InterpreterContext = {
     structs: {},
+    structLayouts: {},
     structFieldMeta: {},
     structMeta: {},
     functions: {},
     globalEnv: {},
     envStack: [],
     callStack: [],
-    memory: mem.space,
+    memory: mem,
     currentNode: undefined,
+    memoryVersion: 0,
+    endianness: 'le',
   }
 
   const { rootNode } = tree
@@ -50,6 +54,9 @@ function runProgram(code: string) {
           fields[name] = type
         }
         context.structs[name] = fields
+        const layout = computeStructLayout(name, fields, depName => context.structLayouts[depName]!)
+        context.structLayouts[name] = layout
+        mem.registerStructLayout(name, layout)
         break
       }
       case 'function_definition': {
@@ -82,7 +89,7 @@ function runProgram(code: string) {
             address = value.base
           }
           else {
-            address = mem.alloc(type, value!, 'global')
+            address = mem.alloc(type, 'global', value!)
           }
           context.globalEnv[name] = { type, address }
         }
@@ -123,21 +130,20 @@ describe('interpreter integration tests', () => {
       }
     `)
 
-    // Count heap Node struct cells (header cells with region 'heap' and type struct Node)
-    const heapNodeHeaders = [...mem.space.cells.values()].filter(
-      cell =>
-        cell.region === 'heap'
-        && typeof cell.type === 'object'
-        && cell.type.type === 'struct'
-        && cell.type.name === 'Node'
-        && !cell.dead,
+    // Count live heap allocations that are Node structs
+    const heapNodeAllocs = [...mem.space.allocations.values()].filter(
+      a =>
+        a.region === 'heap'
+        && !a.dead
+        && a.layout.kind === 'struct'
+        && a.layout.structName === 'Node',
     )
 
-    expect(heapNodeHeaders).toHaveLength(3)
+    expect(heapNodeAllocs).toHaveLength(3)
   })
 
   it('null pointer has address 0', () => {
-    const { mem, context } = runProgram(`
+    const { mem } = runProgram(`
       struct Node { int data; Node *next; };
       void main() {
         Node *p = new Node();
@@ -146,23 +152,21 @@ describe('interpreter integration tests', () => {
       }
     `)
 
-    // Find the heap Node struct header
-    const nodeHeader = [...mem.space.cells.values()].find(
-      cell =>
-        cell.region === 'heap'
-        && typeof cell.type === 'object'
-        && cell.type.type === 'struct'
-        && cell.type.name === 'Node',
+    // Find the heap Node struct allocation
+    const nodeAlloc = [...mem.space.allocations.values()].find(
+      a =>
+        a.region === 'heap'
+        && a.layout.kind === 'struct'
+        && a.layout.structName === 'Node',
     )
-    expect(nodeHeader).toBeDefined()
+    expect(nodeAlloc).toBeDefined()
 
-    const nodeBase = nodeHeader!.address
-    const fieldDefs = context.structs.Node
-    const [, dataAddr] = mem.readField(nodeBase, 'data', fieldDefs)
-    const [, nextAddr] = mem.readField(nodeBase, 'next', fieldDefs)
+    const nodeBase = nodeAlloc!.base
+    const { address: dataAddr } = mem.fieldAddress(nodeBase, 'data')
+    const { address: nextAddr } = mem.fieldAddress(nodeBase, 'next')
 
-    expect(mem.read(dataAddr).value).toBe(42)
-    expect(mem.read(nextAddr).value).toEqual({ type: 'pointer', address: NULL_ADDRESS })
+    expect(mem.readScalar(dataAddr, 'int')).toBe(42)
+    expect(mem.readScalar(nextAddr, { type: 'pointer', to: { type: 'struct', name: 'Node' } })).toBe(NULL_ADDRESS)
   })
 
   it('short-circuits && correctly', () => {
@@ -178,35 +182,33 @@ describe('interpreter integration tests', () => {
     const yAddr = context.globalEnv.y.address
 
     // x should be 0 (false) because RHS of && was short-circuited
-    const xVal = mem.read(xAddr).value
+    const xVal = mem.readScalar(xAddr, 'int')
     expect(xVal === 0 || xVal === false).toBe(true)
 
     // y should remain 0 because the RHS was never evaluated
-    expect(mem.read(yAddr).value).toBe(0)
+    expect(mem.readScalar(yAddr, 'int')).toBe(0)
   })
 
   it('new Node(val) initializes fields', () => {
-    const { mem, context } = runProgram(`
+    const { mem } = runProgram(`
       struct Node { int data; Node *next; };
       void main() {
         Node *p = new Node(99);
       }
     `)
 
-    const nodeHeader = [...mem.space.cells.values()].find(
-      cell =>
-        cell.region === 'heap'
-        && typeof cell.type === 'object'
-        && cell.type.type === 'struct'
-        && cell.type.name === 'Node',
+    const nodeAlloc = [...mem.space.allocations.values()].find(
+      a =>
+        a.region === 'heap'
+        && a.layout.kind === 'struct'
+        && a.layout.structName === 'Node',
     )
-    expect(nodeHeader).toBeDefined()
+    expect(nodeAlloc).toBeDefined()
 
-    const nodeBase = nodeHeader!.address
-    const fieldDefs = context.structs.Node
-    const [, dataAddr] = mem.readField(nodeBase, 'data', fieldDefs)
+    const nodeBase = nodeAlloc!.base
+    const { address: dataAddr } = mem.fieldAddress(nodeBase, 'data')
 
-    expect(mem.read(dataAddr).value).toBe(99)
+    expect(mem.readScalar(dataAddr, 'int')).toBe(99)
   })
 
   it('delete marks cell as dead', () => {
@@ -219,16 +221,15 @@ describe('interpreter integration tests', () => {
       }
     `)
 
-    // The heap Node header cell should be marked dead
-    const nodeHeader = [...mem.space.cells.values()].find(
-      cell =>
-        cell.region === 'heap'
-        && typeof cell.type === 'object'
-        && cell.type.type === 'struct'
-        && cell.type.name === 'Node',
+    // The heap Node allocation should be marked dead
+    const nodeAlloc = [...mem.space.allocations.values()].find(
+      a =>
+        a.region === 'heap'
+        && a.layout.kind === 'struct'
+        && a.layout.structName === 'Node',
     )
-    expect(nodeHeader).toBeDefined()
-    expect(nodeHeader!.dead).toBe(true)
+    expect(nodeAlloc).toBeDefined()
+    expect(nodeAlloc!.dead).toBe(true)
   })
 
   it('while loop iterates correctly', () => {
@@ -250,7 +251,7 @@ describe('interpreter integration tests', () => {
     `)
 
     const sumAddr = context.globalEnv.sum.address
-    expect(mem.read(sumAddr).value).toBe(6)
+    expect(mem.readScalar(sumAddr, 'int')).toBe(6)
   })
 
   it('constructs a B-tree with array fields', () => {
@@ -273,51 +274,36 @@ describe('interpreter integration tests', () => {
       }
     `)
 
-    // Find the BTreeNode struct on the heap
-    const heapCells = [...mem.space.cells.values()].filter(c =>
-      !c.dead && c.region === 'heap' && typeof c.value === 'object' && c.value.type === 'struct',
+    // Find the BTreeNode struct allocation on the heap
+    const rootAlloc = [...mem.space.allocations.values()].find(
+      a => !a.dead && a.region === 'heap' && a.layout.kind === 'struct' && a.layout.structName === 'BTreeNode',
     )
-    expect(heapCells.length).toBeGreaterThanOrEqual(1)
-    const rootCell = heapCells[0]
-    const rootBase = (rootCell.value as any).base
+    expect(rootAlloc).toBeDefined()
+    const rootBase = rootAlloc!.base
 
-    // Verify inline memory layout:
-    // BTreeNode { int numKeys; int keys[3]; BTreeNode *children[4]; }
-    // Layout: [header] [numKeys] [keys_hdr] [k0] [k1] [k2] [children_hdr] [c0] [c1] [c2] [c3]
-    // Offsets:  +0       +1       +2         +3   +4   +5   +6              +7   +8   +9   +10
+    // BTreeNode byte layout (no header, all inline):
+    //   int numKeys   — offset 0,  size 4
+    //   int keys[3]   — offset 4,  size 12 (3 × 4)
+    //   BTreeNode *children[4] — offset 16, size 16 (4 × 4)
+    //   Total: 32 bytes
 
-    // numKeys at offset 1
-    expect(mem.read(rootBase + 1).value).toBe(2)
+    // numKeys via fieldAddress
+    const { address: numKeysAddr } = mem.fieldAddress(rootBase, 'numKeys')
+    expect(mem.readScalar(numKeysAddr, 'int')).toBe(2)
 
-    // keys array header at offset 2 (inline, base === rootBase + 2)
-    const keysValue = mem.read(rootBase + 2).value
-    expect(typeof keysValue).toBe('object')
-    expect((keysValue as any).type).toBe('array')
-    expect((keysValue as any).base).toBe(rootBase + 2) // inline: array base IS the field address
+    // keys[0..2] via fieldAddress for the array, then elementAddress
+    const { address: keysBase } = mem.fieldAddress(rootBase, 'keys')
+    expect(mem.readScalar(mem.elementAddress(keysBase, 0).address, 'int')).toBe(10)
+    expect(mem.readScalar(mem.elementAddress(keysBase, 1).address, 'int')).toBe(20)
+    expect(mem.readScalar(mem.elementAddress(keysBase, 2).address, 'int')).toBe(0)
 
-    // keys elements are contiguous after the header
-    expect(mem.read(rootBase + 3).value).toBe(10) // keys[0]
-    expect(mem.read(rootBase + 4).value).toBe(20) // keys[1]
-    expect(mem.read(rootBase + 5).value).toBe(0) // keys[2]
+    // children[0] is a null pointer
+    const { address: childrenBase } = mem.fieldAddress(rootBase, 'children')
+    const ptrType = { type: 'pointer' as const, to: { type: 'struct' as const, name: 'BTreeNode' } }
+    expect(mem.readScalar(mem.elementAddress(childrenBase, 0).address, ptrType)).toBe(NULL_ADDRESS)
 
-    // children array header at offset 6
-    const childrenValue = mem.read(rootBase + 6).value
-    expect(typeof childrenValue).toBe('object')
-    expect((childrenValue as any).type).toBe('array')
-    expect((childrenValue as any).base).toBe(rootBase + 6)
-
-    // children[0..3] are pointers at offsets 7..10
-    const c0 = mem.read(rootBase + 7).value
-    expect(typeof c0).toBe('object')
-    expect((c0 as any).type).toBe('pointer')
-
-    // Total struct size: 1 (header) + 1 (numKeys) + 4 (keys) + 5 (children) = 11 cells
-    // All 11 cells should be in the same contiguous block
-    for (let i = 0; i < 11; i++) {
-      const cell = mem.space.cells.get(rootBase + i)
-      expect(cell).toBeDefined()
-      expect(cell!.region).toBe('heap')
-    }
+    // The whole allocation covers all 32 bytes in a single heap block
+    expect(rootAlloc!.size).toBe(32)
   })
 })
 
@@ -329,8 +315,8 @@ describe('scope cleanup', () => {
         foo(10, 20);
       }
     `)
-    const liveCells = [...context.memory.cells.values()].filter(c => !c.dead && c.region === 'stack')
-    expect(liveCells).toHaveLength(0)
+    const liveStackAllocs = [...context.memory.space.allocations.values()].filter(a => !a.dead && a.region === 'stack')
+    expect(liveStackAllocs).toHaveLength(0)
   })
 
   it('marks struct field cells dead on delete', () => {
@@ -343,8 +329,8 @@ describe('scope cleanup', () => {
         delete n;
       }
     `)
-    const liveHeap = [...context.memory.cells.values()].filter(c => !c.dead && c.region === 'heap')
-    expect(liveHeap).toHaveLength(0)
+    const liveHeapAllocs = [...context.memory.space.allocations.values()].filter(a => !a.dead && a.region === 'heap')
+    expect(liveHeapAllocs).toHaveLength(0)
   })
 
   it('cleans up all locals after insertBack+freeAll', () => {
@@ -376,8 +362,8 @@ describe('scope cleanup', () => {
         freeAll(&head);
       }
     `)
-    const liveCells = [...context.memory.cells.values()].filter(c => !c.dead && c.address !== 0)
-    expect(liveCells).toHaveLength(0)
+    const liveAllocs = [...context.memory.space.allocations.values()].filter(a => !a.dead && a.base !== 0)
+    expect(liveAllocs).toHaveLength(0)
   })
 })
 
@@ -394,7 +380,7 @@ describe('pointer arithmetic', () => {
         sum = *(p + 1);
       }
     `)
-    expect(mem.read(context.globalEnv.sum.address).value).toBe(20)
+    expect(mem.readScalar(context.globalEnv.sum.address, 'int')).toBe(20)
   })
 
   it('ptr - int offsets the address backwards', () => {
@@ -409,7 +395,7 @@ describe('pointer arithmetic', () => {
         result = *(p - 2);
       }
     `)
-    expect(mem.read(context.globalEnv.result.address).value).toBe(100)
+    expect(mem.readScalar(context.globalEnv.result.address, 'int')).toBe(100)
   })
 
   it('ptr - ptr gives integer difference', () => {
@@ -427,7 +413,7 @@ describe('pointer arithmetic', () => {
         diff = p2 - p1;
       }
     `)
-    expect(mem.read(context.globalEnv.diff.address).value).toBe(3)
+    expect(mem.readScalar(context.globalEnv.diff.address, 'int')).toBe(3)
   })
 
   it('pointer comparison works', () => {
@@ -443,7 +429,7 @@ describe('pointer arithmetic', () => {
         if (a < b) { result = 1; }
       }
     `)
-    expect(mem.read(context.globalEnv.result.address).value).toBe(1)
+    expect(mem.readScalar(context.globalEnv.result.address, 'int')).toBe(1)
   })
 
   it('pointer increment and decrement work', () => {
@@ -460,7 +446,7 @@ describe('pointer arithmetic', () => {
         val = *p;
       }
     `)
-    expect(mem.read(context.globalEnv.val.address).value).toBe(30)
+    expect(mem.readScalar(context.globalEnv.val.address, 'int')).toBe(30)
   })
 
   it('iterates array with pointer loop', () => {
@@ -480,6 +466,45 @@ describe('pointer arithmetic', () => {
         }
       }
     `)
-    expect(mem.read(context.globalEnv.sum.address).value).toBe(10)
+    expect(mem.readScalar(context.globalEnv.sum.address, 'int')).toBe(10)
+  })
+})
+
+describe('multi-dim array and array-of-struct', () => {
+  it('inner row pointer indexes correct elements in 2D array (bug: readValue wrong base/length)', () => {
+    // Regression for: readValue returns outer alloc base/length for inner row
+    // int a[3][4]; int* row = a[1]; row[2] should be 12 (a[1][2]).
+    // Before fix: row aliased to a[0] so row[2] == a[0][2] == 2.
+    const { context, mem } = runProgram(`
+      int result = 0;
+      void main() {
+        int a[3][4];
+        int i;
+        int j;
+        for (i = 0; i < 3; i++)
+          for (j = 0; j < 4; j++)
+            a[i][j] = i * 10 + j;
+        int *row = a[1];
+        result = row[2];
+      }
+    `)
+    expect(mem.readScalar(context.globalEnv.result.address, 'int')).toBe(12)
+  })
+
+  it('field access on array-of-struct element (bug: findStructNodeAtOffset misses array nodes)', () => {
+    // Regression for: fieldAddress on arr[1].x throws because the allocation
+    // layout root is 'array' not 'struct', and findStructNodeAtOffset only
+    // handles 'struct' roots.
+    const { context, mem } = runProgram(`
+      struct Pt { int x; int y; };
+      int result = 0;
+      void main() {
+        Pt arr[3];
+        arr[1].x = 42;
+        arr[1].y = 7;
+        result = arr[1].x + arr[1].y;
+      }
+    `)
+    expect(mem.readScalar(context.globalEnv.result.address, 'int')).toBe(49)
   })
 })

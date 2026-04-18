@@ -17,9 +17,11 @@ async function stepN(page: import('@playwright/test').Page, n: number) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
-  // Wait for the parser to initialize (Tree-Sitter WASM load)
-  await expect(page.getByTestId('btn-step')).toBeVisible({ timeout: 15_000 })
-  await page.waitForTimeout(500)
+  // The Step button renders immediately, but tree-sitter WASM loads
+  // asynchronously and the first click is a no-op until `tree` is populated.
+  // `data-ready` flips to "true" once the parser has loaded and produced a
+  // tree — wait on it deterministically instead of a fixed timeout.
+  await expect(page.getByTestId('btn-step')).toHaveAttribute('data-ready', 'true', { timeout: 15_000 })
 })
 
 test.describe('memory map', () => {
@@ -182,6 +184,70 @@ test.describe('hover interactions', () => {
 
     const decoration = page.locator('.view-overlays .bg-cyan-500').first()
     await expect(decoration).toBeAttached()
+  })
+})
+
+test.describe('pointer arrows', () => {
+  // Skipped: kept as documentation for the "arrows stay at the previous view's
+  // coordinates after a KeepAlive toggle" regression. getBoundingClientRect
+  // isn't a Vue reactive dep, so ArrowOverlay's computed won't re-run on a
+  // plain mode swap — the fix is a MutationObserver on the host that bumps
+  // `tick` when the KeepAlive subtree changes. Re-enable if that regression
+  // resurfaces.
+  test.skip('arrows re-anchor to the active view after toggling Bytes/Allocations', async ({ page }) => {
+    await selectTemplate(page, 'doubly-insertBack')
+    await page.getByTestId('btn-run').click()
+    await page.waitForTimeout(3500)
+
+    await page.getByRole('button', { name: 'Bytes' }).click()
+    await page.waitForTimeout(300)
+    const arrowsToggle = page.getByRole('button', { name: 'arrows' })
+    await arrowsToggle.click()
+    await page.waitForTimeout(300)
+
+    for (let i = 0; i < 4; i++) {
+      await page.getByRole('button', { name: 'Allocations' }).click()
+      await page.waitForTimeout(250)
+      await page.getByRole('button', { name: 'Bytes' }).click()
+      await page.waitForTimeout(250)
+    }
+    await page.getByRole('button', { name: 'Allocations' }).click()
+    await page.waitForTimeout(400)
+
+    const check = await page.evaluate(() => {
+      const bezier = Array.from(document.querySelectorAll<SVGPathElement>('svg path'))
+        .map(el => ({ el, d: el.getAttribute('d') ?? '' }))
+        .filter(({ d }) => /^M[\d.]+\s[\d.]+\sQ/.test(d))
+      if (bezier.length === 0)
+        return { arrows: 0, bad: [] as { path: string, start: [number, number] }[] }
+
+      const links = Array.from(document.querySelectorAll<HTMLElement>('[data-pointer-source]'))
+        .filter(el => el.offsetParent !== null)
+        .map(el => el.getBoundingClientRect())
+      if (links.length === 0)
+        return { arrows: bezier.length, bad: [{ path: '(no AddressLinks visible)', start: [0, 0] as [number, number] }] }
+
+      const tol = 4
+      const bad: { path: string, start: [number, number] }[] = []
+      for (const { el, d } of bezier) {
+        const m = d.match(/^M([\d.]+)\s([\d.]+)/)
+        if (!m)
+          continue
+        const svg = el.closest('svg')!.getBoundingClientRect()
+        const cx = svg.left + Number.parseFloat(m[1])
+        const cy = svg.top + Number.parseFloat(m[2])
+        const insideLink = links.some(r =>
+          cx >= r.left - tol && cx <= r.right + tol
+          && cy >= r.top - tol && cy <= r.bottom + tol,
+        )
+        if (!insideLink)
+          bad.push({ path: d, start: [Math.round(cx), Math.round(cy)] })
+      }
+      return { arrows: bezier.length, bad }
+    })
+
+    expect(check.arrows).toBeGreaterThan(0)
+    expect(check.bad, `${check.bad.length} arrow(s) do not start at any AddressLink: ${JSON.stringify(check.bad, null, 2)}`).toEqual([])
   })
 })
 

@@ -4,11 +4,12 @@ import { markRaw, reactive, readonly, ref, toValue } from 'vue'
 import { processDeclaration } from './declarations'
 import { evaluate } from './evaluate'
 import { asserts, getGeneratorReturn } from './helpers'
+import { computeStructLayout } from './layout'
 import { createAddressSpace } from './memory'
 
 export type { MemoryManager } from './memory'
 export { NULL_ADDRESS } from './types'
-export type { AddressSpace, CppType, CppValue, InterpreterContext, MemoryCell, MemoryRegion } from './types'
+export type { AddressSpace, CppType, CppValue, InterpreterContext, MemoryRegion } from './types'
 export { InterpreterError, NullPointerError, UnsupportedError, UseAfterFreeError } from './types'
 
 const positionRe = /@arrow-position\s+(right|left|dynamic)/
@@ -82,31 +83,48 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
 
   const context = reactive({
     structs: {} as Record<string, Record<string, import('./types').CppType>>,
+    structLayouts: {} as Record<string, import('./layout').LayoutNode>,
     structFieldMeta: {} as Record<string, Record<string, import('./types').FieldMeta>>,
     structMeta: {} as Record<string, import('./types').StructMeta>,
     functions: {} as Record<string, import('./types').FunctionDef>,
     globalEnv: {} as Record<string, import('./types').EnvEntry>,
     envStack: [] as Record<string, import('./types').EnvEntry>[],
     callStack: [] as { env: Record<string, import('./types').EnvEntry>[] }[],
-    memory: mem.space,
+    memory: markRaw(mem),
     currentNode: undefined as import('web-tree-sitter').Node | undefined,
     hitBreakpoint: false,
+    memoryVersion: 0,
+    endianness: 'le' as 'le' | 'be',
   })
 
   let gen: Generator | undefined
 
   const isActive = ref(false)
 
+  /**
+   * Toggle endianness live. Byte-swaps every existing scalar so stored values
+   *  remain semantically consistent; subsequent reads/writes use the new order.
+   */
+  function setEndianness(e: 'le' | 'be') {
+    if (context.endianness === e)
+      return
+    mem.setEndianness(e)
+    context.endianness = e
+    context.memoryVersion++
+  }
+
   return {
     context: readonly(context) as Readonly<typeof context>,
     init,
     step,
     reset,
+    setEndianness,
     isActive: readonly(isActive),
   }
 
   function reset() {
     context.structs = {}
+    context.structLayouts = {}
     context.structFieldMeta = {}
     context.structMeta = {}
     context.functions = {}
@@ -114,8 +132,9 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     context.envStack = []
     context.callStack = []
     context.currentNode = undefined
+    context.memoryVersion = 0
+    context.endianness = 'le'
     mem.reset()
-    context.memory = { ...mem.space }
     gen = undefined
     isActive.value = false
   }
@@ -163,6 +182,14 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
             }
           }
           context.structs[name] = fields
+          const layout = computeStructLayout(name, fields, (depName) => {
+            const cached = context.structLayouts[depName]
+            if (!cached)
+              throw new Error(`Struct ${depName} used before declaration in struct ${name}`)
+            return cached
+          })
+          context.structLayouts[name] = layout
+          mem.registerStructLayout(name, layout)
           context.structFieldMeta[name] = fieldMeta
 
           // Walk backwards from the struct to find a preceding comment with struct-level annotations
@@ -211,7 +238,7 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
               address = value.base
             }
             else {
-              address = mem.alloc(type, value!, 'global')
+              address = mem.alloc(type, 'global', value!)
             }
             context.globalEnv[name] = { type, address }
           }
@@ -229,17 +256,17 @@ export function useCppInterpreter(tree: MaybeRefOrGetter<Tree | void>) {
     context.callStack.push({ env: [] })
     // Trigger reactivity for memory allocated during init
     mem.space.version++
-    context.memory = { ...mem.space }
+    context.memoryVersion++
   }
 
   function step(): { done: boolean, breakpoint: boolean } {
     asserts(gen)
     try {
       const done = !!gen.next().done
-      // Trigger Vue reactivity for memory mutations (the raw Map was mutated
-      // by the interpreter, bypassing Vue's reactive proxy)
+      // Trigger Vue reactivity: version bump on mem.space propagates through
+      // the reactive context.memory.space reference.
       mem.space.version++
-      context.memory = { ...mem.space }
+      context.memoryVersion++
       const bp = !!context.hitBreakpoint
       context.hitBreakpoint = false
       if (done)
