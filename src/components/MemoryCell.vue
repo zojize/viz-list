@@ -25,7 +25,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   clickPointer: [address: number]
-  hoverPointer: [address: number | null]
+  /** Emitted when the user hovers a pointer field/value inside this cell.
+   *  `target` is the pointed-to address (null on leave); `source` is the
+   *  byte address of the pointer itself, for arrow rendering. */
+  hoverPointer: [target: number | null, source: number]
   clickCell: [address: number]
 }>()
 
@@ -66,8 +69,9 @@ const structName = computed(() => {
         <AddressLink
           v-if="isPointerValue(field.value)"
           :address="field.value.address"
+          :source-address="field.address"
           @navigate="emit('clickPointer', $event)"
-          @hover="emit('hoverPointer', $event)"
+          @hover="emit('hoverPointer', $event, field.address)"
         />
         <span v-else class="text-orange-600 font-semibold font-mono dark:text-orange-300">{{ formatValue(field.value) }}</span>
       </div>
@@ -81,8 +85,8 @@ const structName = computed(() => {
           class="cursor-pointer hover:underline"
           :class="cell.value.address === NULL_ADDRESS ? 'text-red-400' : 'text-green-400'"
           @click.stop="emit('clickPointer', cell.value.address)"
-          @pointerenter="emit('hoverPointer', cell.value.address)"
-          @pointerleave="emit('hoverPointer', null)"
+          @pointerenter="emit('hoverPointer', cell.value.address, cell.address)"
+          @pointerleave="emit('hoverPointer', null, cell.address)"
         >{{ formatValue(cell.value) }}</span>
         <span v-else class="text-orange-300 font-semibold">{{ formatValue(cell.value) }}</span>
       </div>

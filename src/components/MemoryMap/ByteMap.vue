@@ -2,7 +2,7 @@
 import type { MemoryManager } from '~/composables/interpreter/memory'
 import { refThrottled, useElementSize, useVirtualList } from '@vueuse/core'
 import { Pane, Splitpanes } from 'splitpanes'
-import { computed, nextTick, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onActivated, shallowRef, useTemplateRef, watch } from 'vue'
 import { MEMORY_SIZE } from '~/composables/interpreter/types'
 import { useHoverHighlight } from '~/composables/useHoverHighlight'
 import { useInterpreterContext } from '~/composables/useInterpreterContext'
@@ -31,18 +31,47 @@ function resolveForHover(addr: number): number {
   return alloc ? alloc.base : addr
 }
 
+/** If the hovered byte lies inside a pointer scalar (either a top-level
+ *  pointer allocation or a pointer field of a struct), publish an arrow from
+ *  that scalar to its current target. Otherwise clear any previous arrow. */
+function syncPointerArrow(addr: number): void {
+  const info = props.mem.describeByte(addr)
+  if (!info || info.isPadding || info.allocation.dead) {
+    hover.setPointerArrow(null)
+    return
+  }
+  const leafType = info.leafType
+  if (typeof leafType !== 'object' || leafType.type !== 'pointer') {
+    hover.setPointerArrow(null)
+    return
+  }
+  // Dead alloc makes readScalar throw; swallow and drop the arrow — the
+  // store stays stale otherwise and the last arrow would persist visually.
+  try {
+    const target = props.mem.readScalar(info.leafBase, leafType) as number
+    hover.setPointerArrow({ source: info.leafBase, sourceSize: info.leafSize, target })
+  }
+  catch {
+    hover.setPointerArrow(null)
+  }
+}
+
 function onHoverStack(addr: number | null) {
-  if (addr === null)
+  if (addr === null) {
     hover.setHover(null, null)
-  else
-    hover.setHover(resolveForHover(addr), 'byte-stack')
+    return
+  }
+  hover.setHover(resolveForHover(addr), 'byte-stack')
+  syncPointerArrow(addr)
 }
 
 function onHoverHeap(addr: number | null) {
-  if (addr === null)
+  if (addr === null) {
     hover.setHover(null, null)
-  else
-    hover.setHover(resolveForHover(addr), 'byte-heap')
+    return
+  }
+  hover.setHover(resolveForHover(addr), 'byte-heap')
+  syncPointerArrow(addr)
 }
 
 function onClick(addr: number) {
@@ -153,6 +182,7 @@ const heapBytesUsed = computed(() => {
 
 const {
   list: stackList,
+  scrollTo: stackScrollToIdx,
   containerProps: stackContainerProps,
   wrapperProps: stackWrapperProps,
 } = useVirtualList(stackRows, { itemHeight: ROW_HEIGHT })
@@ -176,6 +206,40 @@ watch(heapBytesPerRow, (bpr) => {
     heapScrollToIdx(heapRows.value.length - 1)
   })
 })
+
+// KeepAlive preserves the scroll position across view toggles, which sounds
+// right but doesn't suit the heap column — the "interesting" content is
+// pinned at the bottom addresses. Snap back to the latest row whenever the
+// Bytes view is reactivated so the user never sees a blank top.
+onActivated(() => {
+  if (heapBytesPerRow.value <= 0)
+    return
+  nextTick().then(() => {
+    heapScrollToIdx(heapRows.value.length - 1)
+  })
+})
+
+// ---- Scroll to pointer target ----
+// When the user hovers a pointer, its target might be rendered outside the
+// current viewport of the owning column (the heap especially, since the
+// interesting allocations sit near the bottom). Mirrors the AllocationMap
+// behaviour: bring the target row into view so the arrow has something to
+// point at without the user manually scrolling.
+watch(() => hover.pointerArrow.value?.target, (target) => {
+  if (target == null || target <= 0)
+    return
+  const half = MEMORY_SIZE / 2
+  if (target < half) {
+    const bpr = stackBytesPerRow.value
+    if (bpr > 0)
+      stackScrollToIdx(Math.floor(target / bpr))
+  }
+  else {
+    const bpr = heapBytesPerRow.value
+    if (bpr > 0)
+      heapScrollToIdx(Math.floor((target - half) / bpr))
+  }
+})
 </script>
 
 <template>
@@ -198,12 +262,16 @@ watch(heapBytesPerRow, (bpr) => {
         <!-- Width sizer element (not scrollable) -->
         <div ref="stack-col-sizer" class="w-full" />
 
-        <!-- Virtual-list scrollable container -->
+        <!-- Virtual-list scrollable container. Rows are hidden until the
+             column has been measured — otherwise the initial render uses the
+             fallback 4 bytes-per-row and snaps to the responsive width a
+             frame later, which looks like a layout flash when switching from
+             Allocation view. -->
         <div
           v-bind="stackContainerProps"
           class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto"
         >
-          <div v-bind="stackWrapperProps">
+          <div v-show="stackWidth > 0" v-bind="stackWrapperProps">
             <!-- Key by virtual-list index, NOT item.data (row-start address).
                  When bytesPerRow changes (splitpane drag), row addresses shift
                  so keying by address would unmount/re-mount every visible row.
@@ -224,6 +292,7 @@ watch(heapBytesPerRow, (bpr) => {
                virtual-content height so its coordinate frame matches rows in
                the wrapper. Scrolls with content; pointer-events disabled. -->
           <div
+            v-show="stackWidth > 0"
             class="pointer-events-none absolute left-0 top-0 w-full"
             :style="{ height: `${stackTotalHeight}px` }"
           >
@@ -260,12 +329,13 @@ watch(heapBytesPerRow, (bpr) => {
         <!-- Width sizer element (not scrollable) -->
         <div ref="heap-col-sizer" class="w-full" />
 
-        <!-- Virtual-list scrollable container -->
+        <!-- Virtual-list scrollable container (see stack column for why we
+             gate the wrapper on a non-zero measured width). -->
         <div
           v-bind="heapContainerProps"
           class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto"
         >
-          <div v-bind="heapWrapperProps">
+          <div v-show="heapWidth > 0" v-bind="heapWrapperProps">
             <MemoryMapByteRow
               v-for="item in heapList"
               :key="item.index"
@@ -278,6 +348,7 @@ watch(heapBytesPerRow, (bpr) => {
             />
           </div>
           <div
+            v-show="heapWidth > 0"
             class="pointer-events-none absolute left-0 top-0 w-full"
             :style="{ height: `${heapTotalHeight}px` }"
           >

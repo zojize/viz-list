@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { LayoutNode } from '~/composables/interpreter/layout'
 import type { Allocation, CppType, CppValue } from '~/composables/interpreter/types'
+import { Pane, Splitpanes } from 'splitpanes'
 import { computed, useTemplateRef, watch } from 'vue'
 import AddressLink from '~/components/AddressLink.vue'
 import DSValue from '~/components/DSValue.vue'
@@ -120,6 +121,32 @@ function isHoverTarget(address: number): boolean {
   return hover.address.value === address
 }
 
+/** The allocation base that currently holds an arrow's tail / head, if any.
+ *  Used to tint cards violet (source) or amber (target) when an arrow is
+ *  associated with them — matches the byte-level coloring in ByteMapOverlay. */
+const arrowSourceAllocBase = computed<number | null>(() => {
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memoryVersion
+  const a = hover.pointerArrow.value
+  if (!a)
+    return null
+  return context.memory.findAllocation(a.source)?.base ?? null
+})
+const arrowTargetAllocBase = computed<number | null>(() => {
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memoryVersion
+  const a = hover.pointerArrow.value
+  if (!a)
+    return null
+  return context.memory.findAllocation(a.target)?.base ?? null
+})
+function isArrowSourceCard(address: number): boolean {
+  return arrowSourceAllocBase.value === address
+}
+function isArrowTargetCard(address: number): boolean {
+  return arrowTargetAllocBase.value === address
+}
+
 /** Whether this cell has a code execution highlight (LHS/RHS/changed) */
 function hasCodeHighlight(address: number): boolean {
   return isStatementLhs(address) || isStatementRhs(address) || props.changedAddresses.has(address)
@@ -136,8 +163,22 @@ function handleHoverPointerStack(address: number | null) {
   hover.setHover(address, 'stack')
 }
 
-function handleHoverPointerHeap(address: number | null) {
-  hover.setHover(address, 'heap')
+function handleHoverPointerHeap(target: number | null, source?: number) {
+  hover.setHover(target, 'heap')
+  if (source !== undefined)
+    handleHoverPointerLink(target, source)
+}
+
+/** Called when an AddressLink (pointer value display) is hovered; `source`
+ *  is the address of the pointer field/variable itself, `target` is the
+ *  current pointed-to address. We push both into the hover store so the
+ *  ArrowOverlay can draw an arrow between them. */
+function handleHoverPointerLink(target: number | null, source: number) {
+  if (target === null || target === NULL_ADDRESS) {
+    hover.setPointerArrow(null)
+    return
+  }
+  hover.setPointerArrow({ source, sourceSize: 4, target })
 }
 
 function handleClickPointer(address: number) {
@@ -305,168 +346,180 @@ watch(hover.fieldAddress, (addr) => {
 </script>
 
 <template>
-  <div ref="memory-map-container" data-testid="memory-map" class="h-full flex gap-2 overflow-hidden p-2">
-    <!-- Stack column -->
-    <div data-testid="stack-column" class="min-h-0 flex flex-1 flex-col border border-gray-200 rounded-lg dark:border-gray-800">
-      <!-- Sticky header -->
-      <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 rounded-t-lg bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900">
-        <span class="text-[10px] text-gray-500 font-semibold tracking-wide uppercase dark:text-gray-400">Stack</span>
-        <span class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-900/60 dark:text-blue-300">
-          {{ stackAllocCount }} {{ stackAllocCount === 1 ? 'allocation' : 'allocations' }}
-        </span>
-      </div>
-      <!-- Scrollable body -->
-      <div class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
-        <TransitionGroup name="stack-cell">
-          <div
-            v-for="entry in stackEntries"
-            :key="entry.address"
-            :data-address="entry.address"
-            :data-testid="`stack-entry-${entry.address}`"
-            class="cursor-pointer border border-l-3 border-gray-200 border-l-transparent rounded-md bg-white font-mono shadow-sm transition-all duration-200 dark:border-gray-700 dark:bg-gray-900"
-            :class="{
-              'outline outline-2 outline-blue-400 bg-blue-500/20!': selectedAddress === entry.address,
-              'border-l-blue-500!': isStatementLhs(entry.address),
-              'border-l-green-500!': isStatementRhs(entry.address),
-              'border-l-yellow-400!': changedAddresses.has(entry.address) && !isStatementLhs(entry.address) && !isStatementRhs(entry.address),
-              'border-l-blue-400!': isHoverTarget(entry.address) && !hasCodeHighlight(entry.address) && selectedAddress !== entry.address,
-              'ring-2 ring-blue-400/40': isHoverBoosted(entry.address),
-              'opacity-40': !entry.inScope,
-            }"
-            @click="emit('selectCell', entry.address)"
-            @pointerenter="entry.inScope && emit('hoverVariable', entry.name)"
-            @pointerleave="emit('hoverVariable', null)"
-          >
-            <!-- Address bar: address left, var name + type right -->
-            <div class="flex items-center justify-between border-b border-gray-200 rounded-t-md bg-gray-100 px-2 py-0.5 text-[10px] dark:border-gray-700 dark:bg-gray-800/80">
-              <span class="text-gray-500 dark:text-gray-400">{{ formatAddr(entry.address) }}</span>
-              <div class="flex items-center gap-1">
-                <span class="text-blue-600/80 dark:text-blue-300/80">{{ entry.name }}</span>
-                <span class="text-gray-400 dark:text-gray-500">{{ formatType(entry.type) }}</span>
+  <div ref="memory-map-container" data-testid="memory-map" class="h-full overflow-hidden p-2">
+    <!-- Splitpane-wrapped stack / heap columns — mirrors the ByteMap layout
+         so both views have the same draggable divider and column gutter. -->
+    <Splitpanes class="h-full">
+      <!-- Stack column -->
+      <Pane :size="50" :min-size="15" data-testid="stack-column" class="min-h-0 flex flex-col border border-gray-200 rounded-lg dark:border-gray-800">
+        <!-- Sticky header -->
+        <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 rounded-t-lg bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900">
+          <span class="text-[10px] text-gray-500 font-semibold tracking-wide uppercase dark:text-gray-400">Stack</span>
+          <span class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-900/60 dark:text-blue-300">
+            {{ stackAllocCount }} {{ stackAllocCount === 1 ? 'allocation' : 'allocations' }}
+          </span>
+        </div>
+        <!-- Scrollable body -->
+        <div class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
+          <TransitionGroup name="stack-cell">
+            <div
+              v-for="entry in stackEntries"
+              :key="entry.address"
+              :data-address="entry.address"
+              data-anchor-edge="left"
+              :data-testid="`stack-entry-${entry.address}`"
+              class="cursor-pointer border border-l-3 border-gray-200 border-l-transparent rounded-md bg-white font-mono shadow-sm transition-all duration-200 dark:border-gray-700 dark:bg-gray-900"
+              :class="{
+                'outline outline-2 outline-blue-400 bg-blue-500/20!': selectedAddress === entry.address,
+                'border-l-blue-500!': isStatementLhs(entry.address),
+                'border-l-green-500!': isStatementRhs(entry.address),
+                'border-l-yellow-400!': changedAddresses.has(entry.address) && !isStatementLhs(entry.address) && !isStatementRhs(entry.address),
+                'border-l-blue-400!': isHoverTarget(entry.address) && !hasCodeHighlight(entry.address) && selectedAddress !== entry.address,
+                'ring-2 ring-blue-400/40': isHoverBoosted(entry.address),
+                'bg-purple-500/10! ring-1 ring-purple-400/60': isArrowSourceCard(entry.address) && selectedAddress !== entry.address,
+                'bg-orange-500/10! ring-1 ring-orange-400/60': isArrowTargetCard(entry.address) && selectedAddress !== entry.address,
+                'opacity-40': !entry.inScope,
+              }"
+              @click="emit('selectCell', entry.address)"
+              @pointerenter="entry.inScope && emit('hoverVariable', entry.name)"
+              @pointerleave="emit('hoverVariable', null)"
+            >
+              <!-- Address bar: address left, var name + type right -->
+              <div class="flex items-center justify-between border-b border-gray-200 rounded-t-md bg-gray-100 px-2 py-0.5 text-[10px] dark:border-gray-700 dark:bg-gray-800/80">
+                <span class="text-gray-500 dark:text-gray-400">{{ formatAddr(entry.address) }}</span>
+                <div class="flex items-center gap-1">
+                  <span class="text-blue-600/80 dark:text-blue-300/80">{{ entry.name }}</span>
+                  <span class="text-gray-400 dark:text-gray-500">{{ formatType(entry.type) }}</span>
+                </div>
+              </div>
+
+              <!-- Value area -->
+              <div class="px-2 py-1 text-xs">
+                <!-- Struct: show fields -->
+                <template v-if="entry.fields">
+                  <template v-for="[name, field] in entry.fields" :key="name">
+                    <!-- Complex value (struct/array): field name then value below -->
+                    <div
+                      v-if="typeof field.value === 'object' && (field.value.type === 'struct' || field.value.type === 'array')"
+                      :data-field-address="field.address"
+                      class="py-0.5 transition-colors"
+                    >
+                      <span class="text-gray-500">{{ name }}:</span>
+                      <div class="pl-2">
+                        <DSValue
+                          :address="field.address"
+                          :type="field.type"
+                          :highlighted-field-address="hover.fieldAddress.value"
+                          :statement-lhs-addresses="statementLhsAddresses"
+                          :statement-rhs-addresses="statementRhsAddresses"
+                          @navigate="handleClickPointer"
+                          @hover-node="handleHoverPointerStack"
+                        />
+                      </div>
+                    </div>
+                    <!-- Simple value: inline row -->
+                    <div
+                      v-else
+                      :data-field-address="field.address"
+                      class="flex items-baseline justify-between gap-4 py-0.5 transition-colors"
+                      :class="{
+                        'bg-blue-500/15 rounded px-1 -mx-1': isFieldHighlighted(field.address),
+                        'bg-blue-500/10 rounded px-1 -mx-1': isStatementLhs(field.address),
+                        'bg-green-500/10 rounded px-1 -mx-1': isStatementRhs(field.address),
+                      }"
+                    >
+                      <span class="shrink-0 text-gray-500">{{ name }}</span>
+                      <AddressLink
+                        v-if="isPointerValue(field.value)"
+                        :address="field.value.address"
+                        :source-address="field.address"
+                        @navigate="handleClickPointer"
+                        @hover="handleHoverPointerStack($event); handleHoverPointerLink($event, field.address)"
+                      />
+                      <span v-else class="text-orange-600 font-semibold dark:text-orange-300">{{ field.value }}</span>
+                    </div>
+                  </template>
+                </template>
+
+                <!-- Array / Struct: recursive rendering -->
+                <template v-else-if="typeof entry.cell.value === 'object' && (entry.cell.value.type === 'array' || entry.cell.value.type === 'struct')">
+                  <DSValue
+                    :address="entry.address"
+                    :type="entry.type"
+                    :highlighted-field-address="hover.fieldAddress.value"
+                    :statement-lhs-addresses="statementLhsAddresses"
+                    :statement-rhs-addresses="statementRhsAddresses"
+                    @navigate="handleClickPointer"
+                    @hover-node="handleHoverPointerStack"
+                  />
+                </template>
+
+                <!-- Pointer -->
+                <template v-else-if="isPointerValue(entry.cell.value)">
+                  <AddressLink
+                    :address="entry.cell.value.address"
+                    :source-address="entry.address"
+                    @navigate="handleClickPointer"
+                    @hover="handleHoverPointerStack($event); handleHoverPointerLink($event, entry.address)"
+                  />
+                </template>
+
+                <!-- Primitive -->
+                <template v-else>
+                  <span class="text-orange-600 font-semibold dark:text-orange-300">{{ entry.cell.value }}</span>
+                </template>
               </div>
             </div>
+          </TransitionGroup>
 
-            <!-- Value area -->
-            <div class="px-2 py-1 text-xs">
-              <!-- Struct: show fields -->
-              <template v-if="entry.fields">
-                <template v-for="[name, field] in entry.fields" :key="name">
-                  <!-- Complex value (struct/array): field name then value below -->
-                  <div
-                    v-if="typeof field.value === 'object' && (field.value.type === 'struct' || field.value.type === 'array')"
-                    :data-field-address="field.address"
-                    class="py-0.5 transition-colors"
-                  >
-                    <span class="text-gray-500">{{ name }}:</span>
-                    <div class="pl-2">
-                      <DSValue
-                        :address="field.address"
-                        :type="field.type"
-                        :highlighted-field-address="hover.fieldAddress.value"
-                        :statement-lhs-addresses="statementLhsAddresses"
-                        :statement-rhs-addresses="statementRhsAddresses"
-                        @navigate="handleClickPointer"
-                        @hover-node="handleHoverPointerStack"
-                      />
-                    </div>
-                  </div>
-                  <!-- Simple value: inline row -->
-                  <div
-                    v-else
-                    :data-field-address="field.address"
-                    class="flex items-baseline justify-between gap-4 py-0.5 transition-colors"
-                    :class="{
-                      'bg-blue-500/15 rounded px-1 -mx-1': isFieldHighlighted(field.address),
-                      'bg-blue-500/10 rounded px-1 -mx-1': isStatementLhs(field.address),
-                      'bg-green-500/10 rounded px-1 -mx-1': isStatementRhs(field.address),
-                    }"
-                  >
-                    <span class="shrink-0 text-gray-500">{{ name }}</span>
-                    <AddressLink
-                      v-if="isPointerValue(field.value)"
-                      :address="field.value.address"
-                      @navigate="handleClickPointer"
-                      @hover="handleHoverPointerStack"
-                    />
-                    <span v-else class="text-orange-600 font-semibold dark:text-orange-300">{{ field.value }}</span>
-                  </div>
-                </template>
-              </template>
-
-              <!-- Array / Struct: recursive rendering -->
-              <template v-else-if="typeof entry.cell.value === 'object' && (entry.cell.value.type === 'array' || entry.cell.value.type === 'struct')">
-                <DSValue
-                  :address="entry.address"
-                  :type="entry.type"
-                  :highlighted-field-address="hover.fieldAddress.value"
-                  :statement-lhs-addresses="statementLhsAddresses"
-                  :statement-rhs-addresses="statementRhsAddresses"
-                  @navigate="handleClickPointer"
-                  @hover-node="handleHoverPointerStack"
-                />
-              </template>
-
-              <!-- Pointer -->
-              <template v-else-if="isPointerValue(entry.cell.value)">
-                <AddressLink
-                  :address="entry.cell.value.address"
-                  @navigate="handleClickPointer"
-                  @hover="handleHoverPointerStack"
-                />
-              </template>
-
-              <!-- Primitive -->
-              <template v-else>
-                <span class="text-orange-600 font-semibold dark:text-orange-300">{{ entry.cell.value }}</span>
-              </template>
-            </div>
+          <div v-if="stackEntries.length === 0" class="flex flex-1 items-center justify-center text-xs text-gray-500 italic">
+            No stack variables
           </div>
-        </TransitionGroup>
-
-        <div v-if="stackEntries.length === 0" class="flex flex-1 items-center justify-center text-xs text-gray-500 italic">
-          No stack variables
         </div>
-      </div>
-    </div>
+      </Pane>
 
-    <!-- Heap column -->
-    <div data-testid="heap-column" class="min-h-0 flex flex-1 flex-col border border-gray-200 rounded-lg dark:border-gray-800">
-      <!-- Sticky header -->
-      <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 rounded-t-lg bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900">
-        <span class="text-[10px] text-gray-500 font-semibold tracking-wide uppercase dark:text-gray-400">Heap</span>
-        <span class="rounded bg-green-100 px-1.5 py-0.5 text-[10px] text-green-700 dark:bg-green-900/60 dark:text-green-300">
-          {{ heapAllocCount }} {{ heapAllocCount === 1 ? 'allocation' : 'allocations' }}
-        </span>
-      </div>
-      <!-- Scrollable body -->
-      <div class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
-        <TransitionGroup name="heap-cell">
-          <MemoryCell
-            v-for="entry in heapEntries"
-            :key="entry.cell.address"
-            :data-address="entry.cell.address"
-            :data-testid="`heap-cell-${entry.cell.address}`"
-            :cell="entry.cell"
-            :field-values="entry.fields"
-            :changed="changedAddresses.has(entry.cell.address)"
-            :highlighted-field-address="hover.fieldAddress.value"
-            :class="{
-              'outline outline-2 outline-blue-400': selectedAddress === entry.cell.address,
-              'border-l-blue-500!': isStatementLhs(entry.cell.address),
-              'border-l-green-500!': isStatementRhs(entry.cell.address),
-              'border-l-blue-400!': isHoverTarget(entry.cell.address) && !hasCodeHighlight(entry.cell.address) && selectedAddress !== entry.cell.address,
-              'ring-2 ring-blue-400/40': isHoverBoosted(entry.cell.address),
-            }"
-            @click-pointer="handleClickPointer"
-            @hover-pointer="handleHoverPointerHeap"
-            @click-cell="emit('selectCell', $event)"
-          />
-        </TransitionGroup>
-        <div v-if="heapEntries.length === 0" class="flex flex-1 items-center justify-center text-xs text-gray-500 italic">
-          No heap allocations
+      <!-- Heap column -->
+      <Pane :size="50" :min-size="15" data-testid="heap-column" class="min-h-0 flex flex-col border border-gray-200 rounded-lg dark:border-gray-800">
+        <!-- Sticky header -->
+        <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 rounded-t-lg bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900">
+          <span class="text-[10px] text-gray-500 font-semibold tracking-wide uppercase dark:text-gray-400">Heap</span>
+          <span class="rounded bg-green-100 px-1.5 py-0.5 text-[10px] text-green-700 dark:bg-green-900/60 dark:text-green-300">
+            {{ heapAllocCount }} {{ heapAllocCount === 1 ? 'allocation' : 'allocations' }}
+          </span>
         </div>
-      </div>
-    </div>
+        <!-- Scrollable body -->
+        <div class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
+          <TransitionGroup name="heap-cell">
+            <MemoryCell
+              v-for="entry in heapEntries"
+              :key="entry.cell.address"
+              :data-address="entry.cell.address"
+              data-anchor-edge="left"
+              :data-testid="`heap-cell-${entry.cell.address}`"
+              :cell="entry.cell"
+              :field-values="entry.fields"
+              :changed="changedAddresses.has(entry.cell.address)"
+              :highlighted-field-address="hover.fieldAddress.value"
+              :class="{
+                'outline outline-2 outline-blue-400': selectedAddress === entry.cell.address,
+                'border-l-blue-500!': isStatementLhs(entry.cell.address),
+                'border-l-green-500!': isStatementRhs(entry.cell.address),
+                'border-l-blue-400!': isHoverTarget(entry.cell.address) && !hasCodeHighlight(entry.cell.address) && selectedAddress !== entry.cell.address,
+                'ring-2 ring-blue-400/40': isHoverBoosted(entry.cell.address),
+                'bg-purple-500/10! ring-1 ring-purple-400/60': isArrowSourceCard(entry.cell.address) && selectedAddress !== entry.cell.address,
+                'bg-orange-500/10! ring-1 ring-orange-400/60': isArrowTargetCard(entry.cell.address) && selectedAddress !== entry.cell.address,
+              }"
+              @click-pointer="handleClickPointer"
+              @hover-pointer="handleHoverPointerHeap"
+              @click-cell="emit('selectCell', $event)"
+            />
+          </TransitionGroup>
+          <div v-if="heapEntries.length === 0" class="flex flex-1 items-center justify-center text-xs text-gray-500 italic">
+            No heap allocations
+          </div>
+        </div>
+      </Pane>
+    </Splitpanes>
   </div>
 </template>
 

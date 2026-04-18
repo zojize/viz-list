@@ -56,6 +56,11 @@ function kindFor(base: number, size: number): { kind: HighlightKind, boost: bool
     && props.selectedAddress >= base && props.selectedAddress < base + size
   const isHover = hover.address.value !== null
     && hover.address.value >= base && hover.address.value < base + size
+  const arrow = hover.pointerArrow.value
+  const isArrowSource = arrow !== null
+    && arrow.source >= base && arrow.source < base + size
+  const isArrowTarget = arrow !== null
+    && arrow.target >= base && arrow.target < base + size
   const isLhs = touches(props.lhs)
   const isRhs = touches(props.rhs)
   const isChanged = touches(props.changed)
@@ -63,11 +68,17 @@ function kindFor(base: number, size: number): { kind: HighlightKind, boost: bool
   if (isSelected)
     return { kind: 'selected', boost: false }
   if (isLhs)
-    return { kind: 'lhs', boost: isHover }
+    return { kind: 'lhs', boost: isHover || isArrowSource || isArrowTarget }
   if (isRhs)
-    return { kind: 'rhs', boost: isHover }
+    return { kind: 'rhs', boost: isHover || isArrowSource || isArrowTarget }
   if (isChanged)
-    return { kind: 'changed', boost: isHover }
+    return { kind: 'changed', boost: isHover || isArrowSource || isArrowTarget }
+  // When an arrow is active, colour the two ends differently so the tail and
+  // head are distinguishable at a glance (violet = source, amber = target).
+  if (isArrowSource)
+    return { kind: 'pointer-source', boost: false }
+  if (isArrowTarget)
+    return { kind: 'pointer-target', boost: false }
   if (isHover)
     return { kind: 'hover', boost: false }
   return null

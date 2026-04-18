@@ -510,6 +510,7 @@ onMounted(() => nextTick(reparentMonaco))
                 :mem="context.memory"
                 :changed-addresses="changedAddresses"
                 :selected-address="selectedAddress"
+                :selected-byte-address="selectedByteAddress"
                 :statement-lhs-addresses="lhsAddresses"
                 :statement-rhs-addresses="rhsAddresses"
                 @select-cell="onMemoryMapSelectCell($event)"
