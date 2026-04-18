@@ -187,6 +187,70 @@ test.describe('hover interactions', () => {
   })
 })
 
+test.describe('pointer arrows', () => {
+  // Skipped: kept as documentation for the "arrows stay at the previous view's
+  // coordinates after a KeepAlive toggle" regression. getBoundingClientRect
+  // isn't a Vue reactive dep, so ArrowOverlay's computed won't re-run on a
+  // plain mode swap — the fix is a MutationObserver on the host that bumps
+  // `tick` when the KeepAlive subtree changes. Re-enable if that regression
+  // resurfaces.
+  test.skip('arrows re-anchor to the active view after toggling Bytes/Allocations', async ({ page }) => {
+    await selectTemplate(page, 'doubly-insertBack')
+    await page.getByTestId('btn-run').click()
+    await page.waitForTimeout(3500)
+
+    await page.getByRole('button', { name: 'Bytes' }).click()
+    await page.waitForTimeout(300)
+    const arrowsToggle = page.getByRole('button', { name: 'arrows' })
+    await arrowsToggle.click()
+    await page.waitForTimeout(300)
+
+    for (let i = 0; i < 4; i++) {
+      await page.getByRole('button', { name: 'Allocations' }).click()
+      await page.waitForTimeout(250)
+      await page.getByRole('button', { name: 'Bytes' }).click()
+      await page.waitForTimeout(250)
+    }
+    await page.getByRole('button', { name: 'Allocations' }).click()
+    await page.waitForTimeout(400)
+
+    const check = await page.evaluate(() => {
+      const bezier = Array.from(document.querySelectorAll<SVGPathElement>('svg path'))
+        .map(el => ({ el, d: el.getAttribute('d') ?? '' }))
+        .filter(({ d }) => /^M[\d.]+\s[\d.]+\sQ/.test(d))
+      if (bezier.length === 0)
+        return { arrows: 0, bad: [] as { path: string, start: [number, number] }[] }
+
+      const links = Array.from(document.querySelectorAll<HTMLElement>('[data-pointer-source]'))
+        .filter(el => el.offsetParent !== null)
+        .map(el => el.getBoundingClientRect())
+      if (links.length === 0)
+        return { arrows: bezier.length, bad: [{ path: '(no AddressLinks visible)', start: [0, 0] as [number, number] }] }
+
+      const tol = 4
+      const bad: { path: string, start: [number, number] }[] = []
+      for (const { el, d } of bezier) {
+        const m = d.match(/^M([\d.]+)\s([\d.]+)/)
+        if (!m)
+          continue
+        const svg = el.closest('svg')!.getBoundingClientRect()
+        const cx = svg.left + Number.parseFloat(m[1])
+        const cy = svg.top + Number.parseFloat(m[2])
+        const insideLink = links.some(r =>
+          cx >= r.left - tol && cx <= r.right + tol
+          && cy >= r.top - tol && cy <= r.bottom + tol,
+        )
+        if (!insideLink)
+          bad.push({ path: d, start: [Math.round(cx), Math.round(cy)] })
+      }
+      return { arrows: bezier.length, bad }
+    })
+
+    expect(check.arrows).toBeGreaterThan(0)
+    expect(check.bad, `${check.bad.length} arrow(s) do not start at any AddressLink: ${JSON.stringify(check.bad, null, 2)}`).toEqual([])
+  })
+})
+
 test.describe('selection interactions', () => {
   test('clicking different DS items changes selection', async ({ page }) => {
     await stepN(page, 15)
