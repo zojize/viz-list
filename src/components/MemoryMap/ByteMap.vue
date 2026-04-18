@@ -269,7 +269,7 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
              Allocation view. -->
         <div
           v-bind="stackContainerProps"
-          class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto"
+          class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto overscroll-none"
         >
           <div v-show="stackWidth > 0" v-bind="stackWrapperProps">
             <!-- Key by virtual-list index, NOT item.data (row-start address).
@@ -333,7 +333,7 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
              gate the wrapper on a non-zero measured width). -->
         <div
           v-bind="heapContainerProps"
-          class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto"
+          class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto overscroll-none"
         >
           <div v-show="heapWidth > 0" v-bind="heapWrapperProps">
             <MemoryMapByteRow

@@ -360,7 +360,7 @@ watch(hover.fieldAddress, (addr) => {
           </span>
         </div>
         <!-- Scrollable body -->
-        <div class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
+        <div class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto overscroll-none p-1.5">
           <TransitionGroup name="stack-cell">
             <div
               v-for="entry in stackEntries"
@@ -488,7 +488,7 @@ watch(hover.fieldAddress, (addr) => {
           </span>
         </div>
         <!-- Scrollable body -->
-        <div class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto p-1.5">
+        <div class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto overscroll-none p-1.5">
           <TransitionGroup name="heap-cell">
             <MemoryCell
               v-for="entry in heapEntries"

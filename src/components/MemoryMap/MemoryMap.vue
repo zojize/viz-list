@@ -203,7 +203,7 @@ watchEffect(() => hover.setAmbientArrows(ambientArrows.value))
         {{ context.endianness === 'le' ? 'LE' : 'BE' }}
       </button>
     </div>
-    <div ref="view-host" class="relative min-h-0 flex-1 overflow-auto">
+    <div ref="view-host" class="relative min-h-0 flex-1 overflow-auto overscroll-none">
       <!-- KeepAlive caches both views across toggles so ByteMap's
            useElementSize measurements (and scroll position, virtual-list
            state, etc.) survive a switch away and back — no re-measure
