@@ -418,10 +418,23 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
       version.value++
   }
 
-  /** Clear positions only (keep sizes for immediate re-placement). */
-  function clearPositions() {
-    positions.clear()
-    userDragged.clear()
+  /**
+   * Clear positions only (keep sizes for immediate re-placement).
+   *  `keepUserDragged` preserves both the positions and the user-dragged flag
+   *  for items the user manually moved — used by the idle auto-relayout path
+   *  so a debounced reshuffle doesn't clobber manual placements.
+   */
+  function clearPositions(keepUserDragged = false) {
+    if (keepUserDragged) {
+      for (const k of [...positions.keys()]) {
+        if (!userDragged.has(k))
+          positions.delete(k)
+      }
+    }
+    else {
+      positions.clear()
+      userDragged.clear()
+    }
     version.value++
   }
 
