@@ -269,6 +269,7 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
              Allocation view. -->
         <div
           v-bind="stackContainerProps"
+          data-overlay-clip-region
           class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto overscroll-none"
         >
           <div v-show="stackWidth > 0" v-bind="stackWrapperProps">
@@ -333,6 +334,7 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
              gate the wrapper on a non-zero measured width). -->
         <div
           v-bind="heapContainerProps"
+          data-overlay-clip-region
           class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto overscroll-none"
         >
           <div v-show="heapWidth > 0" v-bind="heapWrapperProps">
