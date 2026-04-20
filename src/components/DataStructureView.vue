@@ -438,6 +438,10 @@ function measureAndPlace(): NodeListOf<HTMLElement> | null {
   const sortedPointers = topoSortPointers(pointerItems)
   for (const item of sortedPointers) {
     const key = `item-${item.address}`
+    // Idempotent like placeNew: if already placed on a prior pass keep the
+    // position so re-renders don't re-probe and bump placement.version.
+    if (placement.getPosition(key))
+      continue
     const size = measured.get(key)
     if (!size)
       continue

@@ -203,8 +203,19 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
    * would overlap. Used by callers (e.g. DS-view pointer placement) that want
    * to probe several candidate slots and fall through to another strategy if
    * none fit. Unlike `displaceAndPlace`, no other items move.
+   *
+   * Idempotent on re-entry: if the key is already positioned at the same
+   * (x, y), no version bump. Without this guard a caller that re-runs on
+   * every reactive tick (DataStructureView's onUpdated -> measureAndPlace)
+   * would re-commit the same slot, bump version, trigger another render,
+   * and loop.
    */
   function tryPlaceAt(key: string, x: number, y: number, w: number, h: number): boolean {
+    const existing = positions.get(key)
+    if (existing && existing.x === x && existing.y === y) {
+      sizes.set(key, { w, h })
+      return true
+    }
     const rect: Rect = { x, y, w, h }
     for (const { rect: r } of getOccupiedKeyed(key)) {
       if (rectsOverlap(rect, r))
