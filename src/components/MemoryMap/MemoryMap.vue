@@ -181,17 +181,8 @@ watchEffect(() => hover.setAmbientArrows(ambientArrows.value))
       >
         Bytes
       </button>
-      <!-- Toggle: draw every live pointer's arrow permanently. Independent of
-           hover/selection; "primary" arrows still render on top in blue. -->
-      <button
-        type="button"
-        class="ml-auto cursor-pointer border border-gray-500/25 rounded bg-transparent px-2 py-0.5 text-[0.7rem] text-inherit tracking-wider font-mono transition-colors hover:bg-gray-500/12"
-        :class="showAllArrows ? 'bg-blue-500/10 text-blue-600 dark:text-blue-300' : ''"
-        :title="showAllArrows ? 'Hide all pointer arrows' : 'Show all pointer arrows'"
-        @click="showAllArrows = !showAllArrows"
-      >
-        arrows
-      </button>
+      <!-- Padding to push the toggle buttons to the right -->
+      <div class="flex-1" />
       <!-- Endianness toggle — only shown in Bytes mode -->
       <button
         v-if="mode === 'byte'"
@@ -201,6 +192,17 @@ watchEffect(() => hover.setAmbientArrows(ambientArrows.value))
         @click="toggleEndianness"
       >
         {{ context.endianness === 'le' ? 'LE' : 'BE' }}
+      </button>
+      <!-- Toggle: draw every live pointer's arrow permanently. Independent of
+           hover/selection; "primary" arrows still render on top in blue. -->
+      <button
+        type="button"
+        class="cursor-pointer border border-gray-500/25 rounded bg-transparent px-2 py-0.5 text-[0.7rem] text-inherit tracking-wider font-mono transition-colors hover:bg-gray-500/12"
+        :class="showAllArrows ? 'bg-blue-500/10 text-blue-600 dark:text-blue-300' : ''"
+        :title="showAllArrows ? 'Hide all pointer arrows' : 'Show all pointer arrows'"
+        @click="showAllArrows = !showAllArrows"
+      >
+        arrows
       </button>
     </div>
     <div ref="view-host" class="relative min-h-0 flex-1 overflow-auto overscroll-none">
