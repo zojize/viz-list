@@ -734,13 +734,17 @@ function measureFieldY(parentKey: string, fieldAddress: number): number | undefi
 
   const parentRect = parentEl.getBoundingClientRect()
   const fieldRect = fieldEl.getBoundingClientRect()
-  // Offset within the parent + parent's content-space position
+  // Offset within the parent + parent's content-space position.
+  // getBoundingClientRect includes the canvas's CSS scale, so the raw screen
+  // pixel offset must be divided by zoom to bring it back into content space
+  // — otherwise at zoom 2x the arrow stems from 2× the correct field Y.
   const pos = placement.getPosition(parentKey)
   const delta = getDragDelta(parentKey)
   if (!pos)
     return undefined
-  const fieldCenterOffset = (fieldRect.top + fieldRect.height / 2) - parentRect.top
-  return pos.y + delta.y + fieldCenterOffset
+  const fieldCenterScreen = (fieldRect.top + fieldRect.height / 2) - parentRect.top
+  const z = zoom.value || 1
+  return pos.y + delta.y + fieldCenterScreen / z
 }
 
 /** Get arrow props from a computed edge */
