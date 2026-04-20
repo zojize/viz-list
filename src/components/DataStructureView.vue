@@ -876,6 +876,65 @@ watch(() => props.selectedAddress, (addr) => {
   panToElement(`[data-testid="ds-node-${addr}"], [data-testid="ds-item-${addr}"]`)
 })
 
+// ---- Pointer-arrow hover wiring ----
+
+/** Resolve a byte address inside a pointer scalar to the memory-map arrow it
+ *  represents. Returns null for non-pointer bytes, padding, or dead allocs.
+ *  Mirrors ByteMap's syncPointerArrow so hovering a DS-view arrow / pointer
+ *  card produces the same primary-emphasis arrow in MemoryMap. */
+function pointerArrowFor(fieldAddr: number) {
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memoryVersion
+  const info = context.memory.describeByte(fieldAddr)
+  if (!info || info.isPadding || info.allocation.dead)
+    return null
+  const leafType = info.leafType
+  if (typeof leafType !== 'object' || leafType.type !== 'pointer')
+    return null
+  try {
+    const target = context.memory.readScalar(info.leafBase, leafType) as number
+    return { source: info.leafBase, sourceSize: info.leafSize, target }
+  }
+  catch {
+    return null
+  }
+}
+
+/** Wired into <CanvasArrow @hover-field>. Extends the existing setField call
+ *  (which highlights the field row / pointer card via `data-field-addr`) with
+ *  a setPointerArrow so MemoryMap's arrow overlay lights up with primary
+ *  emphasis for the same pointer. */
+function onArrowHoverField(fieldAddress: number | null) {
+  hover.setField(fieldAddress)
+  if (fieldAddress === null) {
+    hover.setPointerArrow(null)
+    return
+  }
+  hover.setPointerArrow(pointerArrowFor(fieldAddress))
+}
+
+function onItemEnter(item: DataItem) {
+  hover.setHover(item.address, 'ds')
+  if (item.varName)
+    emit('hoverVariable', item.varName)
+  // Hovering a primitive pointer card mirrors the effect of hovering its
+  // byte in ByteMap — MemoryMap draws the primary arrow.
+  if (item.kind === 'pointer')
+    hover.setPointerArrow(pointerArrowFor(item.address))
+}
+
+function onItemLeave() {
+  hover.setHover(null, null)
+  emit('hoverVariable', null)
+}
+
+/** True when a CanvasArrow hover is pointing at the pointer this card holds
+ *  (primitive pointer items only — struct fields already highlight via
+ *  `data-field-addr` inside DSValue). */
+function isArrowSourceItem(item: DataItem): boolean {
+  return item.kind === 'pointer' && hover.fieldAddress.value === item.address
+}
+
 // ---- Color/shape for types ----
 
 const kindColors: Record<DataItem['kind'], string> = {
@@ -938,13 +997,14 @@ const kindBg: Record<DataItem['kind'], string> = {
             isHoverBoosted(item.address) ? 'bg-blue-500/20!' : '',
             !isHoverBoosted(item.address) && isStatementLhs(item.address) ? 'bg-blue-500/10!' : '',
             !isHoverBoosted(item.address) && isStatementRhs(item.address) && !isStatementLhs(item.address) ? 'bg-green-500/10!' : '',
-            !hasCodeHighlight(item.address) && isNodeHighlighted(item.address) ? 'bg-blue-500/10!' : '',
+            !hasCodeHighlight(item.address) && isArrowSourceItem(item) ? 'bg-blue-500/15! ring-1 ring-blue-400/40' : '',
+            !hasCodeHighlight(item.address) && isNodeHighlighted(item.address) && !isArrowSourceItem(item) ? 'bg-blue-500/10!' : '',
             item.dimmed ? 'opacity-40' : '',
           ]"
           :style="getItemStyle(`item-${item.address}`)"
           @click="!didDrag && emit('selectNode', item.address)"
-          @pointerenter="hover.setHover(item.address, 'ds'); item.varName && emit('hoverVariable', item.varName)"
-          @pointerleave="hover.setHover(null, null); emit('hoverVariable', null)"
+          @pointerenter="onItemEnter(item)"
+          @pointerleave="onItemLeave()"
         >
           <div class="mb-0.5 flex items-baseline gap-1.5 text-[10px]">
             <span class="text-gray-600 font-semibold dark:text-gray-400">{{ item.label }}</span>
@@ -969,7 +1029,7 @@ const kindBg: Record<DataItem['kind'], string> = {
           v-for="edge in arrowEdges"
           :key="edge.id"
           v-bind="getArrowProps(edge)"
-          @hover-field="hover.setField($event)"
+          @hover-field="onArrowHoverField"
         />
       </svg>
     </div>
