@@ -188,6 +188,7 @@ let suppressAutoPanOnce = false
 
 const {
   panOffset,
+  zoom,
   isPanning,
   didDrag,
   getDragDelta,
@@ -195,6 +196,9 @@ const {
   panToElement,
   resetPan,
   clampPan,
+  zoomIn,
+  zoomOut,
+  resetZoom,
 } = usePannableCanvas({
   canvasRef,
   hasContent: () => hasContent.value,
@@ -401,65 +405,16 @@ function measureAndPlace(): NodeListOf<HTMLElement> | null {
   if (treePlacedKeys.size > 0)
     placement.evictOverlapping(treePlacedKeys)
 
-  // Step 3: Place non-pointer standalone items first so pointer cards have
-  // anchors to place against in step 3.5.
-  const pointerItems = new Map<string, DataItem>()
-  for (const item of standaloneItems.value) {
-    const key = `item-${item.address}`
+  // Step 3: Place remaining standalone items. Primitive-pointer cards are
+  // treated exactly like any other standalone item — extra pointer arrows
+  // are drawn after layout regardless of where cards land. Coupling placement
+  // to pointer targets produced messy layouts; the arrows alone carry enough
+  // signal.
+  for (const el of els) {
+    const key = el.dataset.placeKey!
     if (treePlacedKeys.has(key))
       continue
-    if (item.kind === 'pointer') {
-      pointerItems.set(key, item)
-      continue
-    }
-    const size = measured.get(key)
-    if (!size)
-      continue
-    placement.placeNew(key, size.w, size.h)
-  }
-
-  // Step 3.5: Place primitive-pointer cards to the left of whatever allocation
-  // they point at, when that target already has a position. Two passes handle
-  // short chains (p1 -> p2 -> target). Anything still unplaced falls through
-  // to placeNew so it at least gets a position.
-  const POINTER_GAP = 28
-  for (let pass = 0; pass < 2 && pointerItems.size > 0; pass++) {
-    for (const [key, item] of [...pointerItems]) {
-      if (placement.getPosition(key))
-        continue
-      const size = measured.get(key)
-      if (!size)
-        continue
-      if (typeof item.type !== 'object' || item.type.type !== 'pointer')
-        continue
-      let target: number
-      try {
-        target = context.memory.readScalar(item.address, item.type) as number
-      }
-      catch {
-        continue
-      }
-      if (!target)
-        continue
-      const targetAlloc = context.memory.findAllocation(target)
-      if (!targetAlloc || targetAlloc.dead)
-        continue
-      const targetKey = addressToKey(targetAlloc.base)
-      if (!targetKey)
-        continue
-      if (!placement.getPosition(targetKey))
-        continue // target not yet placed — try next pass
-      placement.placeRelative(key, targetKey, size.w, size.h, 0, [size.h], 'left', POINTER_GAP)
-      pointerItems.delete(key)
-    }
-  }
-  // Fallback: any unresolved pointer items get a free-slot placement.
-  for (const [key] of pointerItems) {
-    if (placement.getPosition(key))
-      continue
-    const size = measured.get(key)
-    if (!size)
-      continue
+    const size = measured.get(key)!
     placement.placeNew(key, size.w, size.h)
   }
 
@@ -975,22 +930,58 @@ const kindBg: Record<DataItem['kind'], string> = {
     class="relative h-full select-none overflow-hidden p-2"
     :class="hasContent ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''"
   >
-    <!-- Auto-layout button -->
-    <button
+    <!-- Tool bar: zoom + auto-layout. Absolutely positioned so the pannable
+         canvas surface underneath stays un-obstructed by layout. -->
+    <div
       v-if="hasContent"
-      class="absolute right-2 top-2 z-10 rounded bg-gray-200/80 p-1 text-gray-500 transition-colors dark:bg-gray-700/80 hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
-      title="Auto-layout"
-      @click="autoLayout"
+      class="absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded bg-gray-200/80 p-0.5 text-gray-500 shadow-sm dark:bg-gray-700/80"
     >
-      <div class="i-carbon-flow h-3.5 w-3.5" />
-    </button>
+      <button
+        class="rounded p-1 transition-colors hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
+        title="Zoom out (Cmd/Ctrl+scroll)"
+        @click="zoomOut()"
+      >
+        <div class="i-carbon-zoom-out h-3.5 w-3.5" />
+      </button>
+      <button
+        class="min-w-10 rounded px-1 text-[10px] font-mono transition-colors hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
+        title="Reset zoom"
+        @click="resetZoom()"
+      >
+        {{ Math.round(zoom * 100) }}%
+      </button>
+      <button
+        class="rounded p-1 transition-colors hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
+        title="Zoom in (Cmd/Ctrl+scroll)"
+        @click="zoomIn()"
+      >
+        <div class="i-carbon-zoom-in h-3.5 w-3.5" />
+      </button>
+      <span class="mx-0.5 h-4 w-px bg-gray-400/40" />
+      <button
+        class="rounded p-1 transition-colors hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
+        title="Auto-layout"
+        @click="autoLayout"
+      >
+        <div class="i-carbon-flow h-3.5 w-3.5" />
+      </button>
+    </div>
 
     <!-- Empty state (outside the pan-transformed layer so it stays centered) -->
     <div v-if="!hasContent" class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-gray-500 italic">
       No data to display
     </div>
 
-    <div ref="contentRef" :style="{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }" class="relative">
+    <div
+      ref="contentRef"
+      :style="{
+        transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
+        // Scale around the content's top-left so the pan offset formula
+        // (`pan + p*z`) matches the CSS transform composition.
+        transformOrigin: '0 0',
+      }"
+      class="relative"
+    >
       <!-- Data items -->
       <div class="contents">
         <div
