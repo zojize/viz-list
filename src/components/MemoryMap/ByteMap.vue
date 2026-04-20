@@ -137,6 +137,17 @@ function bytesPerRowFor(width: number): number {
 const stackBytesPerRow = computed(() => bytesPerRowFor(stackWidth.value))
 const heapBytesPerRow = computed(() => bytesPerRowFor(heapWidth.value))
 
+// Wrapper is `flex items-center`, so a narrower row sits centered inside a
+// wider column. The overlay absolute-positions against the column itself,
+// not the row wrapper, so it needs the same left gutter to line up with
+// the byte cells. Row intrinsic width is `labelWidth + bpr * cellWidth`.
+function xOffsetFor(width: number, bpr: number): number {
+  const rowWidth = ADDRESS_LABEL_WIDTH + bpr * BYTE_CELL_WIDTH
+  return Math.max(0, (width - rowWidth) / 2)
+}
+const stackXOffset = computed(() => xOffsetFor(stackWidth.value, stackBytesPerRow.value))
+const heapXOffset = computed(() => xOffsetFor(heapWidth.value, heapBytesPerRow.value))
+
 // ---- Full-buffer row address arrays ----
 
 /** Stack column: addresses 0 to MEMORY_SIZE/2 - 1, low addr at top */
@@ -306,6 +317,7 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
               :cell-width="BYTE_CELL_WIDTH"
               :row-height="ROW_HEIGHT"
               :label-width="ADDRESS_LABEL_WIDTH"
+              :x-offset="stackXOffset"
               :lhs="lhsSet"
               :rhs="rhsSet"
               :changed="changed"
@@ -368,6 +380,7 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
               :cell-width="BYTE_CELL_WIDTH"
               :row-height="ROW_HEIGHT"
               :label-width="ADDRESS_LABEL_WIDTH"
+              :x-offset="heapXOffset"
               :lhs="lhsSet"
               :rhs="rhsSet"
               :changed="changed"
