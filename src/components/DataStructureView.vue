@@ -186,6 +186,13 @@ let placementRef: ReturnType<typeof usePlacementEngine> | undefined
 // the auto-pan that would otherwise undo a user drag out of the viewport.
 let suppressAutoPanOnce = false
 
+/** Reactive dep for geometry that isn't tracked by Vue (DOM rects). Bumped
+ *  after zoom updates settle into the DOM so the next render of the arrow
+ *  overlay re-measures with fresh getBoundingClientRect values. Without this
+ *  a zoom click renders one tick with stale rects and arrows appear offset
+ *  until the user pans. */
+const arrowGeometryTick = shallowRef(0)
+
 const {
   panOffset,
   zoom,
@@ -531,6 +538,18 @@ watch(hasContent, (has) => {
     resetPan()
 })
 
+// Zoom changes only flow into the CSS transform on contentRef; arrow
+// endpoints come from getBoundingClientRect which isn't a Vue dep. After the
+// DOM has applied the new scale we bump the tick so the arrow render runs
+// again with fresh rects. Without this, the first render after a zoom click
+// measures the pre-scale DOM and arrows stay at their old positions until
+// the user pans/interacts.
+watch(zoom, () => {
+  nextTick(() => {
+    arrowGeometryTick.value++
+  })
+})
+
 /** Get the final visual position of an item: placement + transient drag delta.
  *  Uses transform (GPU-accelerated) instead of left/top (triggers layout). */
 function getItemStyle(key: string) {
@@ -732,6 +751,10 @@ function measureFieldY(parentKey: string, fieldAddress: number): number | undefi
   if (!fieldEl)
     return undefined
 
+  // Touch the tick so the render re-runs once the DOM has actually settled
+  // into the new zoom scale. See arrowGeometryTick declaration for context.
+  // eslint-disable-next-line ts/no-unused-expressions
+  arrowGeometryTick.value
   const parentRect = parentEl.getBoundingClientRect()
   const fieldRect = fieldEl.getBoundingClientRect()
   // Offset within the parent + parent's content-space position.
