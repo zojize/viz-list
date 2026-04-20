@@ -41,7 +41,7 @@ const structName = computed(() => {
 
 <template>
   <div
-    class="cursor-pointer border border-l-3 border-gray-200 border-l-transparent rounded-md bg-white p-2 text-xs shadow-sm transition-all dark:border-gray-700 dark:bg-gray-900"
+    class="cursor-pointer border border-l-3 border-gray-200 rounded-md bg-white p-2 text-xs shadow-sm transition-all dark:border-gray-700 dark:bg-gray-900"
     :class="{
       'border-l-yellow-400!': changed,
     }"

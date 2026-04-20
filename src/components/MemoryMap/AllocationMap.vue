@@ -368,7 +368,7 @@ watch(hover.fieldAddress, (addr) => {
               :data-address="entry.address"
               data-anchor-edge="left"
               :data-testid="`stack-entry-${entry.address}`"
-              class="cursor-pointer border border-l-3 border-gray-200 border-l-transparent rounded-md bg-white font-mono shadow-sm transition-all duration-200 dark:border-gray-700 dark:bg-gray-900"
+              class="cursor-pointer border border-l-3 border-gray-200 rounded-md bg-white font-mono shadow-sm transition-all duration-200 dark:border-gray-700 dark:bg-gray-900"
               :class="{
                 'outline outline-2 outline-blue-400 bg-blue-500/20!': selectedAddress === entry.address,
                 'border-l-blue-500!': isStatementLhs(entry.address),
