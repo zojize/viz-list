@@ -393,12 +393,65 @@ function measureAndPlace(): NodeListOf<HTMLElement> | null {
   if (treePlacedKeys.size > 0)
     placement.evictOverlapping(treePlacedKeys)
 
-  // Step 3: Place remaining standalone items
-  for (const el of els) {
-    const key = el.dataset.placeKey!
+  // Step 3: Place non-pointer standalone items first so pointer cards have
+  // anchors to place against in step 3.5.
+  const pointerItems = new Map<string, DataItem>()
+  for (const item of standaloneItems.value) {
+    const key = `item-${item.address}`
     if (treePlacedKeys.has(key))
       continue
-    const size = measured.get(key)!
+    if (item.kind === 'pointer') {
+      pointerItems.set(key, item)
+      continue
+    }
+    const size = measured.get(key)
+    if (!size)
+      continue
+    placement.placeNew(key, size.w, size.h)
+  }
+
+  // Step 3.5: Place primitive-pointer cards to the left of whatever allocation
+  // they point at, when that target already has a position. Two passes handle
+  // short chains (p1 -> p2 -> target). Anything still unplaced falls through
+  // to placeNew so it at least gets a position.
+  const POINTER_GAP = 28
+  for (let pass = 0; pass < 2 && pointerItems.size > 0; pass++) {
+    for (const [key, item] of [...pointerItems]) {
+      if (placement.getPosition(key))
+        continue
+      const size = measured.get(key)
+      if (!size)
+        continue
+      if (typeof item.type !== 'object' || item.type.type !== 'pointer')
+        continue
+      let target: number
+      try {
+        target = context.memory.readScalar(item.address, item.type) as number
+      }
+      catch {
+        continue
+      }
+      if (!target)
+        continue
+      const targetAlloc = context.memory.findAllocation(target)
+      if (!targetAlloc || targetAlloc.dead)
+        continue
+      const targetKey = addressToKey(targetAlloc.base)
+      if (!targetKey)
+        continue
+      if (!placement.getPosition(targetKey))
+        continue // target not yet placed — try next pass
+      placement.placeRelative(key, targetKey, size.w, size.h, 0, [size.h], 'left', POINTER_GAP)
+      pointerItems.delete(key)
+    }
+  }
+  // Fallback: any unresolved pointer items get a free-slot placement.
+  for (const [key] of pointerItems) {
+    if (placement.getPosition(key))
+      continue
+    const size = measured.get(key)
+    if (!size)
+      continue
     placement.placeNew(key, size.w, size.h)
   }
 
@@ -641,6 +694,48 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
     if (fromKey) {
       edges.push({
         id: `dangling-${edge.fromFieldAddress}`,
+        fromKey,
+        toKey: undefined,
+        fieldAddress: edge.fromFieldAddress,
+        isCycle: false,
+        isDangling: true,
+        danglingLabel: formatAddr(edge.toAddress),
+        direction: edge.direction,
+        color: edge.color,
+        arrowStyle: edge.style,
+        fallbackStyle: edge.fallbackStyle,
+      })
+    }
+  }
+
+  // Extra (non-tree) pointer edges: primitive pointer variables, struct
+  // fields whose target is not a struct, etc. Rendered with direction
+  // 'dynamic' so the arrow picks the nearest borders on both ends.
+  for (const edge of graph.extraEdges) {
+    const fromKey = addressToKey(edge.fromAddress)
+    const toKey = addressToKey(edge.toAddress)
+    if (fromKey && toKey) {
+      edges.push({
+        id: `extra-${edge.fromFieldAddress}->${edge.toAddress}`,
+        fromKey,
+        toKey,
+        fieldAddress: edge.fromFieldAddress,
+        isCycle: false,
+        isDangling: false,
+        direction: edge.direction,
+        color: edge.color,
+        arrowStyle: edge.style,
+        fallbackStyle: edge.fallbackStyle,
+        arrowAnchor: getTargetAnchor(edge.toAddress),
+      })
+    }
+  }
+
+  for (const edge of graph.extraDanglingEdges) {
+    const fromKey = addressToKey(edge.fromAddress)
+    if (fromKey) {
+      edges.push({
+        id: `extra-dangling-${edge.fromFieldAddress}`,
         fromKey,
         toKey: undefined,
         fieldAddress: edge.fromFieldAddress,
