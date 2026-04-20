@@ -199,6 +199,24 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
   }
 
   /**
+   * Non-destructive attempt: place at (x, y) only if no currently-placed item
+   * would overlap. Used by callers (e.g. DS-view pointer placement) that want
+   * to probe several candidate slots and fall through to another strategy if
+   * none fit. Unlike `displaceAndPlace`, no other items move.
+   */
+  function tryPlaceAt(key: string, x: number, y: number, w: number, h: number): boolean {
+    const rect: Rect = { x, y, w, h }
+    for (const { rect: r } of getOccupiedKeyed(key)) {
+      if (rectsOverlap(rect, r))
+        return false
+    }
+    sizes.set(key, { w, h })
+    positions.set(key, { x, y })
+    version.value++
+    return true
+  }
+
+  /**
    * Place an item at a specific position, displacing any conflicting items.
    * Returns the list of displaced keys (caller can check for active drag conflicts).
    */
@@ -434,6 +452,7 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     setSize,
     placeNew,
     placeRelative,
+    tryPlaceAt,
     displaceAndPlace,
     reLayout,
     remove,

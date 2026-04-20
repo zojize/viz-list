@@ -412,17 +412,38 @@ function measureAndPlace(): NodeListOf<HTMLElement> | null {
   if (treePlacedKeys.size > 0)
     placement.evictOverlapping(treePlacedKeys)
 
-  // Step 3: Place remaining standalone items. Primitive-pointer cards are
-  // treated exactly like any other standalone item — extra pointer arrows
-  // are drawn after layout regardless of where cards land. Coupling placement
-  // to pointer targets produced messy layouts; the arrows alone carry enough
-  // signal.
-  for (const el of els) {
-    const key = el.dataset.placeKey!
+  // Step 3: Place non-pointer standalone items first so pointer cards (in
+  // step 3.5) can see their targets' positions.
+  const pointerItems: DataItem[] = []
+  for (const item of standaloneItems.value) {
+    const key = `item-${item.address}`
     if (treePlacedKeys.has(key))
       continue
-    const size = measured.get(key)!
+    const size = measured.get(key)
+    if (!size)
+      continue
+    if (item.kind === 'pointer') {
+      pointerItems.push(item)
+      continue
+    }
     placement.placeNew(key, size.w, size.h)
+  }
+
+  // Step 3.5: Place pointer cards, topo-sorted so targets land first when a
+  // chain of pointers points through each other (p1 -> p2 -> x). Each pointer
+  // is probed against four target-adjacent candidate slots; the closest free
+  // one wins. Past a distance cap it falls through to a free-slot placement
+  // so crowded graphs don't shove pointers into far corners just to hug the
+  // target.
+  const sortedPointers = topoSortPointers(pointerItems)
+  for (const item of sortedPointers) {
+    const key = `item-${item.address}`
+    const size = measured.get(key)
+    if (!size)
+      continue
+    const placedNearTarget = tryPlacePointerNearTarget(key, item, size)
+    if (!placedNearTarget)
+      placement.placeNew(key, size.w, size.h)
   }
 
   // Step 4: Retain only active keys
@@ -432,6 +453,99 @@ function measureAndPlace(): NodeListOf<HTMLElement> | null {
   placement.retainOnly(activeKeys)
 
   return els
+}
+
+/** Resolve a pointer item's target allocation base, or null if the pointer
+ *  is null / points outside any live allocation. */
+function pointerTargetBase(item: DataItem): number | null {
+  if (typeof item.type !== 'object' || item.type.type !== 'pointer')
+    return null
+  let raw: number
+  try {
+    raw = context.memory.readScalar(item.address, item.type) as number
+  }
+  catch {
+    return null
+  }
+  if (!raw)
+    return null
+  const alloc = context.memory.findAllocation(raw)
+  if (!alloc || alloc.dead)
+    return null
+  return alloc.base
+}
+
+/** DFS-based topological sort: targets come before pointers that reference
+ *  them. Pointer-to-pointer cycles fall through in original order so we
+ *  always place every item exactly once. */
+function topoSortPointers(items: DataItem[]): DataItem[] {
+  const byAddr = new Map(items.map(i => [i.address, i]))
+  const visited = new Set<number>()
+  const onPath = new Set<number>()
+  const sorted: DataItem[] = []
+  function visit(item: DataItem) {
+    if (visited.has(item.address) || onPath.has(item.address))
+      return
+    onPath.add(item.address)
+    const tgt = pointerTargetBase(item)
+    if (tgt !== null) {
+      const depItem = byAddr.get(tgt)
+      if (depItem)
+        visit(depItem)
+    }
+    onPath.delete(item.address)
+    visited.add(item.address)
+    sorted.push(item)
+  }
+  for (const item of items) visit(item)
+  return sorted
+}
+
+/** Try four target-adjacent candidate slots (right, left, below, above) and
+ *  place the pointer at the closest one that's free and within a distance
+ *  cap. Returns true on success. */
+function tryPlacePointerNearTarget(key: string, item: DataItem, size: { w: number, h: number }): boolean {
+  const tgtBase = pointerTargetBase(item)
+  if (tgtBase === null)
+    return false
+  const targetKey = addressToKey(tgtBase)
+  if (!targetKey)
+    return false
+  const tPos = placement.getPosition(targetKey)
+  const tSize = placement.getSize(targetKey)
+  if (!tPos || !tSize)
+    return false
+
+  const gap = 20
+  // Distance cap: ~2x the bigger of the two card dimensions. Past that the
+  // "near target" heuristic breaks down and free-slot placement looks
+  // cleaner in crowded graphs.
+  const maxDist = 2 * Math.max(tSize.w, tSize.h, size.w, size.h)
+
+  const tCx = tPos.x + tSize.w / 2
+  const tCy = tPos.y + tSize.h / 2
+  const candidates = [
+    { x: tPos.x + tSize.w + gap, y: tCy - size.h / 2 }, // right
+    { x: tPos.x - size.w - gap, y: tCy - size.h / 2 }, // left
+    { x: tCx - size.w / 2, y: tPos.y + tSize.h + gap }, // below
+    { x: tCx - size.w / 2, y: tPos.y - size.h - gap }, // above
+  ]
+
+  // Walk nearest → farthest until one commits successfully. Candidate list
+  // is tiny, so sort is trivial; tryPlaceAt is the only side-effect.
+  const ordered = candidates
+    .map((c) => {
+      const cx = c.x + size.w / 2
+      const cy = c.y + size.h / 2
+      return { ...c, d: Math.hypot(cx - tCx, cy - tCy) }
+    })
+    .filter(c => c.d <= maxDist)
+    .sort((a, b) => a.d - b.d)
+  for (const c of ordered) {
+    if (placement.tryPlaceAt(key, c.x, c.y, size.w, size.h))
+      return true
+  }
+  return false
 }
 
 /** Recursively place children of a tree node via placeRelative */
