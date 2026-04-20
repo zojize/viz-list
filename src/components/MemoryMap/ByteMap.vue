@@ -272,7 +272,7 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
           data-overlay-clip-region
           class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto overscroll-none"
         >
-          <div v-show="stackWidth > 0" v-bind="stackWrapperProps">
+          <div v-show="stackWidth > 0" v-bind="stackWrapperProps" class="flex flex-col items-center">
             <!-- Key by virtual-list index, NOT item.data (row-start address).
                  When bytesPerRow changes (splitpane drag), row addresses shift
                  so keying by address would unmount/re-mount every visible row.
@@ -337,7 +337,12 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
           data-overlay-clip-region
           class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto overscroll-none"
         >
-          <div v-show="heapWidth > 0" v-bind="heapWrapperProps">
+          <div v-show="heapWidth > 0" v-bind="heapWrapperProps" class="flex flex-col items-center">
+            <!-- Key by virtual-list index, NOT item.data (row-start address).
+                 When bytesPerRow changes (splitpane drag), row addresses shift
+                 so keying by address would unmount/re-mount every visible row.
+                 Keying by index reuses the same components and just updates
+                 their props. -->
             <MemoryMapByteRow
               v-for="item in heapList"
               :key="item.index"
