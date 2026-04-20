@@ -182,6 +182,10 @@ const contentRef = shallowRef<HTMLElement | null>(null)
 // Forward-declare placement so onDragEnd can reference it
 let placementRef: ReturnType<typeof usePlacementEngine> | undefined
 
+// One-shot flag set by onDragEnd; consumed (and reset) by onUpdated to skip
+// the auto-pan that would otherwise undo a user drag out of the viewport.
+let suppressAutoPanOnce = false
+
 const {
   panOffset,
   isPanning,
@@ -200,6 +204,10 @@ const {
       placementRef?.setPosition(key, pos.x + dx, pos.y + dy)
       placementRef?.markUserDragged(key)
     }
+    // The user intentionally placed the item wherever they released — even if
+    // that's outside the current viewport. Suppress the one-shot auto-pan
+    // that would otherwise pull the scene back to re-cover all content.
+    suppressAutoPanOnce = true
   },
   contentBounds: () => placementRef?.getContentBounds() ?? null,
 })
@@ -550,12 +558,14 @@ onUpdated(() => nextTick(() => {
       const viewTop = -panOffset.y
       const viewRight = viewLeft + canvas.clientWidth
       const viewBottom = viewTop + canvas.clientHeight
-      if (bounds.minX < viewLeft || bounds.minY < viewTop
-        || bounds.maxX > viewRight || bounds.maxY > viewBottom) {
+      if (!suppressAutoPanOnce
+        && (bounds.minX < viewLeft || bounds.minY < viewTop
+          || bounds.maxX > viewRight || bounds.maxY > viewBottom)) {
         autoPanToContent()
       }
     }
   }
+  suppressAutoPanOnce = false
 
   clampPan()
 }))
