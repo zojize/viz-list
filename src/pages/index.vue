@@ -8,6 +8,7 @@ import { computed, markRaw, nextTick, onMounted, readonly, shallowRef, useTempla
 import { Language, Parser } from 'web-tree-sitter'
 import DataStructureView from '~/components/DataStructureView.vue'
 import FieldTable from '~/components/FieldTable.vue'
+import InfoModal from '~/components/InfoModal.vue'
 import MemoryMap from '~/components/MemoryMap/MemoryMap.vue'
 import { useCppInterpreter } from '~/composables/useCppInterpreter'
 import { provideHoverHighlight } from '~/composables/useHoverHighlight'
@@ -709,120 +710,5 @@ onMounted(() => nextTick(reparentMonaco))
     </div>
   </div>
 
-  <!-- Info modal -->
-  <Teleport to="body">
-    <Transition
-      enter-active-class="transition-all duration-200 ease-out"
-      enter-from-class="opacity-0"
-      leave-active-class="transition-all duration-150 ease-in"
-      leave-to-class="opacity-0"
-    >
-      <div v-if="infoOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="infoOpen = false">
-        <div class="relative mx-4 max-h-[80vh] max-w-lg w-full overflow-y-auto border border-gray-200 rounded-xl bg-white p-6 shadow-xl dark:border-gray-700 dark:bg-gray-900">
-          <button
-            class="absolute right-3 top-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-            @click="infoOpen = false"
-          >
-            <div class="i-carbon-close h-4 w-4" />
-          </button>
-
-          <h2 class="mb-4 text-base text-gray-800 font-semibold dark:text-gray-200">
-            How to use
-          </h2>
-
-          <p class="mb-3 text-xs text-gray-500 dark:text-gray-500">
-            This tool interprets a subset of C++ — not the full language, but enough to
-            visualize common data structures and algorithms (structs, pointers, arrays,
-            new/delete, functions, loops, conditionals).
-          </p>
-
-          <div class="text-xs text-gray-600 leading-relaxed space-y-4 dark:text-gray-400">
-            <section>
-              <h3 class="mb-1 text-sm text-gray-700 font-medium dark:text-gray-300">
-                Editor
-              </h3>
-              <ul class="list-disc pl-4 space-y-0.5">
-                <li>Write or edit C++ code in the left panel</li>
-                <li>Choose a template from the dropdown to load example code</li>
-                <li>Share your code via the share button (copies a URL to clipboard)</li>
-              </ul>
-            </section>
-
-            <section>
-              <h3 class="mb-1 text-sm text-gray-700 font-medium dark:text-gray-300">
-                Playback
-              </h3>
-              <ul class="list-disc pl-4 space-y-0.5">
-                <li><b>Step</b> executes one statement at a time</li>
-                <li><b>Run</b> plays through continuously at the selected speed</li>
-                <li><b>Pause</b> stops continuous playback</li>
-                <li><b>Reset</b> clears execution state and returns to editing</li>
-                <li>Adjust the speed slider to control playback pace</li>
-              </ul>
-            </section>
-
-            <section>
-              <h3 class="mb-1 text-sm text-gray-700 font-medium dark:text-gray-300">
-                Memory Map
-              </h3>
-              <ul class="list-disc pl-4 space-y-0.5">
-                <li>Stack and heap are shown side by side</li>
-                <li>
-                  Left border color indicates current statement involvement:
-                  <b class="text-blue-500">blue</b> = write target,
-                  <b class="text-green-500">green</b> = read source
-                </li>
-                <li>Click any cell to open its detail panel</li>
-                <li>Hover a cell to cross-highlight in the DS view</li>
-                <li>Hover a variable name to highlight its declaration in the editor</li>
-              </ul>
-            </section>
-
-            <section>
-              <h3 class="mb-1 text-sm text-gray-700 font-medium dark:text-gray-300">
-                Data Structure View
-              </h3>
-              <ul class="list-disc pl-4 space-y-0.5">
-                <li>Structs and variables are visualized as draggable cards</li>
-                <li>Arrows show pointer connections between structs</li>
-                <li><b>Drag</b> any item to rearrange the layout</li>
-                <li><b>Scroll</b> (wheel) to pan the canvas</li>
-                <li><b>Auto-layout</b> button resets all positions</li>
-                <li>Click an item to open its detail panel</li>
-                <li>
-                  Background tint shows current-statement involvement
-                  (<span class="text-blue-500">blue</span> = LHS,
-                  <span class="text-green-500">green</span> = RHS)
-                </li>
-              </ul>
-            </section>
-
-            <section>
-              <h3 class="mb-1 text-sm text-gray-700 font-medium dark:text-gray-300">
-                Annotations
-              </h3>
-              <p>Add JSDoc comments before struct fields or struct definitions to customize arrow rendering:</p>
-              <pre class="mt-1 rounded bg-gray-100 p-2 text-[10px] font-mono dark:bg-gray-800"><code>/** @arrow-anchor closest @arrow-size 30 */
-struct ListNode {
-  int data;
-  /** @arrow-position right
-    * @arrow-color #4ade80
-    * @arrow-style horizontal
-    * @arrow-fallback-style orthogonal */
-  ListNode *next;
-};</code></pre>
-              <ul class="mt-1.5 list-disc pl-4 space-y-0.5">
-                <li><b>@arrow-position</b> right | left | dynamic</li>
-                <li><b>@arrow-style</b> bezier | straight | horizontal | orthogonal</li>
-                <li><b>@arrow-fallback-style</b> style to use when primary can't connect</li>
-                <li><b>@arrow-color</b> any CSS color</li>
-                <li><b>@arrow-anchor</b> center | closest (on struct)</li>
-                <li><b>@arrow-size</b> gap in px between connected items (on struct)</li>
-              </ul>
-            </section>
-          </div>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
+  <InfoModal v-model:open="infoOpen" />
 </template>
