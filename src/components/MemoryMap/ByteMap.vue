@@ -236,16 +236,25 @@ onActivated(() => {
 // interesting allocations sit near the bottom). Mirrors the AllocationMap
 // behaviour: bring the target row into view so the arrow has something to
 // point at without the user manually scrolling.
+//
+// Skip scrolling if the target lives in the same column the user is already
+// hovering — the cursor is anchored to a specific row there, and yanking
+// that column away loses the hover context and the arrow alike.
 watch(() => hover.pointerArrow.value?.target, (target) => {
   if (target == null || target <= 0)
     return
   const half = MEMORY_SIZE / 2
+  const src = hover.source.value
   if (target < half) {
+    if (src === 'byte-stack')
+      return
     const bpr = stackBytesPerRow.value
     if (bpr > 0)
       stackScrollToIdx(Math.floor(target / bpr))
   }
   else {
+    if (src === 'byte-heap')
+      return
     const bpr = heapBytesPerRow.value
     if (bpr > 0)
       heapScrollToIdx(Math.floor((target - half) / bpr))
