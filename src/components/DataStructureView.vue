@@ -435,13 +435,16 @@ function measureAndPlace(): NodeListOf<HTMLElement> | null {
   const sortedPointers = topoSortPointers(pointerItems)
   for (const item of sortedPointers) {
     const key = `item-${item.address}`
-    // Idempotent like placeNew: if already placed on a prior pass keep the
-    // position so re-renders don't re-probe and bump placement.version.
-    if (placement.getPosition(key))
-      continue
     const size = measured.get(key)
     if (!size)
       continue
+    if (placement.getPosition(key)) {
+      // Already placed — consider relocating closer to target if the target
+      // has since moved far enough to open a significantly better slot.
+      // Guarded by a hysteresis threshold to prevent chasing small drifts.
+      maybeRelocatePointerNearTarget(key, item, size)
+      continue
+    }
     const placedNearTarget = tryPlacePointerNearTarget(key, item, size)
     if (!placedNearTarget)
       placement.placeNew(key, size.w, size.h)
@@ -543,6 +546,72 @@ function gutterCandidate(
   return null
 }
 
+/** Candidate slots around `target` that a pointer card might occupy:
+ *  four sides at a fixed gap + an optional gutter between target and its
+ *  tree parent when the gap is wide enough. Shared by initial placement
+ *  and relocation so both paths consider the same geometry. */
+function pointerCandidatesAround(
+  tgtBase: number,
+  tPos: { x: number, y: number },
+  tSize: { w: number, h: number },
+  size: { w: number, h: number },
+): Array<{ x: number, y: number }> {
+  const gap = 20
+  const tCx = tPos.x + tSize.w / 2
+  const tCy = tPos.y + tSize.h / 2
+  const candidates: Array<{ x: number, y: number }> = [
+    { x: tPos.x + tSize.w + gap, y: tCy - size.h / 2 },
+    { x: tPos.x - size.w - gap, y: tCy - size.h / 2 },
+    { x: tCx - size.w / 2, y: tPos.y + tSize.h + gap },
+    { x: tCx - size.w / 2, y: tPos.y - size.h - gap },
+  ]
+  const gutter = gutterCandidate(tgtBase, tPos, tSize, size)
+  if (gutter)
+    candidates.push(gutter)
+  return candidates
+}
+
+/** If the pointer is already placed but the target has drifted so far that
+ *  a candidate slot is now meaningfully closer, relocate it. A
+ *  hysteresis threshold prevents oscillation: we only move when the
+ *  improvement exceeds ~40px, so a series of small target nudges doesn't
+ *  thrash the pointer back and forth. */
+const RELOCATION_HYSTERESIS = 40
+function maybeRelocatePointerNearTarget(key: string, item: DataItem, size: { w: number, h: number }) {
+  const tgtBase = pointerTargetBase(item)
+  if (tgtBase === null)
+    return
+  const targetKey = addressToKey(tgtBase)
+  if (!targetKey)
+    return
+  const tPos = placement.getPosition(targetKey)
+  const tSize = placement.getSize(targetKey)
+  const currentPos = placement.getPosition(key)
+  if (!tPos || !tSize || !currentPos)
+    return
+  const tCx = tPos.x + tSize.w / 2
+  const tCy = tPos.y + tSize.h / 2
+  const currentDist = Math.hypot(
+    currentPos.x + size.w / 2 - tCx,
+    currentPos.y + size.h / 2 - tCy,
+  )
+  const threshold = currentDist - RELOCATION_HYSTERESIS
+  if (threshold <= 0)
+    return
+  const ordered = pointerCandidatesAround(tgtBase, tPos, tSize, size)
+    .map((c) => {
+      const cx = c.x + size.w / 2
+      const cy = c.y + size.h / 2
+      return { ...c, d: Math.hypot(cx - tCx, cy - tCy) }
+    })
+    .filter(c => c.d < threshold)
+    .sort((a, b) => a.d - b.d)
+  for (const c of ordered) {
+    if (placement.tryPlaceAt(key, c.x, c.y, size.w, size.h))
+      return
+  }
+}
+
 /** Try target-adjacent candidate slots (right, left, below, above, plus an
  *  optional "gutter between target and its tree parent" slot when an
  *  arrow-size override leaves room) and place the pointer at the closest
@@ -559,7 +628,6 @@ function tryPlacePointerNearTarget(key: string, item: DataItem, size: { w: numbe
   if (!tPos || !tSize)
     return false
 
-  const gap = 20
   // Distance cap: ~2x the bigger of the two card dimensions. Past that the
   // "near target" heuristic breaks down and free-slot placement looks
   // cleaner in crowded graphs.
@@ -567,19 +635,10 @@ function tryPlacePointerNearTarget(key: string, item: DataItem, size: { w: numbe
 
   const tCx = tPos.x + tSize.w / 2
   const tCy = tPos.y + tSize.h / 2
-  const candidates: Array<{ x: number, y: number }> = [
-    { x: tPos.x + tSize.w + gap, y: tCy - size.h / 2 }, // right
-    { x: tPos.x - size.w - gap, y: tCy - size.h / 2 }, // left
-    { x: tCx - size.w / 2, y: tPos.y + tSize.h + gap }, // below
-    { x: tCx - size.w / 2, y: tPos.y - size.h - gap }, // above
-  ]
-  const gutter = gutterCandidate(tgtBase, tPos, tSize, size)
-  if (gutter)
-    candidates.push(gutter)
 
   // Walk nearest → farthest until one commits successfully. Candidate list
   // is tiny, so sort is trivial; tryPlaceAt is the only side-effect.
-  const ordered = candidates
+  const ordered = pointerCandidatesAround(tgtBase, tPos, tSize, size)
     .map((c) => {
       const cx = c.x + size.w / 2
       const cy = c.y + size.h / 2
