@@ -626,23 +626,25 @@ onUpdated(() => nextTick(() => {
   if (els)
     animateEnterLeave(els)
 
-  // Auto-pan when content bounds changed and items are outside the visible viewport
+  // Step-triggered auto-relayout. When content bounds changed AND anything
+  // is now outside the viewport, re-run layout preserving user drags. If the
+  // re-layout still overflows, we don't fall through to auto-pan — panning
+  // can't shrink content that doesn't fit, and the user's current pan is
+  // typically a better anchor than a forced top-left realignment.
   const bounds = placement.getContentBounds()
   const canvas = canvasRef.value
   if (bounds && canvas) {
     const boundsKey = `${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}`
     if (boundsKey !== prevBoundsKey) {
       prevBoundsKey = boundsKey
-      // Check if any content is outside the current viewport
       const viewLeft = -panOffset.x
       const viewTop = -panOffset.y
       const viewRight = viewLeft + canvas.clientWidth
       const viewBottom = viewTop + canvas.clientHeight
-      if (!suppressAutoPanOnce
-        && (bounds.minX < viewLeft || bounds.minY < viewTop
-          || bounds.maxX > viewRight || bounds.maxY > viewBottom)) {
-        autoPanToContent()
-      }
+      const overflows = bounds.minX < viewLeft || bounds.minY < viewTop
+        || bounds.maxX > viewRight || bounds.maxY > viewBottom
+      if (!suppressAutoPanOnce && overflows)
+        autoRelayoutKeepingDrags()
     }
   }
   suppressAutoPanOnce = false
@@ -939,15 +941,6 @@ function getArrowProps(edge: ArrowEdge | DanglingArrowEdge) {
 
 // ---- Auto-layout ----
 
-function currentLayoutItemCount(): number {
-  return standaloneItems.value.length
-    + pointerGraph.value.trees.reduce((n, t) => n + t.nodes.size, 0)
-}
-
-// Snapshot of the placed-item count we re-laid to; only fire the idle pass
-// when structure has actually changed. Pans/clicks shouldn't trigger it.
-let lastRelayoutItemCount = 0
-
 function autoLayout() {
   // Clear positions (keep sizes) so measureAndPlace re-places from scratch.
   // Call measureAndPlace immediately so the re-render sees final positions
@@ -958,68 +951,17 @@ function autoLayout() {
   settlingKeys.clear()
   resetPan()
   measureAndPlace()
-  // Sync the idle-relayout counter so the debounced watcher doesn't refire
-  // immediately after a manual Auto-layout click.
-  lastRelayoutItemCount = currentLayoutItemCount()
 }
 
-// ---- Idle auto-relayout ----
-// Items placed early in a run-through don't know about structure that appears
-// later, so the final layout can be messy until the user clicks Auto-layout.
-// This debounced trigger re-lays automatically after activity stops —
-// typically at breakpoints or after a slow step, but never during a fast run
-// (memoryVersion keeps ticking below the debounce window). User-dragged items
-// are preserved so manual placements aren't clobbered.
-const IDLE_RELAYOUT_MS = 400
-let idleTimer: ReturnType<typeof setTimeout> | null = null
-function scheduleIdleRelayout() {
-  if (idleTimer !== null)
-    clearTimeout(idleTimer)
-  idleTimer = setTimeout(() => {
-    idleTimer = null
-    const current = currentLayoutItemCount()
-    if (current === lastRelayoutItemCount)
-      return
-    lastRelayoutItemCount = current
-    placement.clearPositions(true) // keep user-dragged positions
-    prevChildToParent.clear()
-    prevParentToChildren.clear()
-    settlingKeys.clear()
-    // Don't resetPan — user may have panned into a specific area and an idle
-    // relayout shouldn't yank the viewport back to origin.
-    measureAndPlace()
-  }, IDLE_RELAYOUT_MS)
-}
-watch(() => context.memoryVersion, () => {
-  scheduleIdleRelayout()
-})
-
-// ---- Auto-pan to cover content after placement ----
-
-function autoPanToContent() {
-  const bounds = placement.getContentBounds()
-  const canvas = canvasRef.value
-  if (!bounds || !canvas)
-    return
-  const cw = canvas.clientWidth
-  const ch = canvas.clientHeight
-
-  // Center content in the viewport if it fits, otherwise align top-left with margin
-  const contentW = bounds.maxX - bounds.minX
-  const contentH = bounds.maxY - bounds.minY
-  const margin = 16
-
-  if (contentW <= cw && contentH <= ch) {
-    // Content fits: center it
-    panOffset.x = (cw - contentW) / 2 - bounds.minX
-    panOffset.y = (ch - contentH) / 2 - bounds.minY
-  }
-  else {
-    // Content overflows: align top-left with margin, prefer showing larger structures
-    panOffset.x = margin - bounds.minX
-    panOffset.y = margin - bounds.minY
-  }
-  clampPan()
+/** Step-triggered variant used from onUpdated when new structure overflows
+ *  the viewport. Preserves user-dragged positions and the current pan —
+ *  we're just compacting the layout, not re-centering it. */
+function autoRelayoutKeepingDrags() {
+  placement.clearPositions(true) // keep user-dragged positions
+  prevChildToParent.clear()
+  prevParentToChildren.clear()
+  settlingKeys.clear()
+  measureAndPlace()
 }
 
 // Auto-pan to selected node
