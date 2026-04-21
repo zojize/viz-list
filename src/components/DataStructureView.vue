@@ -212,13 +212,12 @@ const {
   hasContent: () => hasContent.value,
   onDragEnd(key, dx, dy) {
     const pos = placementRef?.getPosition(key)
-    if (pos) {
+    if (pos)
       placementRef?.setPosition(key, pos.x + dx, pos.y + dy)
-      placementRef?.markUserDragged(key)
-    }
-    // The user intentionally placed the item wherever they released — even if
-    // that's outside the current viewport. Suppress the one-shot auto-pan
-    // that would otherwise pull the scene back to re-cover all content.
+    // The drag commits a position that the next triggered relayout is free
+    // to override — we no longer track user drags as sticky. Suppress the
+    // one-shot auto-relayout so the dropped position survives at least the
+    // immediate bounds-change reaction (feels less teleporty).
     suppressAutoPanOnce = true
   },
   contentBounds: () => placementRef?.getContentBounds() ?? null,
@@ -344,11 +343,8 @@ function invalidateStaleTreePositions(
     }
   }
 
-  // Apply invalidation (skip user-dragged items)
-  for (const key of expanded) {
-    if (!placement.isUserDragged(key))
-      placement.remove(key)
-  }
+  for (const key of expanded)
+    placement.remove(key)
 
   // Update stored maps
   prevChildToParent.clear()
@@ -645,7 +641,7 @@ onUpdated(() => nextTick(() => {
       const overflows = bounds.minX < viewLeft || bounds.minY < viewTop
         || bounds.maxX > viewRight || bounds.maxY > viewBottom
       if (!suppressAutoPanOnce && overflows) {
-        autoRelayoutKeepingDrags()
+        autoRelayoutInPlace()
         // After re-layout, guarantee "everything on screen" by scaling down
         // and centering. If content already fits, this just re-centers at
         // the current zoom; if not, it zooms out enough to show the full
@@ -961,10 +957,11 @@ function autoLayout() {
 }
 
 /** Step-triggered variant used from onUpdated when new structure overflows
- *  the viewport. Preserves user-dragged positions and the current pan —
- *  we're just compacting the layout, not re-centering it. */
-function autoRelayoutKeepingDrags() {
-  placement.clearPositions(true) // keep user-dragged positions
+ *  the viewport. Wipes positions (no user-drag exception — we no longer
+ *  treat drags as sticky) and re-places from scratch, but keeps the
+ *  current pan / zoom so the viewport frame stays stable. */
+function autoRelayoutInPlace() {
+  placement.clearPositions()
   prevChildToParent.clear()
   prevParentToChildren.clear()
   settlingKeys.clear()

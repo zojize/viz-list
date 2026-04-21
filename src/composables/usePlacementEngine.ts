@@ -42,7 +42,6 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
 
   const positions = new Map<string, { x: number, y: number }>()
   const sizes = new Map<string, { w: number, h: number }>()
-  const userDragged = new Set<string>()
   const version = shallowRef(0)
 
   // ---- Basic accessors ----
@@ -64,23 +63,6 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
   function setPosition(key: string, x: number, y: number) {
     positions.set(key, { x, y })
     version.value++
-  }
-
-  // ---- User drag tracking ----
-
-  function markUserDragged(key: string) {
-    userDragged.add(key)
-  }
-
-  function clearUserDragged(key?: string) {
-    if (key)
-      userDragged.delete(key)
-    else
-      userDragged.clear()
-  }
-
-  function isUserDragged(key: string): boolean {
-    return userDragged.has(key)
   }
 
   // ---- Occupied rectangles ----
@@ -268,12 +250,11 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
   }
 
   /**
-   * Full re-layout: clear all positions and user drags, re-place in order.
+   * Full re-layout: clear all positions, re-place in order.
    * Tree items should be placed first (via placeRelative after this), then singletons.
    */
   function reLayout(orderedKeys: { key: string, w: number, h: number }[]) {
     positions.clear()
-    userDragged.clear()
 
     const container = options.containerSize?.()
     const occupied: Rect[] = []
@@ -400,7 +381,6 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
   function remove(key: string) {
     positions.delete(key)
     sizes.delete(key)
-    userDragged.delete(key)
     version.value++
   }
 
@@ -410,7 +390,6 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
       if (!keys.has(k)) {
         positions.delete(k)
         sizes.delete(k)
-        userDragged.delete(k)
         changed = true
       }
     }
@@ -418,30 +397,15 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
       version.value++
   }
 
-  /**
-   * Clear positions only (keep sizes for immediate re-placement).
-   *  `keepUserDragged` preserves both the positions and the user-dragged flag
-   *  for items the user manually moved — used by the idle auto-relayout path
-   *  so a debounced reshuffle doesn't clobber manual placements.
-   */
-  function clearPositions(keepUserDragged = false) {
-    if (keepUserDragged) {
-      for (const k of [...positions.keys()]) {
-        if (!userDragged.has(k))
-          positions.delete(k)
-      }
-    }
-    else {
-      positions.clear()
-      userDragged.clear()
-    }
+  /** Clear positions only (keep sizes for immediate re-placement). */
+  function clearPositions() {
+    positions.clear()
     version.value++
   }
 
   function clear() {
     positions.clear()
     sizes.clear()
-    userDragged.clear()
     version.value++
   }
 
@@ -483,9 +447,6 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     retainOnly,
     clear,
     getContentBounds,
-    markUserDragged,
-    clearUserDragged,
-    isUserDragged,
     evictOverlapping,
     clearPositions,
     version: readonly(version),
