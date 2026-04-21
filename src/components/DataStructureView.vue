@@ -623,30 +623,38 @@ onUpdated(() => nextTick(() => {
   if (els)
     animateEnterLeave(els)
 
-  // Step-triggered auto-relayout. When content bounds changed AND anything
-  // is now outside the viewport, re-run layout preserving user drags. If the
-  // re-layout still overflows, we don't fall through to auto-pan — panning
-  // can't shrink content that doesn't fit, and the user's current pan is
-  // typically a better anchor than a forced top-left realignment.
+  // Step-triggered auto-relayout. When bounds changed AND the content's
+  // rendered extents fall outside the viewport, re-run layout and then
+  // auto-scale so everything fits.
   const bounds = placement.getContentBounds()
   const canvas = canvasRef.value
   if (bounds && canvas) {
     const boundsKey = `${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}`
     if (boundsKey !== prevBoundsKey) {
       prevBoundsKey = boundsKey
-      const viewLeft = -panOffset.x
-      const viewTop = -panOffset.y
-      const viewRight = viewLeft + canvas.clientWidth
-      const viewBottom = viewTop + canvas.clientHeight
-      const overflows = bounds.minX < viewLeft || bounds.minY < viewTop
-        || bounds.maxX > viewRight || bounds.maxY > viewBottom
+      // Overflow check MUST operate in screen space — content-space bounds
+      // alone don't encode the current zoom. Doing it in content-space would
+      // misfire at zoom != 1 and keep re-triggering autoRelayout, freezing
+      // the UI under the runaway reaction.
+      const z = zoom.value
+      const cw = canvas.clientWidth
+      const ch = canvas.clientHeight
+      const renderedLeft = panOffset.x + bounds.minX * z
+      const renderedTop = panOffset.y + bounds.minY * z
+      const renderedRight = panOffset.x + bounds.maxX * z
+      const renderedBottom = panOffset.y + bounds.maxY * z
+      const overflows = renderedLeft < 0 || renderedTop < 0
+        || renderedRight > cw || renderedBottom > ch
       if (!suppressAutoPanOnce && overflows) {
         autoRelayoutInPlace()
-        // After re-layout, guarantee "everything on screen" by scaling down
-        // and centering. If content already fits, this just re-centers at
-        // the current zoom; if not, it zooms out enough to show the full
-        // bounding box (or clamps at MIN_ZOOM when even that isn't enough).
         autoScaleToFit()
+        // Relayout + scale moved positions → bounds key stored above is now
+        // stale. Snap prev to the post-relayout bounds so the next
+        // onUpdated doesn't see "bounds changed" and re-enter this branch
+        // for the same structural state.
+        const nb = placement.getContentBounds()
+        if (nb)
+          prevBoundsKey = `${nb.minX},${nb.minY},${nb.maxX},${nb.maxY}`
       }
     }
   }
