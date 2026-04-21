@@ -101,13 +101,40 @@ function getFieldValues(address: number, alloc: Allocation): Map<string, { type:
   if (!layout || layout.kind !== 'struct')
     return undefined
   const map = new Map<string, { type: CppType, value: CppValue, address: number }>()
+
+  // Expand array fields into one row per element (e.g. `keys[0]`, `keys[1]`,
+  // `children[0]`…) so the user sees every byte accounted for and the
+  // current-statement highlight can land on the exact element being
+  // written. Nested arrays recurse with subscript prefixes.
+  function flattenArray(prefix: string, elemNode: LayoutNode, elemAddr: number, length: number, stride: number) {
+    for (let i = 0; i < length; i++) {
+      const addr = elemAddr + i * stride
+      const subscript = `${prefix}[${i}]`
+      if (elemNode.kind === 'array') {
+        flattenArray(subscript, elemNode.element, addr, elemNode.length, elemNode.stride)
+        continue
+      }
+      map.set(subscript, {
+        type: fieldNodeToType(elemNode),
+        value: readByLayout(addr, elemNode),
+        address: addr,
+      })
+    }
+  }
+
   for (const field of layout.fields) {
     const fieldAddr = address + field.offset
-    const fieldType = fieldNodeToType(field.node)
+    if (field.node.kind === 'array') {
+      flattenArray(field.name, field.node.element, fieldAddr, field.node.length, field.node.stride)
+      continue
+    }
     // Read based on the FIELD'S own layout node — findAllocation would return
     // the enclosing struct, which would mis-type primitive/pointer fields as structs.
-    const fieldValue = readByLayout(fieldAddr, field.node)
-    map.set(field.name, { type: fieldType, value: fieldValue, address: fieldAddr })
+    map.set(field.name, {
+      type: fieldNodeToType(field.node),
+      value: readByLayout(fieldAddr, field.node),
+      address: fieldAddr,
+    })
   }
   return map
 }
@@ -500,6 +527,8 @@ watch(hover.fieldAddress, (addr) => {
               :field-values="entry.fields"
               :changed="changedAddresses.has(entry.cell.address)"
               :highlighted-field-address="hover.fieldAddress.value"
+              :statement-lhs-addresses="statementLhsAddresses"
+              :statement-rhs-addresses="statementRhsAddresses"
               :class="{
                 'outline outline-2 outline-blue-400': selectedAddress === entry.cell.address,
                 'border-l-blue-500!': isStatementLhs(entry.cell.address),
