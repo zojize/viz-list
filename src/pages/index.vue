@@ -14,6 +14,7 @@ import { provideHoverHighlight } from '~/composables/useHoverHighlight'
 import { provideInterpreterContext } from '~/composables/useInterpreterContext'
 import { snapshotSpace, useMemoryDiff } from '~/composables/useMemoryDiff'
 import { useMonacoEditor } from '~/composables/useMonacoEditor'
+import { usePointerGraph } from '~/composables/usePointerGraph'
 import { useStatementAddresses } from '~/composables/useStatementAddresses'
 import 'splitpanes/dist/splitpanes.css'
 
@@ -163,6 +164,68 @@ watch(() => context.currentNode, (node) => {
 const speedMs = useLocalStorage('sim-speed', 200)
 const { resume, pause, isActive: running } = useIntervalFn(handleStep, speedMs, { immediate: false, immediateCallback: true })
 watch(running, r => setReadOnly(r))
+
+// ---- E2E snapshot hook (dev only — runtime-gated) ----
+// Exposes the canonical "what do the three views show" state for Playwright
+// to diff against a per-template golden JSON. `isRunning` reflects the Run
+// interval (true while playback is looping), distinct from interpreter
+// `isActive` which stays true for the whole session.
+if (import.meta.env.DEV) {
+  const pointerGraph = usePointerGraph(context)
+  const addr = (n: number) => `0x${n.toString(16).padStart(4, '0')}`
+  ;(window as unknown as { __viz: unknown }).__viz = {
+    templates: templateNames,
+    isRunning: () => running.value,
+    isActive: () => isActive.value,
+    snapshot() {
+      // eslint-disable-next-line ts/no-unused-expressions
+      context.memoryVersion // read for stability across reactive cycles
+      const allocs = [...context.memory.space.allocations.values()]
+        .filter(a => !a.dead && a.base !== 0)
+        .sort((a, b) => a.base - b.base)
+        .map(a => ({
+          base: addr(a.base),
+          size: a.size,
+          region: a.region,
+          layout: a.layout.kind === 'struct'
+            ? `struct ${a.layout.structName}`
+            : a.layout.kind === 'array'
+              ? `array[${a.layout.length}]`
+              : 'scalar',
+        }))
+      const liveBytes: Record<string, string> = {}
+      for (const a of allocs) {
+        const base = Number.parseInt(a.base, 16)
+        liveBytes[a.base] = Array.from(
+          context.memory.space.buffer.slice(base, base + a.size),
+        ).map(b => b.toString(16).padStart(2, '0')).join(' ')
+      }
+      const g = pointerGraph.value
+      const allEdges = [
+        ...g.trees.flatMap(t => t.edges),
+        ...g.trees.flatMap(t => t.cycleEdges),
+        ...g.danglingEdges,
+        ...g.extraEdges,
+        ...g.extraDanglingEdges,
+      ]
+      const pointerEdges = allEdges
+        .map(e => ({ source: addr(e.fromFieldAddress), target: addr(e.toAddress) }))
+        .sort((a, b) =>
+          a.source.localeCompare(b.source) || a.target.localeCompare(b.target),
+        )
+      const pausedAt = context.currentNode
+        ? { line: context.currentNode.startPosition.row + 1, text: context.currentNode.text.slice(0, 80) }
+        : null
+      return {
+        endianness: context.endianness,
+        pausedAt,
+        allocations: allocs,
+        liveBytes,
+        pointerEdges,
+      }
+    },
+  }
+}
 
 // ---- Template switching ----
 
