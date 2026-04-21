@@ -32,16 +32,6 @@ export function toggleDark(event?: MouseEvent) {
     Math.max(y, window.innerHeight - y),
   )
 
-  // Swap Monaco's theme BEFORE starting the view transition so the "new"
-  // snapshot captures Monaco already in the target theme. The watch-driven
-  // swap fires on Vue's next flush, which happens AFTER the transition's
-  // snapshot is taken — leaving a frame-end flash where pseudo-elements go
-  // away but Monaco's canvas hasn't repainted yet. Waiting for rAF inside
-  // the callback doesn't help (the browser pauses rendering during
-  // startViewTransition's callback, so the rAF never fires and the whole
-  // transition times out).
-  monaco.editor.setTheme(!dark.value ? 'vitesse-dark' : 'vitesse')
-
   const transition = (document as Document & {
     startViewTransition: (cb: () => Promise<void>) => {
       ready: Promise<void>
@@ -66,6 +56,12 @@ export function toggleDark(event?: MouseEvent) {
       {
         duration: 400,
         easing: 'ease-out',
+        // `fill: 'both'` pins the pseudo-element to the animation's first
+        // keyframe as soon as .animate() is called — without it, there's a
+        // frame where the browser has rendered the new snapshot but the
+        // animation hasn't applied its starting clip yet, which shows up
+        // as a flash of the new theme on top before the reveal plays.
+        fill: 'both',
         pseudoElement: dark.value
           ? '::view-transition-old(root)'
           : '::view-transition-new(root)',
