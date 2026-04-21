@@ -203,6 +203,7 @@ const {
   panToElement,
   resetPan,
   clampPan,
+  setZoom,
   zoomIn,
   zoomOut,
   resetZoom,
@@ -643,8 +644,14 @@ onUpdated(() => nextTick(() => {
       const viewBottom = viewTop + canvas.clientHeight
       const overflows = bounds.minX < viewLeft || bounds.minY < viewTop
         || bounds.maxX > viewRight || bounds.maxY > viewBottom
-      if (!suppressAutoPanOnce && overflows)
+      if (!suppressAutoPanOnce && overflows) {
         autoRelayoutKeepingDrags()
+        // After re-layout, guarantee "everything on screen" by scaling down
+        // and centering. If content already fits, this just re-centers at
+        // the current zoom; if not, it zooms out enough to show the full
+        // bounding box (or clamps at MIN_ZOOM when even that isn't enough).
+        autoScaleToFit()
+      }
     }
   }
   suppressAutoPanOnce = false
@@ -962,6 +969,41 @@ function autoRelayoutKeepingDrags() {
   prevParentToChildren.clear()
   settlingKeys.clear()
   measureAndPlace()
+}
+
+/** Scale the DS canvas down so the entire content bounding box fits inside
+ *  the viewport (with a small padding), then center it. Never zooms in
+ *  above 1x, so resting layout stays at the natural card size. Clamps at
+ *  MIN_ZOOM when the content is still too large at the smallest allowed
+ *  zoom — partial visibility is better than an invisible tangle. */
+const AUTO_FIT_PADDING = 24
+function autoScaleToFit() {
+  const bounds = placement.getContentBounds()
+  const canvas = canvasRef.value
+  if (!bounds || !canvas)
+    return
+  const cw = canvas.clientWidth
+  const ch = canvas.clientHeight
+  const contentW = bounds.maxX - bounds.minX
+  const contentH = bounds.maxY - bounds.minY
+  if (contentW <= 0 || contentH <= 0)
+    return
+  // Scale-to-fit along the tighter axis; capped at 1 so we never
+  // auto-zoom IN — the user's current zoom preference wins if content
+  // already fits at 1x.
+  const zoomW = (cw - AUTO_FIT_PADDING * 2) / contentW
+  const zoomH = (ch - AUTO_FIT_PADDING * 2) / contentH
+  const target = Math.min(1, zoomW, zoomH)
+  setZoom(target)
+  // Re-center the content in the viewport at whatever zoom setZoom ended
+  // at (may be clamped to MIN_ZOOM). Rendered position of a content-space
+  // point p is `pan + p * z`; solving for "content center renders at
+  // viewport center" gives the expressions below.
+  const z = zoom.value
+  const cx = (bounds.minX + bounds.maxX) / 2
+  const cy = (bounds.minY + bounds.maxY) / 2
+  panOffset.x = cw / 2 - z * cx
+  panOffset.y = ch / 2 - z * cy
 }
 
 // Auto-pan to selected node
