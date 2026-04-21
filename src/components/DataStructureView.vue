@@ -502,9 +502,51 @@ function topoSortPointers(items: DataItem[]): DataItem[] {
   return sorted
 }
 
-/** Try four target-adjacent candidate slots (right, left, below, above) and
- *  place the pointer at the closest one that's free and within a distance
- *  cap. Returns true on success. */
+/** Find the target's tree parent and return a candidate position inside the
+ *  gutter between them (if wide enough to fit). Null when the target has
+ *  no structural parent or the gutter is too narrow. */
+function gutterCandidate(
+  tgtBase: number,
+  tPos: { x: number, y: number },
+  tSize: { w: number, h: number },
+  size: { w: number, h: number },
+): { x: number, y: number } | null {
+  const margin = 8
+  for (const tree of pointerGraph.value.trees) {
+    for (const edge of tree.edges) {
+      if (edge.toAddress !== tgtBase)
+        continue
+      const pKey = addressToKey(edge.fromAddress)
+      if (!pKey)
+        return null
+      const pPos = placement.getPosition(pKey)
+      const pSize = placement.getSize(pKey)
+      if (!pPos || !pSize)
+        return null
+      const tCy = tPos.y + tSize.h / 2
+      // Parent left of target — gutter between parent.right and target.left
+      if (pPos.x + pSize.w <= tPos.x) {
+        const l = pPos.x + pSize.w + margin
+        const r = tPos.x - margin
+        if (r - l >= size.w)
+          return { x: (l + r) / 2 - size.w / 2, y: tCy - size.h / 2 }
+      }
+      else if (pPos.x >= tPos.x + tSize.w) {
+        const l = tPos.x + tSize.w + margin
+        const r = pPos.x - margin
+        if (r - l >= size.w)
+          return { x: (l + r) / 2 - size.w / 2, y: tCy - size.h / 2 }
+      }
+      return null
+    }
+  }
+  return null
+}
+
+/** Try target-adjacent candidate slots (right, left, below, above, plus an
+ *  optional "gutter between target and its tree parent" slot when an
+ *  arrow-size override leaves room) and place the pointer at the closest
+ *  free one within a distance cap. Returns true on success. */
 function tryPlacePointerNearTarget(key: string, item: DataItem, size: { w: number, h: number }): boolean {
   const tgtBase = pointerTargetBase(item)
   if (tgtBase === null)
@@ -525,12 +567,15 @@ function tryPlacePointerNearTarget(key: string, item: DataItem, size: { w: numbe
 
   const tCx = tPos.x + tSize.w / 2
   const tCy = tPos.y + tSize.h / 2
-  const candidates = [
+  const candidates: Array<{ x: number, y: number }> = [
     { x: tPos.x + tSize.w + gap, y: tCy - size.h / 2 }, // right
     { x: tPos.x - size.w - gap, y: tCy - size.h / 2 }, // left
     { x: tCx - size.w / 2, y: tPos.y + tSize.h + gap }, // below
     { x: tCx - size.w / 2, y: tPos.y - size.h - gap }, // above
   ]
+  const gutter = gutterCandidate(tgtBase, tPos, tSize, size)
+  if (gutter)
+    candidates.push(gutter)
 
   // Walk nearest → farthest until one commits successfully. Candidate list
   // is tiny, so sort is trivial; tryPlaceAt is the only side-effect.
@@ -587,12 +632,43 @@ function placeTreeChildren(
   // Look up struct-level arrowSize for the parent
   const arrowSizeOverride = context.structMeta[parentNode.structName]?.arrowSize
 
+  // Subtree leaf count — used in place of the physical card height so each
+  // branch reserves Y-space proportional to its descendants. Without this,
+  // deep branches' leaves land at the same Y as shallow branches' in
+  // different subtrees (classic "tidy tree" collision). Forward edges only
+  // so back-links / cycle edges don't cause infinite recursion; visit guard
+  // as belt and suspenders.
+  const leafCache = new Map<number, number>()
+  const leafVisiting = new Set<number>()
+  function leafCount(addr: number): number {
+    const cached = leafCache.get(addr)
+    if (cached !== undefined)
+      return cached
+    if (leafVisiting.has(addr))
+      return 1
+    leafVisiting.add(addr)
+    const edges = edgesByParent.get(addr) ?? []
+    const forward = edges.filter(e => e.direction !== 'left')
+    const count = forward.length === 0
+      ? 1
+      : forward.reduce((s, e) => s + leafCount(e.toAddress), 0)
+    leafVisiting.delete(addr)
+    leafCache.set(addr, count)
+    return count
+  }
+  let maxH = 0
+  for (const [, s] of measured) maxH = Math.max(maxH, s.h)
+  const rowPitch = (maxH || 88) + 16
+
   function placeGroup(group: ChildInfo[], dir: 'right' | 'left') {
-    const heights = group.map(c => c.h)
+    // Pass subtree extents as sibling heights so placeRelative's centering
+    // reserves enough room for each branch's descendants. A child with N
+    // leaves gets `N * rowPitch` of Y-space; a leaf gets rowPitch.
+    const extents = group.map(c => Math.max(c.h, leafCount(c.address) * rowPitch - 16))
     for (let i = 0; i < group.length; i++) {
       const child = group[i]
       const size = measured.get(child.key)!
-      placement.placeRelative(child.key, parentKey, size.w, size.h, i, heights, dir, arrowSizeOverride)
+      placement.placeRelative(child.key, parentKey, size.w, size.h, i, extents, dir, arrowSizeOverride)
       placedKeys.add(child.key)
       placeTreeChildren(child.address, child.key, edgesByParent, measured, placedKeys)
     }
