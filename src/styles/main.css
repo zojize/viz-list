@@ -23,6 +23,35 @@ html.dark {
   color: #e2e4e8;
 }
 
+/* --- View-transition theme toggle ---
+   Replace the default cross-fade with the circular-reveal animation
+   driven from dark.ts. We animate only one side per transition (the
+   other stays a static snapshot underneath), so both pseudo-elements
+   need `animation: none` to disable the browser's built-in fade, and
+   the layer being animated needs to sit on top. `mix-blend-mode: normal`
+   prevents the stacked pseudo-elements from double-rendering colors. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Going to light (html not .dark): new (light) expands over old (dark). */
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 9999;
+}
+
+/* Going to dark (html .dark): old (light) shrinks away to reveal new (dark). */
+.dark::view-transition-old(root) {
+  z-index: 9999;
+}
+.dark::view-transition-new(root) {
+  z-index: 1;
+}
+
 /* Speed slider custom styling */
 input[type='range'] {
   -webkit-appearance: none;
