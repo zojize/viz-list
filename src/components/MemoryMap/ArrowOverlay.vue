@@ -212,6 +212,45 @@ function bezierPath(a: Point, b: Point): string {
   return `M${a.x} ${a.y} Q${cx} ${cy} ${b.x} ${b.y}`
 }
 
+/** Vertical clip bounds (host-relative) for the arrow SVG. Arrows that would
+ *  otherwise bow up above a column's header or dip below the column's bottom
+ *  margin get clipped to the column content area. Horizontal overflow is left
+ *  alone — arrows between Splitpanes columns need the full width. */
+const clipBounds = computed<{ top: number, bottom: number } | null>(() => {
+  // eslint-disable-next-line ts/no-unused-expressions
+  tick.value
+  if (!props.host)
+    return null
+  const regions = props.host.querySelectorAll<HTMLElement>('[data-overlay-clip-region]')
+  if (regions.length === 0)
+    return null
+  const hostBox = props.host.getBoundingClientRect()
+  let top = Infinity
+  let bottom = -Infinity
+  for (const r of regions) {
+    const rect = r.getBoundingClientRect()
+    if (rect.height === 0)
+      continue
+    top = Math.min(top, rect.top - hostBox.top)
+    bottom = Math.max(bottom, rect.bottom - hostBox.top)
+  }
+  if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= top)
+    return null
+  return { top, bottom }
+})
+
+const clipStyle = computed<string>(() => {
+  const b = clipBounds.value
+  if (!b || !props.host)
+    return ''
+  const hostH = props.host.getBoundingClientRect().height
+  const insetBottom = Math.max(0, hostH - b.bottom)
+  const insetTop = Math.max(0, b.top)
+  // `inset(top right bottom left)` — right/left zero so horizontal overflow
+  // stays intact.
+  return `clip-path: inset(${insetTop}px 0 ${insetBottom}px 0)`
+})
+
 const arrows = computed<ArrowPath[]>(() => {
   // eslint-disable-next-line ts/no-unused-expressions
   tick.value
@@ -248,6 +287,7 @@ const arrows = computed<ArrowPath[]>(() => {
   <svg
     ref="svg"
     class="pointer-events-none absolute inset-0 h-full w-full"
+    :style="clipStyle"
     xmlns="http://www.w3.org/2000/svg"
   >
     <defs>

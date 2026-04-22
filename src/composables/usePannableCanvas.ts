@@ -32,10 +32,23 @@ interface UsePannableCanvasOptions {
   contentBounds?: () => ContentBounds | null
 }
 
+/**
+ * Absolute zoom bounds. Below MIN_ZOOM items collapse into unreadable dots;
+ *  above MAX_ZOOM fonts alias badly and interactions feel unresponsive.
+ */
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 4
+
 export function usePannableCanvas(options: UsePannableCanvasOptions) {
   const { canvasRef, hasContent } = options
 
   const panOffset = reactive<PanState>({ x: 0, y: 0 })
+  /**
+   * Content scale. Applied on contentRef as `scale(zoom)` after the
+   *  `translate(pan)` — so `pan` stays in screen pixels regardless of zoom
+   *  and existing drag/pan math stays in screen space.
+   */
+  const zoom = shallowRef(1)
   const isPanning = shallowRef(false)
   const panStart = reactive({ x: 0, y: 0, ox: 0, oy: 0 })
 
@@ -49,10 +62,16 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
   const dragStart = reactive({ x: 0, y: 0 })
   const didDrag = shallowRef(false)
 
-  /** Returns the transient drag offset for an item (non-zero only while dragging that item). */
+  /**
+   * Returns the transient drag offset for an item (non-zero only while dragging that item).
+   *  Stored in screen pixels but divided by zoom before use — children live in content
+   *  coordinates, so at zoom 2x a 100px screen drag translates to 50 content px.
+   */
   function getDragDelta(key: string): PanState {
-    if (activeKey.value === key)
-      return activeDelta.value
+    if (activeKey.value === key) {
+      const z = zoom.value
+      return { x: activeDelta.value.x / z, y: activeDelta.value.y / z }
+    }
     return { x: 0, y: 0 }
   }
 
@@ -114,7 +133,10 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
   function onPointerUp() {
     if (activeKey.value && didDrag.value) {
       const delta = activeDelta.value
-      options.onDragEnd?.(activeKey.value, delta.x, delta.y)
+      // Descale: delta is stored in screen pixels but consumers treat the
+      // committed offset as content-space coordinates.
+      const z = zoom.value
+      options.onDragEnd?.(activeKey.value, delta.x / z, delta.y / z)
     }
     activeKey.value = null
     activeDelta.value = { x: 0, y: 0 }
@@ -162,21 +184,31 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
     }))
   }
 
-  /** Clamp panOffset so content stays partially visible. */
+  /**
+   * Clamp panOffset so content stays partially visible.
+   *
+   *  Math reminder: the child render transform is `translate(pan) scale(z)`,
+   *  applied right-to-left. A content-space point `p` renders at
+   *  `pan + p*z` in screen pixels. So bounds in content space are multiplied
+   *  by zoom when compared with screen-space pan and viewport dimensions.
+   */
   function clampPan() {
     const bounds = options.contentBounds?.()
     const canvas = canvasRef.value
     if (!bounds || !canvas)
       return
+    const z = zoom.value
     const cw = canvas.clientWidth
     const ch = canvas.clientHeight
-    const marginX = Math.max(bounds.maxItemW / 2, 50)
-    const marginY = Math.max(bounds.maxItemH / 2, 50)
+    // Margin also lives in content space — scale along with bounds so the
+    // same-looking cushion is preserved across zoom levels.
+    const marginX = Math.max(bounds.maxItemW / 2, 50) * z
+    const marginY = Math.max(bounds.maxItemH / 2, 50) * z
 
-    const minPanX = marginX - bounds.maxX
-    const maxPanX = cw - marginX - bounds.minX
-    const minPanY = marginY - bounds.maxY
-    const maxPanY = ch - marginY - bounds.minY
+    const minPanX = marginX - bounds.maxX * z
+    const maxPanX = cw - marginX - bounds.minX * z
+    const minPanY = marginY - bounds.maxY * z
+    const maxPanY = ch - marginY - bounds.minY * z
 
     if (minPanX <= maxPanX)
       panOffset.x = Math.max(minPanX, Math.min(maxPanX, panOffset.x))
@@ -202,8 +234,73 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
     return activeKey.value
   }
 
+  /**
+   * Change zoom while keeping a screen-space focal point anchored to the
+   *  same content-space point. Without this, zooming drifts content away
+   *  from the pointer and feels like a pan+scale combo.
+   *
+   *  Derivation: content point `c` renders at `pan + c*z`. To keep `c`
+   *  under focal point `f` across a zoom change (z → z'), we need
+   *  `f = pan' + c*z'`. Substituting `c = (f - pan)/z` and solving:
+   *  `pan' = f - (f - pan) * (z'/z)`.
+   */
+  function setZoom(next: number, focalScreenX?: number, focalScreenY?: number) {
+    const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next))
+    if (clamped === zoom.value)
+      return
+    const canvas = canvasRef.value
+    let fx: number
+    let fy: number
+    if (focalScreenX != null && focalScreenY != null && canvas) {
+      const rect = canvas.getBoundingClientRect()
+      fx = focalScreenX - rect.left
+      fy = focalScreenY - rect.top
+    }
+    else if (canvas) {
+      fx = canvas.clientWidth / 2
+      fy = canvas.clientHeight / 2
+    }
+    else {
+      fx = 0
+      fy = 0
+    }
+    const ratio = clamped / zoom.value
+    panOffset.x = fx - (fx - panOffset.x) * ratio
+    panOffset.y = fy - (fy - panOffset.y) * ratio
+    zoom.value = clamped
+    clampPan()
+  }
+
+  /**
+   * One-step zoom for buttons / keyboard. 1.25x feels responsive but not
+   *  jumpy; matches the step Figma uses for `+`/`-`.
+   */
+  const ZOOM_STEP = 1.25
+  function zoomIn(focalScreenX?: number, focalScreenY?: number) {
+    setZoom(zoom.value * ZOOM_STEP, focalScreenX, focalScreenY)
+  }
+  function zoomOut(focalScreenX?: number, focalScreenY?: number) {
+    setZoom(zoom.value / ZOOM_STEP, focalScreenX, focalScreenY)
+  }
+  function resetZoom() {
+    setZoom(1)
+  }
+
   function onWheel(e: WheelEvent) {
     e.preventDefault()
+    // Modifier-held wheel = zoom. Browser trackpad pinch also fires wheel
+    // events with ctrlKey=true on every platform, so this handles both the
+    // Cmd/Ctrl+scroll mouse gesture and native pinch. Plain scroll stays as
+    // pan — we don't want to repurpose the main navigation gesture.
+    if (e.ctrlKey || e.metaKey) {
+      // Exponential mapping so constant wheel delta gives constant visual
+      // zoom rate (additive zoom feels slow at high zoom, fast at low).
+      // 0.0015 ≈ ~1.08x per notch on a typical mouse wheel, matching
+      // common canvas apps.
+      const factor = Math.exp(-e.deltaY * 0.0015)
+      setZoom(zoom.value * factor, e.clientX, e.clientY)
+      return
+    }
     panOffset.x -= e.deltaX
     panOffset.y -= e.deltaY
     clampPan()
@@ -221,6 +318,7 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
 
   return {
     panOffset,
+    zoom: readonly(zoom),
     isPanning: readonly(isPanning),
     didDrag: readonly(didDrag),
     getDragDelta,
@@ -229,5 +327,9 @@ export function usePannableCanvas(options: UsePannableCanvasOptions) {
     clampPan,
     cancelDrag,
     getActiveDragKey,
+    setZoom,
+    zoomIn,
+    zoomOut,
+    resetZoom,
   }
 }

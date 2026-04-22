@@ -1,3 +1,4 @@
+import type { LayoutNode } from '~/composables/interpreter/layout'
 import type { ArrowStyle, FieldDirection, InterpreterContext } from '~/composables/interpreter/types'
 import { computed } from 'vue'
 import { NULL_ADDRESS } from '~/composables/interpreter/types'
@@ -34,6 +35,14 @@ interface PointerGraph {
   trees: TreeInfo[]
   standalone: Set<number>
   danglingEdges: DanglingEdge[]
+  /**
+   * Non-tree pointer edges: primitive pointer variables and struct fields
+   *  whose target isn't itself a struct. These are rendered as additional
+   *  arrows but don't participate in tree placement.
+   */
+  extraEdges: PointerEdge[]
+  /** Dangling variants of extraEdges — rendered with the dangling stub. */
+  extraDanglingEdges: DanglingEdge[]
 }
 
 /**
@@ -343,6 +352,112 @@ export function usePointerGraph(context: Readonly<InterpreterContext>) {
         standalone.add(addr)
     }
 
-    return { nodes, trees, standalone, danglingEdges }
+    // Step 5: Walk every live pointer in the address space to capture edges
+    // that the struct→struct scan above skipped: primitive pointer variables
+    // on the stack/heap, and pointer fields inside structs whose target is
+    // not another struct (e.g. int*, char*, pointer to a stack scalar).
+    //
+    // Skip anything already emitted as a tree/cycle/dangling edge so the
+    // struct graph remains authoritative for that subset.
+    const seenFieldEdge = new Set<string>()
+    for (const t of trees) {
+      for (const e of t.edges)
+        seenFieldEdge.add(`${e.fromFieldAddress}->${e.toAddress}`)
+      for (const e of t.cycleEdges)
+        seenFieldEdge.add(`${e.fromFieldAddress}->${e.toAddress}`)
+    }
+    for (const e of danglingEdges)
+      seenFieldEdge.add(`${e.fromFieldAddress}->${e.toAddress}`)
+
+    const extraEdges: PointerEdge[] = []
+    const extraDanglingEdges: DanglingEdge[] = []
+
+    function visitPointers(ownerBase: number, nodeBase: number, node: LayoutNode, path: string) {
+      if (node.kind === 'scalar') {
+        if (typeof node.type !== 'object' || node.type.type !== 'pointer')
+          return
+        const ptrAddr = nodeBase
+        const ptrType = node.type
+        let targetAddr: number
+        try {
+          targetAddr = context.memory.readScalar(ptrAddr, ptrType) as number
+        }
+        catch {
+          return
+        }
+        if (targetAddr === NULL_ADDRESS)
+          return
+
+        const targetAlloc = context.memory.findAllocation(targetAddr)
+        if (!targetAlloc) {
+          // Outside any known allocation — treat as dangling with the raw addr.
+          const key = `${ptrAddr}->${targetAddr}`
+          if (seenFieldEdge.has(key))
+            return
+          seenFieldEdge.add(key)
+          extraDanglingEdges.push({
+            fromAddress: ownerBase,
+            fromFieldAddress: ptrAddr,
+            fieldName: path,
+            toAddress: targetAddr,
+            direction: 'dynamic',
+          })
+          return
+        }
+
+        if (targetAlloc.dead) {
+          const key = `${ptrAddr}->${targetAddr}`
+          if (seenFieldEdge.has(key))
+            return
+          seenFieldEdge.add(key)
+          extraDanglingEdges.push({
+            fromAddress: ownerBase,
+            fromFieldAddress: ptrAddr,
+            fieldName: path,
+            toAddress: targetAddr,
+            direction: 'dynamic',
+          })
+          return
+        }
+
+        const targetBase = targetAlloc.base
+        // Self-pointer (e.g. scalar alloc whose pointer holds its own address
+        // — rare but possible during construction). Don't draw a loop arrow.
+        if (targetBase === ownerBase)
+          return
+
+        const key = `${ptrAddr}->${targetBase}`
+        if (seenFieldEdge.has(key))
+          return
+        seenFieldEdge.add(key)
+        extraEdges.push({
+          fromAddress: ownerBase,
+          fromFieldAddress: ptrAddr,
+          fieldName: path,
+          toAddress: targetBase,
+          direction: 'dynamic',
+        })
+        return
+      }
+      if (node.kind === 'array') {
+        for (let i = 0; i < node.length; i++) {
+          visitPointers(ownerBase, nodeBase + i * node.stride, node.element, path ? `${path}[${i}]` : `[${i}]`)
+        }
+        return
+      }
+      // struct
+      for (const f of node.fields) {
+        const childPath = path ? `${path}.${f.name}` : f.name
+        visitPointers(ownerBase, nodeBase + f.offset, f.node, childPath)
+      }
+    }
+
+    for (const alloc of context.memory.space.allocations.values()) {
+      if (alloc.dead)
+        continue
+      visitPointers(alloc.base, alloc.base, alloc.layout, '')
+    }
+
+    return { nodes, trees, standalone, danglingEdges, extraEdges, extraDanglingEdges }
   })
 }

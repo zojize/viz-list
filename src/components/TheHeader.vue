@@ -11,7 +11,7 @@ import { toggleDark } from '~/composables/dark'
     </div>
 
     <div class="flex items-center gap-1">
-      <button class="icon-btn" title="Toggle theme" @click="toggleDark()">
+      <button class="icon-btn" title="Toggle theme" @click="toggleDark($event)">
         <div class="i-carbon-sun dark:i-carbon-moon" />
       </button>
       <a

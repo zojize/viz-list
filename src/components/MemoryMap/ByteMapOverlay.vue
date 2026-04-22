@@ -18,6 +18,8 @@ const props = defineProps<{
   cellWidth: number
   rowHeight: number
   labelWidth: number
+  /** Horizontal gutter when rows are centered — see OverlayGeometry docs. */
+  xOffset: number
   lhs: ReadonlySet<number>
   rhs: ReadonlySet<number>
   changed: ReadonlySet<number>
@@ -40,6 +42,7 @@ const geometry = computed<OverlayGeometry>(() => ({
   cellWidth: props.cellWidth,
   rowHeight: props.rowHeight,
   labelWidth: props.labelWidth,
+  xOffset: props.xOffset,
   regionStart: props.regionStart,
 }))
 

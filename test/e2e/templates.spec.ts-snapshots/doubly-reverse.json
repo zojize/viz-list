@@ -1,0 +1,91 @@
+{
+  "endianness": "le",
+  "pausedAt": {
+    "line": 64,
+    "text": "breakpoint()"
+  },
+  "allocations": [
+    {
+      "base": "0x0004",
+      "size": 4,
+      "region": "stack",
+      "layout": "scalar"
+    },
+    {
+      "base": "0x3fc4",
+      "size": 12,
+      "region": "heap",
+      "layout": "struct ListNode"
+    },
+    {
+      "base": "0x3fd0",
+      "size": 12,
+      "region": "heap",
+      "layout": "struct ListNode"
+    },
+    {
+      "base": "0x3fdc",
+      "size": 12,
+      "region": "heap",
+      "layout": "struct ListNode"
+    },
+    {
+      "base": "0x3fe8",
+      "size": 12,
+      "region": "heap",
+      "layout": "struct ListNode"
+    },
+    {
+      "base": "0x3ff4",
+      "size": 12,
+      "region": "heap",
+      "layout": "struct ListNode"
+    }
+  ],
+  "liveBytes": {
+    "0x0004": "c4 3f 00 00",
+    "0x3fc4": "05 00 00 00 d0 3f 00 00 00 00 00 00",
+    "0x3fd0": "04 00 00 00 dc 3f 00 00 c4 3f 00 00",
+    "0x3fdc": "03 00 00 00 e8 3f 00 00 d0 3f 00 00",
+    "0x3fe8": "02 00 00 00 f4 3f 00 00 dc 3f 00 00",
+    "0x3ff4": "01 00 00 00 00 00 00 00 e8 3f 00 00"
+  },
+  "pointerEdges": [
+    {
+      "source": "0x0004",
+      "target": "0x3fc4"
+    },
+    {
+      "source": "0x3fc8",
+      "target": "0x3fd0"
+    },
+    {
+      "source": "0x3fd4",
+      "target": "0x3fdc"
+    },
+    {
+      "source": "0x3fd8",
+      "target": "0x3fc4"
+    },
+    {
+      "source": "0x3fe0",
+      "target": "0x3fe8"
+    },
+    {
+      "source": "0x3fe4",
+      "target": "0x3fd0"
+    },
+    {
+      "source": "0x3fec",
+      "target": "0x3ff4"
+    },
+    {
+      "source": "0x3ff0",
+      "target": "0x3fdc"
+    },
+    {
+      "source": "0x3ffc",
+      "target": "0x3fe8"
+    }
+  ]
+}

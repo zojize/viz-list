@@ -53,7 +53,6 @@ and are only recalculated when items first appear or auto-layout is triggered.
 
 - `positions: Map<key, {x, y}>` --- committed positions
 - `sizes: Map<key, {w, h}>` --- measured DOM dimensions
-- `userDragged: Set<key>` --- items manually repositioned by user
 
 ### Placement strategies
 
@@ -68,7 +67,7 @@ item already has a position (idempotent across re-renders).
 - `direction = 'left'`: X = parent.x - w - gap, to the left
 - Y = centered among siblings relative to parent's vertical center
 - `gapOverride` overrides the default arrow gap (60px), used by `@arrow-size` annotation
-- Returns early if already positioned (respects user drags and prior placement)
+- Returns early if already positioned (idempotent across re-renders)
 
 **`findEmptySpace(w, h, occupied, container)`** --- Two-pass scan:
 
@@ -89,19 +88,15 @@ tree children.
 `rectsOverlap(a, b)` checks axis-aligned overlap with a `gap` margin (default 16px)
 on all sides. This ensures items never touch --- there's always visual breathing room.
 
-### User drag tracking
-
-- `markUserDragged(key)` --- called by `onDragEnd` callback
-- Items in `userDragged` keep their position through re-renders
-- `clearUserDragged()` --- called by auto-layout to reset everything
-
 ### Auto-layout
 
-**`clearPositions()`** --- Clears positions and user-drag state but keeps sizes.
-Used by `autoLayout()` so that `measureAndPlace()` can run synchronously in the same
+**`clearPositions()`** --- Clears positions but keeps sizes. Used by
+`autoLayout()` so that `measureAndPlace()` can run synchronously in the same
 tick, placing items directly at their final positions (no flash at origin).
+User drags are _not_ sticky: a triggered relayout wipes all positions and
+the next `measureAndPlace` re-places from scratch.
 
-**`clear()`** --- Wipes positions, sizes, and user-drag state. Used for full reset.
+**`clear()`** --- Wipes positions and sizes. Used for full reset.
 
 ## Canvas Arrows (`CanvasArrow.vue`)
 
@@ -173,8 +168,10 @@ Positions are invalidated (removed) when:
 4. **Descendants** of any invalidated node are recursively invalidated via BFS
    through the new parent-to-children map
 
-User-dragged items are never invalidated. This ensures manual positioning is
-preserved while the rest of the tree adapts around it.
+User drags are not sticky: any of the above still invalidates a manually-moved
+item. The `onDragEnd` path sets a one-shot `suppressAutoPanOnce` flag so the
+_immediate_ post-drop reactive cycle doesn't trigger a relayout, but the next
+one will.
 
 ## Data flow per render cycle
 
@@ -196,7 +193,8 @@ Interpreter step
       -> animateEnterLeave()
         - Detect new keys vs prevActiveKeys → fade-in via Web Animations API
         - Detect removed keys → clone ghost at last position, fade-out
-      -> autoPanToContent() if content bounds changed and items overflow
+      -> if bounds changed AND content overflows viewport:
+           autoRelayoutInPlace() → autoScaleToFit()
       -> clampPan() to keep content visible
   -> arrowEdges computed reacts to placement.version
     -> CanvasArrow components render with positions from placement engine
@@ -234,31 +232,42 @@ pointermove (4px threshold crossed)
 pointerup
   -> onDragEnd callback fires
     -> placement.setPosition(key, pos + delta)
-    -> placement.markUserDragged(key)
+    -> sets suppressAutoPanOnce (skips the immediate relayout)
   -> activeDelta reset to {0, 0}
 ```
 
-User-dragged items are excluded from automatic re-placement. Auto-layout clears
-all drag state so everything returns to computed tree positions.
+Dropped drags are ephemeral: the next triggered relayout re-places them
+from scratch alongside everything else.
 
 ## Auto-layout
 
-`autoLayout()` uses `clearPositions()` (not `clear()`) to keep measured sizes,
-then calls `measureAndPlace()` synchronously in the same tick. This means items
-transition directly from their current positions to the computed layout (via the
-100ms transform transition) instead of flashing at (0,0).
+`autoLayout()` (manual Auto-layout button) uses `clearPositions()` (not
+`clear()`) to keep measured sizes, then calls `measureAndPlace()` synchronously
+in the same tick. This means items transition directly from their current
+positions to the computed layout (via the 100ms transform transition) instead
+of flashing at (0,0). It also calls `resetPan()` so the user returns to the
+canonical origin.
 
-## Auto-pan
+`autoRelayoutInPlace()` is the step-triggered variant. Same clearPositions →
+measureAndPlace pipeline, but keeps the current pan and zoom — we're just
+compacting content that grew past the viewport, not re-centering.
 
-After each `measureAndPlace`, if the content bounds changed (serialized bounds key differs
-from previous), the viewport is checked for overflow. If any edge of the content extends
-past the visible viewport, `autoPanToContent()` fires:
+## Auto-fit
 
-- If content fits in the viewport: center it
-- If content overflows: align top-left with a 16px margin
+After each `measureAndPlace`, if the content bounds changed (serialized bounds key
+differs from previous) AND anything overflows the viewport, `autoRelayoutInPlace()`
+runs followed by `autoScaleToFit()`:
 
-This handles both new items appearing off-screen and tree re-placement shifting items
-into negative coordinates.
+1. Relayout compacts items using the current viewport origin.
+2. If the resulting bounds still overflow, `autoScaleToFit()` zooms out to the
+   largest scale (capped at 1x, floored at `MIN_ZOOM`) that fits everything
+   within a padded viewport, then re-centers the content. If even `MIN_ZOOM`
+   can't contain the content we accept partial visibility rather than keep
+   zooming past a useful size.
+
+There is no auto-pan step — panning alone can't shrink content that doesn't fit,
+so if the autoScale is already at `MIN_ZOOM` we just leave the viewport where
+it was.
 
 ## Pan clamping
 

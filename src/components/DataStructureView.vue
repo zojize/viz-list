@@ -182,8 +182,20 @@ const contentRef = shallowRef<HTMLElement | null>(null)
 // Forward-declare placement so onDragEnd can reference it
 let placementRef: ReturnType<typeof usePlacementEngine> | undefined
 
+// One-shot flag set by onDragEnd; consumed (and reset) by onUpdated to skip
+// the auto-pan that would otherwise undo a user drag out of the viewport.
+let suppressAutoPanOnce = false
+
+/** Reactive dep for geometry that isn't tracked by Vue (DOM rects). Bumped
+ *  after zoom updates settle into the DOM so the next render of the arrow
+ *  overlay re-measures with fresh getBoundingClientRect values. Without this
+ *  a zoom click renders one tick with stale rects and arrows appear offset
+ *  until the user pans. */
+const arrowGeometryTick = shallowRef(0)
+
 const {
   panOffset,
+  zoom,
   isPanning,
   didDrag,
   getDragDelta,
@@ -191,15 +203,22 @@ const {
   panToElement,
   resetPan,
   clampPan,
+  setZoom,
+  zoomIn,
+  zoomOut,
+  resetZoom,
 } = usePannableCanvas({
   canvasRef,
   hasContent: () => hasContent.value,
   onDragEnd(key, dx, dy) {
     const pos = placementRef?.getPosition(key)
-    if (pos) {
+    if (pos)
       placementRef?.setPosition(key, pos.x + dx, pos.y + dy)
-      placementRef?.markUserDragged(key)
-    }
+    // The drag commits a position that the next triggered relayout is free
+    // to override — we no longer track user drags as sticky. Suppress the
+    // one-shot auto-relayout so the dropped position survives at least the
+    // immediate bounds-change reaction (feels less teleporty).
+    suppressAutoPanOnce = true
   },
   contentBounds: () => placementRef?.getContentBounds() ?? null,
 })
@@ -324,11 +343,8 @@ function invalidateStaleTreePositions(
     }
   }
 
-  // Apply invalidation (skip user-dragged items)
-  for (const key of expanded) {
-    if (!placement.isUserDragged(key))
-      placement.remove(key)
-  }
+  for (const key of expanded)
+    placement.remove(key)
 
   // Update stored maps
   prevChildToParent.clear()
@@ -393,13 +409,45 @@ function measureAndPlace(): NodeListOf<HTMLElement> | null {
   if (treePlacedKeys.size > 0)
     placement.evictOverlapping(treePlacedKeys)
 
-  // Step 3: Place remaining standalone items
-  for (const el of els) {
-    const key = el.dataset.placeKey!
+  // Step 3: Place non-pointer standalone items first so pointer cards (in
+  // step 3.5) can see their targets' positions.
+  const pointerItems: DataItem[] = []
+  for (const item of standaloneItems.value) {
+    const key = `item-${item.address}`
     if (treePlacedKeys.has(key))
       continue
-    const size = measured.get(key)!
+    const size = measured.get(key)
+    if (!size)
+      continue
+    if (item.kind === 'pointer') {
+      pointerItems.push(item)
+      continue
+    }
     placement.placeNew(key, size.w, size.h)
+  }
+
+  // Step 3.5: Place pointer cards, topo-sorted so targets land first when a
+  // chain of pointers points through each other (p1 -> p2 -> x). Each pointer
+  // is probed against four target-adjacent candidate slots; the closest free
+  // one wins. Past a distance cap it falls through to a free-slot placement
+  // so crowded graphs don't shove pointers into far corners just to hug the
+  // target.
+  const sortedPointers = topoSortPointers(pointerItems)
+  for (const item of sortedPointers) {
+    const key = `item-${item.address}`
+    const size = measured.get(key)
+    if (!size)
+      continue
+    if (placement.getPosition(key)) {
+      // Already placed — consider relocating closer to target if the target
+      // has since moved far enough to open a significantly better slot.
+      // Guarded by a hysteresis threshold to prevent chasing small drifts.
+      maybeRelocatePointerNearTarget(key, item, size)
+      continue
+    }
+    const placedNearTarget = tryPlacePointerNearTarget(key, item, size)
+    if (!placedNearTarget)
+      placement.placeNew(key, size.w, size.h)
   }
 
   // Step 4: Retain only active keys
@@ -409,6 +457,200 @@ function measureAndPlace(): NodeListOf<HTMLElement> | null {
   placement.retainOnly(activeKeys)
 
   return els
+}
+
+/** Resolve a pointer item's target allocation base, or null if the pointer
+ *  is null / points outside any live allocation. */
+function pointerTargetBase(item: DataItem): number | null {
+  if (typeof item.type !== 'object' || item.type.type !== 'pointer')
+    return null
+  let raw: number
+  try {
+    raw = context.memory.readScalar(item.address, item.type) as number
+  }
+  catch {
+    return null
+  }
+  if (!raw)
+    return null
+  const alloc = context.memory.findAllocation(raw)
+  if (!alloc || alloc.dead)
+    return null
+  return alloc.base
+}
+
+/** DFS-based topological sort: targets come before pointers that reference
+ *  them. Pointer-to-pointer cycles fall through in original order so we
+ *  always place every item exactly once. */
+function topoSortPointers(items: DataItem[]): DataItem[] {
+  const byAddr = new Map(items.map(i => [i.address, i]))
+  const visited = new Set<number>()
+  const onPath = new Set<number>()
+  const sorted: DataItem[] = []
+  function visit(item: DataItem) {
+    if (visited.has(item.address) || onPath.has(item.address))
+      return
+    onPath.add(item.address)
+    const tgt = pointerTargetBase(item)
+    if (tgt !== null) {
+      const depItem = byAddr.get(tgt)
+      if (depItem)
+        visit(depItem)
+    }
+    onPath.delete(item.address)
+    visited.add(item.address)
+    sorted.push(item)
+  }
+  for (const item of items) visit(item)
+  return sorted
+}
+
+/** Find the target's tree parent and return a candidate position inside the
+ *  gutter between them (if wide enough to fit). Null when the target has
+ *  no structural parent or the gutter is too narrow. */
+function gutterCandidate(
+  tgtBase: number,
+  tPos: { x: number, y: number },
+  tSize: { w: number, h: number },
+  size: { w: number, h: number },
+): { x: number, y: number } | null {
+  const margin = 8
+  for (const tree of pointerGraph.value.trees) {
+    for (const edge of tree.edges) {
+      if (edge.toAddress !== tgtBase)
+        continue
+      const pKey = addressToKey(edge.fromAddress)
+      if (!pKey)
+        return null
+      const pPos = placement.getPosition(pKey)
+      const pSize = placement.getSize(pKey)
+      if (!pPos || !pSize)
+        return null
+      const tCy = tPos.y + tSize.h / 2
+      // Parent left of target — gutter between parent.right and target.left
+      if (pPos.x + pSize.w <= tPos.x) {
+        const l = pPos.x + pSize.w + margin
+        const r = tPos.x - margin
+        if (r - l >= size.w)
+          return { x: (l + r) / 2 - size.w / 2, y: tCy - size.h / 2 }
+      }
+      else if (pPos.x >= tPos.x + tSize.w) {
+        const l = tPos.x + tSize.w + margin
+        const r = pPos.x - margin
+        if (r - l >= size.w)
+          return { x: (l + r) / 2 - size.w / 2, y: tCy - size.h / 2 }
+      }
+      return null
+    }
+  }
+  return null
+}
+
+/** Candidate slots around `target` that a pointer card might occupy:
+ *  four sides at a fixed gap + an optional gutter between target and its
+ *  tree parent when the gap is wide enough. Shared by initial placement
+ *  and relocation so both paths consider the same geometry. */
+function pointerCandidatesAround(
+  tgtBase: number,
+  tPos: { x: number, y: number },
+  tSize: { w: number, h: number },
+  size: { w: number, h: number },
+): Array<{ x: number, y: number }> {
+  const gap = 20
+  const tCx = tPos.x + tSize.w / 2
+  const tCy = tPos.y + tSize.h / 2
+  const candidates: Array<{ x: number, y: number }> = [
+    { x: tPos.x + tSize.w + gap, y: tCy - size.h / 2 },
+    { x: tPos.x - size.w - gap, y: tCy - size.h / 2 },
+    { x: tCx - size.w / 2, y: tPos.y + tSize.h + gap },
+    { x: tCx - size.w / 2, y: tPos.y - size.h - gap },
+  ]
+  const gutter = gutterCandidate(tgtBase, tPos, tSize, size)
+  if (gutter)
+    candidates.push(gutter)
+  return candidates
+}
+
+/** If the pointer is already placed but the target has drifted so far that
+ *  a candidate slot is now meaningfully closer, relocate it. A
+ *  hysteresis threshold prevents oscillation: we only move when the
+ *  improvement exceeds ~40px, so a series of small target nudges doesn't
+ *  thrash the pointer back and forth. */
+const RELOCATION_HYSTERESIS = 40
+function maybeRelocatePointerNearTarget(key: string, item: DataItem, size: { w: number, h: number }) {
+  const tgtBase = pointerTargetBase(item)
+  if (tgtBase === null)
+    return
+  const targetKey = addressToKey(tgtBase)
+  if (!targetKey)
+    return
+  const tPos = placement.getPosition(targetKey)
+  const tSize = placement.getSize(targetKey)
+  const currentPos = placement.getPosition(key)
+  if (!tPos || !tSize || !currentPos)
+    return
+  const tCx = tPos.x + tSize.w / 2
+  const tCy = tPos.y + tSize.h / 2
+  const currentDist = Math.hypot(
+    currentPos.x + size.w / 2 - tCx,
+    currentPos.y + size.h / 2 - tCy,
+  )
+  const threshold = currentDist - RELOCATION_HYSTERESIS
+  if (threshold <= 0)
+    return
+  const ordered = pointerCandidatesAround(tgtBase, tPos, tSize, size)
+    .map((c) => {
+      const cx = c.x + size.w / 2
+      const cy = c.y + size.h / 2
+      return { ...c, d: Math.hypot(cx - tCx, cy - tCy) }
+    })
+    .filter(c => c.d < threshold)
+    .sort((a, b) => a.d - b.d)
+  for (const c of ordered) {
+    if (placement.tryPlaceAt(key, c.x, c.y, size.w, size.h))
+      return
+  }
+}
+
+/** Try target-adjacent candidate slots (right, left, below, above, plus an
+ *  optional "gutter between target and its tree parent" slot when an
+ *  arrow-size override leaves room) and place the pointer at the closest
+ *  free one within a distance cap. Returns true on success. */
+function tryPlacePointerNearTarget(key: string, item: DataItem, size: { w: number, h: number }): boolean {
+  const tgtBase = pointerTargetBase(item)
+  if (tgtBase === null)
+    return false
+  const targetKey = addressToKey(tgtBase)
+  if (!targetKey)
+    return false
+  const tPos = placement.getPosition(targetKey)
+  const tSize = placement.getSize(targetKey)
+  if (!tPos || !tSize)
+    return false
+
+  // Distance cap: ~2x the bigger of the two card dimensions. Past that the
+  // "near target" heuristic breaks down and free-slot placement looks
+  // cleaner in crowded graphs.
+  const maxDist = 2 * Math.max(tSize.w, tSize.h, size.w, size.h)
+
+  const tCx = tPos.x + tSize.w / 2
+  const tCy = tPos.y + tSize.h / 2
+
+  // Walk nearest → farthest until one commits successfully. Candidate list
+  // is tiny, so sort is trivial; tryPlaceAt is the only side-effect.
+  const ordered = pointerCandidatesAround(tgtBase, tPos, tSize, size)
+    .map((c) => {
+      const cx = c.x + size.w / 2
+      const cy = c.y + size.h / 2
+      return { ...c, d: Math.hypot(cx - tCx, cy - tCy) }
+    })
+    .filter(c => c.d <= maxDist)
+    .sort((a, b) => a.d - b.d)
+  for (const c of ordered) {
+    if (placement.tryPlaceAt(key, c.x, c.y, size.w, size.h))
+      return true
+  }
+  return false
 }
 
 /** Recursively place children of a tree node via placeRelative */
@@ -449,12 +691,43 @@ function placeTreeChildren(
   // Look up struct-level arrowSize for the parent
   const arrowSizeOverride = context.structMeta[parentNode.structName]?.arrowSize
 
+  // Subtree leaf count — used in place of the physical card height so each
+  // branch reserves Y-space proportional to its descendants. Without this,
+  // deep branches' leaves land at the same Y as shallow branches' in
+  // different subtrees (classic "tidy tree" collision). Forward edges only
+  // so back-links / cycle edges don't cause infinite recursion; visit guard
+  // as belt and suspenders.
+  const leafCache = new Map<number, number>()
+  const leafVisiting = new Set<number>()
+  function leafCount(addr: number): number {
+    const cached = leafCache.get(addr)
+    if (cached !== undefined)
+      return cached
+    if (leafVisiting.has(addr))
+      return 1
+    leafVisiting.add(addr)
+    const edges = edgesByParent.get(addr) ?? []
+    const forward = edges.filter(e => e.direction !== 'left')
+    const count = forward.length === 0
+      ? 1
+      : forward.reduce((s, e) => s + leafCount(e.toAddress), 0)
+    leafVisiting.delete(addr)
+    leafCache.set(addr, count)
+    return count
+  }
+  let maxH = 0
+  for (const [, s] of measured) maxH = Math.max(maxH, s.h)
+  const rowPitch = (maxH || 88) + 16
+
   function placeGroup(group: ChildInfo[], dir: 'right' | 'left') {
-    const heights = group.map(c => c.h)
+    // Pass subtree extents as sibling heights so placeRelative's centering
+    // reserves enough room for each branch's descendants. A child with N
+    // leaves gets `N * rowPitch` of Y-space; a leaf gets rowPitch.
+    const extents = group.map(c => Math.max(c.h, leafCount(c.address) * rowPitch - 16))
     for (let i = 0; i < group.length; i++) {
       const child = group[i]
       const size = measured.get(child.key)!
-      placement.placeRelative(child.key, parentKey, size.w, size.h, i, heights, dir, arrowSizeOverride)
+      placement.placeRelative(child.key, parentKey, size.w, size.h, i, extents, dir, arrowSizeOverride)
       placedKeys.add(child.key)
       placeTreeChildren(child.address, child.key, edgesByParent, measured, placedKeys)
     }
@@ -485,24 +758,42 @@ onUpdated(() => nextTick(() => {
   if (els)
     animateEnterLeave(els)
 
-  // Auto-pan when content bounds changed and items are outside the visible viewport
+  // Step-triggered auto-relayout. When bounds changed AND the content's
+  // rendered extents fall outside the viewport, re-run layout and then
+  // auto-scale so everything fits.
   const bounds = placement.getContentBounds()
   const canvas = canvasRef.value
   if (bounds && canvas) {
     const boundsKey = `${bounds.minX},${bounds.minY},${bounds.maxX},${bounds.maxY}`
     if (boundsKey !== prevBoundsKey) {
       prevBoundsKey = boundsKey
-      // Check if any content is outside the current viewport
-      const viewLeft = -panOffset.x
-      const viewTop = -panOffset.y
-      const viewRight = viewLeft + canvas.clientWidth
-      const viewBottom = viewTop + canvas.clientHeight
-      if (bounds.minX < viewLeft || bounds.minY < viewTop
-        || bounds.maxX > viewRight || bounds.maxY > viewBottom) {
-        autoPanToContent()
+      // Overflow check MUST operate in screen space — content-space bounds
+      // alone don't encode the current zoom. Doing it in content-space would
+      // misfire at zoom != 1 and keep re-triggering autoRelayout, freezing
+      // the UI under the runaway reaction.
+      const z = zoom.value
+      const cw = canvas.clientWidth
+      const ch = canvas.clientHeight
+      const renderedLeft = panOffset.x + bounds.minX * z
+      const renderedTop = panOffset.y + bounds.minY * z
+      const renderedRight = panOffset.x + bounds.maxX * z
+      const renderedBottom = panOffset.y + bounds.maxY * z
+      const overflows = renderedLeft < 0 || renderedTop < 0
+        || renderedRight > cw || renderedBottom > ch
+      if (!suppressAutoPanOnce && overflows) {
+        autoRelayoutInPlace()
+        autoScaleToFit()
+        // Relayout + scale moved positions → bounds key stored above is now
+        // stale. Snap prev to the post-relayout bounds so the next
+        // onUpdated doesn't see "bounds changed" and re-enter this branch
+        // for the same structural state.
+        const nb = placement.getContentBounds()
+        if (nb)
+          prevBoundsKey = `${nb.minX},${nb.minY},${nb.maxX},${nb.maxY}`
       }
     }
   }
+  suppressAutoPanOnce = false
 
   clampPan()
 }))
@@ -511,6 +802,18 @@ onUpdated(() => nextTick(() => {
 watch(hasContent, (has) => {
   if (!has)
     resetPan()
+})
+
+// Zoom changes only flow into the CSS transform on contentRef; arrow
+// endpoints come from getBoundingClientRect which isn't a Vue dep. After the
+// DOM has applied the new scale we bump the tick so the arrow render runs
+// again with fresh rects. Without this, the first render after a zoom click
+// measures the pre-scale DOM and arrows stay at their old positions until
+// the user pans/interacts.
+watch(zoom, () => {
+  nextTick(() => {
+    arrowGeometryTick.value++
+  })
 })
 
 /** Get the final visual position of an item: placement + transient drag delta.
@@ -655,6 +958,48 @@ const arrowEdges = computed((): (ArrowEdge | DanglingArrowEdge)[] => {
     }
   }
 
+  // Extra (non-tree) pointer edges: primitive pointer variables, struct
+  // fields whose target is not a struct, etc. Rendered with direction
+  // 'dynamic' so the arrow picks the nearest borders on both ends.
+  for (const edge of graph.extraEdges) {
+    const fromKey = addressToKey(edge.fromAddress)
+    const toKey = addressToKey(edge.toAddress)
+    if (fromKey && toKey) {
+      edges.push({
+        id: `extra-${edge.fromFieldAddress}->${edge.toAddress}`,
+        fromKey,
+        toKey,
+        fieldAddress: edge.fromFieldAddress,
+        isCycle: false,
+        isDangling: false,
+        direction: edge.direction,
+        color: edge.color,
+        arrowStyle: edge.style,
+        fallbackStyle: edge.fallbackStyle,
+        arrowAnchor: getTargetAnchor(edge.toAddress),
+      })
+    }
+  }
+
+  for (const edge of graph.extraDanglingEdges) {
+    const fromKey = addressToKey(edge.fromAddress)
+    if (fromKey) {
+      edges.push({
+        id: `extra-dangling-${edge.fromFieldAddress}`,
+        fromKey,
+        toKey: undefined,
+        fieldAddress: edge.fromFieldAddress,
+        isCycle: false,
+        isDangling: true,
+        danglingLabel: formatAddr(edge.toAddress),
+        direction: edge.direction,
+        color: edge.color,
+        arrowStyle: edge.style,
+        fallbackStyle: edge.fallbackStyle,
+      })
+    }
+  }
+
   return edges
 })
 
@@ -672,15 +1017,23 @@ function measureFieldY(parentKey: string, fieldAddress: number): number | undefi
   if (!fieldEl)
     return undefined
 
+  // Touch the tick so the render re-runs once the DOM has actually settled
+  // into the new zoom scale. See arrowGeometryTick declaration for context.
+  // eslint-disable-next-line ts/no-unused-expressions
+  arrowGeometryTick.value
   const parentRect = parentEl.getBoundingClientRect()
   const fieldRect = fieldEl.getBoundingClientRect()
-  // Offset within the parent + parent's content-space position
+  // Offset within the parent + parent's content-space position.
+  // getBoundingClientRect includes the canvas's CSS scale, so the raw screen
+  // pixel offset must be divided by zoom to bring it back into content space
+  // — otherwise at zoom 2x the arrow stems from 2× the correct field Y.
   const pos = placement.getPosition(parentKey)
   const delta = getDragDelta(parentKey)
   if (!pos)
     return undefined
-  const fieldCenterOffset = (fieldRect.top + fieldRect.height / 2) - parentRect.top
-  return pos.y + delta.y + fieldCenterOffset
+  const fieldCenterScreen = (fieldRect.top + fieldRect.height / 2) - parentRect.top
+  const z = zoom.value || 1
+  return pos.y + delta.y + fieldCenterScreen / z
 }
 
 /** Get arrow props from a computed edge */
@@ -746,32 +1099,51 @@ function autoLayout() {
   measureAndPlace()
 }
 
-// ---- Auto-pan to cover content after placement ----
+/** Step-triggered variant used from onUpdated when new structure overflows
+ *  the viewport. Wipes positions (no user-drag exception — we no longer
+ *  treat drags as sticky) and re-places from scratch, but keeps the
+ *  current pan / zoom so the viewport frame stays stable. */
+function autoRelayoutInPlace() {
+  placement.clearPositions()
+  prevChildToParent.clear()
+  prevParentToChildren.clear()
+  settlingKeys.clear()
+  measureAndPlace()
+}
 
-function autoPanToContent() {
+/** Scale the DS canvas down so the entire content bounding box fits inside
+ *  the viewport (with a small padding), then center it. Never zooms in
+ *  above 1x, so resting layout stays at the natural card size. Clamps at
+ *  MIN_ZOOM when the content is still too large at the smallest allowed
+ *  zoom — partial visibility is better than an invisible tangle. */
+const AUTO_FIT_PADDING = 24
+function autoScaleToFit() {
   const bounds = placement.getContentBounds()
   const canvas = canvasRef.value
   if (!bounds || !canvas)
     return
   const cw = canvas.clientWidth
   const ch = canvas.clientHeight
-
-  // Center content in the viewport if it fits, otherwise align top-left with margin
   const contentW = bounds.maxX - bounds.minX
   const contentH = bounds.maxY - bounds.minY
-  const margin = 16
-
-  if (contentW <= cw && contentH <= ch) {
-    // Content fits: center it
-    panOffset.x = (cw - contentW) / 2 - bounds.minX
-    panOffset.y = (ch - contentH) / 2 - bounds.minY
-  }
-  else {
-    // Content overflows: align top-left with margin, prefer showing larger structures
-    panOffset.x = margin - bounds.minX
-    panOffset.y = margin - bounds.minY
-  }
-  clampPan()
+  if (contentW <= 0 || contentH <= 0)
+    return
+  // Scale-to-fit along the tighter axis; capped at 1 so we never
+  // auto-zoom IN — the user's current zoom preference wins if content
+  // already fits at 1x.
+  const zoomW = (cw - AUTO_FIT_PADDING * 2) / contentW
+  const zoomH = (ch - AUTO_FIT_PADDING * 2) / contentH
+  const target = Math.min(1, zoomW, zoomH)
+  setZoom(target)
+  // Re-center the content in the viewport at whatever zoom setZoom ended
+  // at (may be clamped to MIN_ZOOM). Rendered position of a content-space
+  // point p is `pan + p * z`; solving for "content center renders at
+  // viewport center" gives the expressions below.
+  const z = zoom.value
+  const cx = (bounds.minX + bounds.maxX) / 2
+  const cy = (bounds.minY + bounds.maxY) / 2
+  panOffset.x = cw / 2 - z * cx
+  panOffset.y = ch / 2 - z * cy
 }
 
 // Auto-pan to selected node
@@ -780,6 +1152,65 @@ watch(() => props.selectedAddress, (addr) => {
     return
   panToElement(`[data-testid="ds-node-${addr}"], [data-testid="ds-item-${addr}"]`)
 })
+
+// ---- Pointer-arrow hover wiring ----
+
+/** Resolve a byte address inside a pointer scalar to the memory-map arrow it
+ *  represents. Returns null for non-pointer bytes, padding, or dead allocs.
+ *  Mirrors ByteMap's syncPointerArrow so hovering a DS-view arrow / pointer
+ *  card produces the same primary-emphasis arrow in MemoryMap. */
+function pointerArrowFor(fieldAddr: number) {
+  // eslint-disable-next-line ts/no-unused-expressions
+  context.memoryVersion
+  const info = context.memory.describeByte(fieldAddr)
+  if (!info || info.isPadding || info.allocation.dead)
+    return null
+  const leafType = info.leafType
+  if (typeof leafType !== 'object' || leafType.type !== 'pointer')
+    return null
+  try {
+    const target = context.memory.readScalar(info.leafBase, leafType) as number
+    return { source: info.leafBase, sourceSize: info.leafSize, target }
+  }
+  catch {
+    return null
+  }
+}
+
+/** Wired into <CanvasArrow @hover-field>. Extends the existing setField call
+ *  (which highlights the field row / pointer card via `data-field-addr`) with
+ *  a setPointerArrow so MemoryMap's arrow overlay lights up with primary
+ *  emphasis for the same pointer. */
+function onArrowHoverField(fieldAddress: number | null) {
+  hover.setField(fieldAddress)
+  if (fieldAddress === null) {
+    hover.setPointerArrow(null)
+    return
+  }
+  hover.setPointerArrow(pointerArrowFor(fieldAddress))
+}
+
+function onItemEnter(item: DataItem) {
+  hover.setHover(item.address, 'ds')
+  if (item.varName)
+    emit('hoverVariable', item.varName)
+  // Hovering a primitive pointer card mirrors the effect of hovering its
+  // byte in ByteMap — MemoryMap draws the primary arrow.
+  if (item.kind === 'pointer')
+    hover.setPointerArrow(pointerArrowFor(item.address))
+}
+
+function onItemLeave() {
+  hover.setHover(null, null)
+  emit('hoverVariable', null)
+}
+
+/** True when a CanvasArrow hover is pointing at the pointer this card holds
+ *  (primitive pointer items only — struct fields already highlight via
+ *  `data-field-addr` inside DSValue). */
+function isArrowSourceItem(item: DataItem): boolean {
+  return item.kind === 'pointer' && hover.fieldAddress.value === item.address
+}
 
 // ---- Color/shape for types ----
 
@@ -811,22 +1242,58 @@ const kindBg: Record<DataItem['kind'], string> = {
     class="relative h-full select-none overflow-hidden p-2"
     :class="hasContent ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''"
   >
-    <!-- Auto-layout button -->
-    <button
+    <!-- Tool bar: zoom + auto-layout. Absolutely positioned so the pannable
+         canvas surface underneath stays un-obstructed by layout. -->
+    <div
       v-if="hasContent"
-      class="absolute right-2 top-2 z-10 rounded bg-gray-200/80 p-1 text-gray-500 transition-colors dark:bg-gray-700/80 hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
-      title="Auto-layout"
-      @click="autoLayout"
+      class="absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded bg-gray-200/80 p-0.5 text-gray-500 shadow-sm dark:bg-gray-700/80"
     >
-      <div class="i-carbon-flow h-3.5 w-3.5" />
-    </button>
+      <button
+        class="rounded p-1 transition-colors hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
+        title="Zoom out (Cmd/Ctrl+scroll)"
+        @click="zoomOut()"
+      >
+        <div class="i-carbon-zoom-out h-3.5 w-3.5" />
+      </button>
+      <button
+        class="min-w-10 rounded px-1 text-[10px] font-mono transition-colors hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
+        title="Reset zoom"
+        @click="resetZoom()"
+      >
+        {{ Math.round(zoom * 100) }}%
+      </button>
+      <button
+        class="rounded p-1 transition-colors hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
+        title="Zoom in (Cmd/Ctrl+scroll)"
+        @click="zoomIn()"
+      >
+        <div class="i-carbon-zoom-in h-3.5 w-3.5" />
+      </button>
+      <span class="mx-0.5 h-4 w-px bg-gray-400/40" />
+      <button
+        class="rounded p-1 transition-colors hover:bg-gray-300/80 hover:text-gray-700 dark:hover:bg-gray-600/80 dark:hover:text-gray-300"
+        title="Auto-layout"
+        @click="autoLayout"
+      >
+        <div class="i-carbon-flow h-3.5 w-3.5" />
+      </button>
+    </div>
 
     <!-- Empty state (outside the pan-transformed layer so it stays centered) -->
     <div v-if="!hasContent" class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-gray-500 italic">
       No data to display
     </div>
 
-    <div ref="contentRef" :style="{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }" class="relative">
+    <div
+      ref="contentRef"
+      :style="{
+        transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
+        // Scale around the content's top-left so the pan offset formula
+        // (`pan + p*z`) matches the CSS transform composition.
+        transformOrigin: '0 0',
+      }"
+      class="relative"
+    >
       <!-- Data items -->
       <div class="contents">
         <div
@@ -843,13 +1310,14 @@ const kindBg: Record<DataItem['kind'], string> = {
             isHoverBoosted(item.address) ? 'bg-blue-500/20!' : '',
             !isHoverBoosted(item.address) && isStatementLhs(item.address) ? 'bg-blue-500/10!' : '',
             !isHoverBoosted(item.address) && isStatementRhs(item.address) && !isStatementLhs(item.address) ? 'bg-green-500/10!' : '',
-            !hasCodeHighlight(item.address) && isNodeHighlighted(item.address) ? 'bg-blue-500/10!' : '',
+            !hasCodeHighlight(item.address) && isArrowSourceItem(item) ? 'bg-blue-500/15! ring-1 ring-blue-400/40' : '',
+            !hasCodeHighlight(item.address) && isNodeHighlighted(item.address) && !isArrowSourceItem(item) ? 'bg-blue-500/10!' : '',
             item.dimmed ? 'opacity-40' : '',
           ]"
           :style="getItemStyle(`item-${item.address}`)"
           @click="!didDrag && emit('selectNode', item.address)"
-          @pointerenter="hover.setHover(item.address, 'ds'); item.varName && emit('hoverVariable', item.varName)"
-          @pointerleave="hover.setHover(null, null); emit('hoverVariable', null)"
+          @pointerenter="onItemEnter(item)"
+          @pointerleave="onItemLeave()"
         >
           <div class="mb-0.5 flex items-baseline gap-1.5 text-[10px]">
             <span class="text-gray-600 font-semibold dark:text-gray-400">{{ item.label }}</span>
@@ -874,7 +1342,7 @@ const kindBg: Record<DataItem['kind'], string> = {
           v-for="edge in arrowEdges"
           :key="edge.id"
           v-bind="getArrowProps(edge)"
-          @hover-field="hover.setField($event)"
+          @hover-field="onArrowHoverField"
         />
       </svg>
     </div>

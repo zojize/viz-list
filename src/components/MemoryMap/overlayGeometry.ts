@@ -5,13 +5,20 @@ export interface OverlayGeometry {
   cellWidth: number
   rowHeight: number
   labelWidth: number
+  /**
+   * Leading empty gutter inside the scroll container before the row's label
+   *  column. Non-zero when rows are horizontally centered in a wider column
+   *  (the ByteMap wrapper uses `items-center`), so the overlay rects must
+   *  shift right by the same amount to stay aligned with the byte cells.
+   */
+  xOffset: number
   regionStart: number
 }
 
 export function allocationRects(base: number, size: number, g: OverlayGeometry): Rect[] {
   if (size <= 0)
     return []
-  const { bytesPerRow, cellWidth, rowHeight, labelWidth, regionStart } = g
+  const { bytesPerRow, cellWidth, rowHeight, labelWidth, xOffset, regionStart } = g
   const rel = base - regionStart
   const startRow = Math.floor(rel / bytesPerRow)
   const startCol = rel % bytesPerRow
@@ -19,7 +26,7 @@ export function allocationRects(base: number, size: number, g: OverlayGeometry):
   const endRow = Math.floor((endByte - 1) / bytesPerRow)
   const endCol = ((endByte - 1) % bytesPerRow) + 1
 
-  const x = (col: number) => labelWidth + col * cellWidth
+  const x = (col: number) => xOffset + labelWidth + col * cellWidth
   const y = (row: number) => row * rowHeight
 
   if (startRow === endRow) {

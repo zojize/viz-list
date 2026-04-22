@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { allocationPath, allocationRects } from '../../src/components/MemoryMap/overlayGeometry'
 
-const G = { bytesPerRow: 8, cellWidth: 32, rowHeight: 28, labelWidth: 62, regionStart: 0 }
+const G = { bytesPerRow: 8, cellWidth: 32, rowHeight: 28, labelWidth: 62, xOffset: 0, regionStart: 0 }
 
 describe('allocationRects', () => {
   it('single row, aligned to column start', () => {
     expect(allocationRects(0, 4, G)).toEqual([
       { x: 62, y: 0, width: 128, height: 28 },
+    ])
+  })
+
+  it('honours xOffset when rows are centered', () => {
+    // A centered wrapper shifts rows by `xOffset` before the label column;
+    // every rect's x must shift by the same amount (width is unchanged).
+    const g = { ...G, xOffset: 20 }
+    expect(allocationRects(0, 4, g)).toEqual([
+      { x: 20 + 62, y: 0, width: 128, height: 28 },
     ])
   })
 

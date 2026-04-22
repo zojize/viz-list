@@ -1,0 +1,53 @@
+{
+  "endianness": "le",
+  "pausedAt": {
+    "line": 100,
+    "text": "breakpoint()"
+  },
+  "allocations": [
+    {
+      "base": "0x0004",
+      "size": 4,
+      "region": "stack",
+      "layout": "scalar"
+    },
+    {
+      "base": "0x3fd0",
+      "size": 16,
+      "region": "heap",
+      "layout": "struct TreeNode"
+    },
+    {
+      "base": "0x3fe0",
+      "size": 16,
+      "region": "heap",
+      "layout": "struct TreeNode"
+    },
+    {
+      "base": "0x3ff0",
+      "size": 16,
+      "region": "heap",
+      "layout": "struct TreeNode"
+    }
+  ],
+  "liveBytes": {
+    "0x0004": "e0 3f 00 00",
+    "0x3fd0": "0a 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00",
+    "0x3fe0": "14 00 00 00 02 00 00 00 d0 3f 00 00 f0 3f 00 00",
+    "0x3ff0": "1e 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00"
+  },
+  "pointerEdges": [
+    {
+      "source": "0x0004",
+      "target": "0x3fe0"
+    },
+    {
+      "source": "0x3fe8",
+      "target": "0x3fd0"
+    },
+    {
+      "source": "0x3fec",
+      "target": "0x3ff0"
+    }
+  ]
+}

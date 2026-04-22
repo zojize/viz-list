@@ -21,6 +21,8 @@ const props = defineProps<{
   fieldValues?: Map<string, { type: CppType, value: CppValue, address: number }>
   changed?: boolean
   highlightedFieldAddress?: number | null
+  statementLhsAddresses?: ReadonlySet<number>
+  statementRhsAddresses?: ReadonlySet<number>
 }>()
 
 const emit = defineEmits<{
@@ -41,7 +43,7 @@ const structName = computed(() => {
 
 <template>
   <div
-    class="cursor-pointer border border-l-3 border-gray-200 border-l-transparent rounded-md bg-white p-2 text-xs shadow-sm transition-all dark:border-gray-700 dark:bg-gray-900"
+    class="cursor-pointer border border-l-3 border-gray-200 rounded-md bg-white p-2 text-xs shadow-sm transition-all dark:border-gray-700 dark:bg-gray-900"
     :class="{
       'border-l-yellow-400!': changed,
     }"
@@ -63,7 +65,11 @@ const structName = computed(() => {
         :key="name"
         :data-field-address="field.address"
         class="flex items-baseline justify-between gap-4 border-b border-gray-200 py-1 font-mono transition-colors last:border-b-0 dark:border-gray-200/10"
-        :class="{ 'bg-blue-500/15! rounded px-1 -mx-1': highlightedFieldAddress === field.address }"
+        :class="{
+          'bg-blue-500/15! rounded px-1 -mx-1': highlightedFieldAddress === field.address,
+          'bg-blue-500/10! rounded px-1 -mx-1': highlightedFieldAddress !== field.address && statementLhsAddresses?.has(field.address),
+          'bg-green-500/10! rounded px-1 -mx-1': highlightedFieldAddress !== field.address && !statementLhsAddresses?.has(field.address) && statementRhsAddresses?.has(field.address),
+        }"
       >
         <span class="shrink-0 text-gray-500">{{ name }}</span>
         <AddressLink

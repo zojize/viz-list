@@ -42,7 +42,6 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
 
   const positions = new Map<string, { x: number, y: number }>()
   const sizes = new Map<string, { w: number, h: number }>()
-  const userDragged = new Set<string>()
   const version = shallowRef(0)
 
   // ---- Basic accessors ----
@@ -64,23 +63,6 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
   function setPosition(key: string, x: number, y: number) {
     positions.set(key, { x, y })
     version.value++
-  }
-
-  // ---- User drag tracking ----
-
-  function markUserDragged(key: string) {
-    userDragged.add(key)
-  }
-
-  function clearUserDragged(key?: string) {
-    if (key)
-      userDragged.delete(key)
-    else
-      userDragged.clear()
-  }
-
-  function isUserDragged(key: string): boolean {
-    return userDragged.has(key)
   }
 
   // ---- Occupied rectangles ----
@@ -199,6 +181,35 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
   }
 
   /**
+   * Non-destructive attempt: place at (x, y) only if no currently-placed item
+   * would overlap. Used by callers (e.g. DS-view pointer placement) that want
+   * to probe several candidate slots and fall through to another strategy if
+   * none fit. Unlike `displaceAndPlace`, no other items move.
+   *
+   * Idempotent on re-entry: if the key is already positioned at the same
+   * (x, y), no version bump. Without this guard a caller that re-runs on
+   * every reactive tick (DataStructureView's onUpdated -> measureAndPlace)
+   * would re-commit the same slot, bump version, trigger another render,
+   * and loop.
+   */
+  function tryPlaceAt(key: string, x: number, y: number, w: number, h: number): boolean {
+    const existing = positions.get(key)
+    if (existing && existing.x === x && existing.y === y) {
+      sizes.set(key, { w, h })
+      return true
+    }
+    const rect: Rect = { x, y, w, h }
+    for (const { rect: r } of getOccupiedKeyed(key)) {
+      if (rectsOverlap(rect, r))
+        return false
+    }
+    sizes.set(key, { w, h })
+    positions.set(key, { x, y })
+    version.value++
+    return true
+  }
+
+  /**
    * Place an item at a specific position, displacing any conflicting items.
    * Returns the list of displaced keys (caller can check for active drag conflicts).
    */
@@ -239,12 +250,11 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
   }
 
   /**
-   * Full re-layout: clear all positions and user drags, re-place in order.
+   * Full re-layout: clear all positions, re-place in order.
    * Tree items should be placed first (via placeRelative after this), then singletons.
    */
   function reLayout(orderedKeys: { key: string, w: number, h: number }[]) {
     positions.clear()
-    userDragged.clear()
 
     const container = options.containerSize?.()
     const occupied: Rect[] = []
@@ -371,7 +381,6 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
   function remove(key: string) {
     positions.delete(key)
     sizes.delete(key)
-    userDragged.delete(key)
     version.value++
   }
 
@@ -381,7 +390,6 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
       if (!keys.has(k)) {
         positions.delete(k)
         sizes.delete(k)
-        userDragged.delete(k)
         changed = true
       }
     }
@@ -392,14 +400,12 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
   /** Clear positions only (keep sizes for immediate re-placement). */
   function clearPositions() {
     positions.clear()
-    userDragged.clear()
     version.value++
   }
 
   function clear() {
     positions.clear()
     sizes.clear()
-    userDragged.clear()
     version.value++
   }
 
@@ -434,15 +440,13 @@ export function usePlacementEngine(options: PlacementOptions = {}) {
     setSize,
     placeNew,
     placeRelative,
+    tryPlaceAt,
     displaceAndPlace,
     reLayout,
     remove,
     retainOnly,
     clear,
     getContentBounds,
-    markUserDragged,
-    clearUserDragged,
-    isUserDragged,
     evictOverlapping,
     clearPositions,
     version: readonly(version),

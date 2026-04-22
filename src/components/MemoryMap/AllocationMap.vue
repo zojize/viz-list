@@ -101,13 +101,40 @@ function getFieldValues(address: number, alloc: Allocation): Map<string, { type:
   if (!layout || layout.kind !== 'struct')
     return undefined
   const map = new Map<string, { type: CppType, value: CppValue, address: number }>()
+
+  // Expand array fields into one row per element (e.g. `keys[0]`, `keys[1]`,
+  // `children[0]`…) so the user sees every byte accounted for and the
+  // current-statement highlight can land on the exact element being
+  // written. Nested arrays recurse with subscript prefixes.
+  function flattenArray(prefix: string, elemNode: LayoutNode, elemAddr: number, length: number, stride: number) {
+    for (let i = 0; i < length; i++) {
+      const addr = elemAddr + i * stride
+      const subscript = `${prefix}[${i}]`
+      if (elemNode.kind === 'array') {
+        flattenArray(subscript, elemNode.element, addr, elemNode.length, elemNode.stride)
+        continue
+      }
+      map.set(subscript, {
+        type: fieldNodeToType(elemNode),
+        value: readByLayout(addr, elemNode),
+        address: addr,
+      })
+    }
+  }
+
   for (const field of layout.fields) {
     const fieldAddr = address + field.offset
-    const fieldType = fieldNodeToType(field.node)
+    if (field.node.kind === 'array') {
+      flattenArray(field.name, field.node.element, fieldAddr, field.node.length, field.node.stride)
+      continue
+    }
     // Read based on the FIELD'S own layout node — findAllocation would return
     // the enclosing struct, which would mis-type primitive/pointer fields as structs.
-    const fieldValue = readByLayout(fieldAddr, field.node)
-    map.set(field.name, { type: fieldType, value: fieldValue, address: fieldAddr })
+    map.set(field.name, {
+      type: fieldNodeToType(field.node),
+      value: readByLayout(fieldAddr, field.node),
+      address: fieldAddr,
+    })
   }
   return map
 }
@@ -360,7 +387,7 @@ watch(hover.fieldAddress, (addr) => {
           </span>
         </div>
         <!-- Scrollable body -->
-        <div class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto overscroll-none p-1.5">
+        <div data-overlay-clip-region class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto overscroll-none p-1.5">
           <TransitionGroup name="stack-cell">
             <div
               v-for="entry in stackEntries"
@@ -368,7 +395,7 @@ watch(hover.fieldAddress, (addr) => {
               :data-address="entry.address"
               data-anchor-edge="left"
               :data-testid="`stack-entry-${entry.address}`"
-              class="cursor-pointer border border-l-3 border-gray-200 border-l-transparent rounded-md bg-white font-mono shadow-sm transition-all duration-200 dark:border-gray-700 dark:bg-gray-900"
+              class="cursor-pointer border border-l-3 border-gray-200 rounded-md bg-white font-mono shadow-sm transition-all duration-200 dark:border-gray-700 dark:bg-gray-900"
               :class="{
                 'outline outline-2 outline-blue-400 bg-blue-500/20!': selectedAddress === entry.address,
                 'border-l-blue-500!': isStatementLhs(entry.address),
@@ -488,7 +515,7 @@ watch(hover.fieldAddress, (addr) => {
           </span>
         </div>
         <!-- Scrollable body -->
-        <div class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto overscroll-none p-1.5">
+        <div data-overlay-clip-region class="scrollbar-hidden relative min-h-0 flex flex-1 flex-col gap-1.5 overflow-y-auto overscroll-none p-1.5">
           <TransitionGroup name="heap-cell">
             <MemoryCell
               v-for="entry in heapEntries"
@@ -500,6 +527,8 @@ watch(hover.fieldAddress, (addr) => {
               :field-values="entry.fields"
               :changed="changedAddresses.has(entry.cell.address)"
               :highlighted-field-address="hover.fieldAddress.value"
+              :statement-lhs-addresses="statementLhsAddresses"
+              :statement-rhs-addresses="statementRhsAddresses"
               :class="{
                 'outline outline-2 outline-blue-400': selectedAddress === entry.cell.address,
                 'border-l-blue-500!': isStatementLhs(entry.cell.address),

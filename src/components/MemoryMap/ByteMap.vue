@@ -137,6 +137,17 @@ function bytesPerRowFor(width: number): number {
 const stackBytesPerRow = computed(() => bytesPerRowFor(stackWidth.value))
 const heapBytesPerRow = computed(() => bytesPerRowFor(heapWidth.value))
 
+// Wrapper is `flex items-center`, so a narrower row sits centered inside a
+// wider column. The overlay absolute-positions against the column itself,
+// not the row wrapper, so it needs the same left gutter to line up with
+// the byte cells. Row intrinsic width is `labelWidth + bpr * cellWidth`.
+function xOffsetFor(width: number, bpr: number): number {
+  const rowWidth = ADDRESS_LABEL_WIDTH + bpr * BYTE_CELL_WIDTH
+  return Math.max(0, (width - rowWidth) / 2)
+}
+const stackXOffset = computed(() => xOffsetFor(stackWidth.value, stackBytesPerRow.value))
+const heapXOffset = computed(() => xOffsetFor(heapWidth.value, heapBytesPerRow.value))
+
 // ---- Full-buffer row address arrays ----
 
 /** Stack column: addresses 0 to MEMORY_SIZE/2 - 1, low addr at top */
@@ -225,16 +236,25 @@ onActivated(() => {
 // interesting allocations sit near the bottom). Mirrors the AllocationMap
 // behaviour: bring the target row into view so the arrow has something to
 // point at without the user manually scrolling.
+//
+// Skip scrolling if the target lives in the same column the user is already
+// hovering — the cursor is anchored to a specific row there, and yanking
+// that column away loses the hover context and the arrow alike.
 watch(() => hover.pointerArrow.value?.target, (target) => {
   if (target == null || target <= 0)
     return
   const half = MEMORY_SIZE / 2
+  const src = hover.source.value
   if (target < half) {
+    if (src === 'byte-stack')
+      return
     const bpr = stackBytesPerRow.value
     if (bpr > 0)
       stackScrollToIdx(Math.floor(target / bpr))
   }
   else {
+    if (src === 'byte-heap')
+      return
     const bpr = heapBytesPerRow.value
     if (bpr > 0)
       heapScrollToIdx(Math.floor((target - half) / bpr))
@@ -252,7 +272,7 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
         <!-- Sticky header -->
         <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 rounded-t-lg bg-gray-50 px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900">
           <span class="text-[10px] text-gray-500 font-semibold tracking-wide uppercase dark:text-gray-400">
-            Stack &amp; Globals
+            Stack
           </span>
           <span class="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-900/60 dark:text-blue-300">
             {{ stackBytesUsed }} {{ stackBytesUsed === 1 ? 'byte' : 'bytes' }} used
@@ -269,9 +289,10 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
              Allocation view. -->
         <div
           v-bind="stackContainerProps"
+          data-overlay-clip-region
           class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto overscroll-none"
         >
-          <div v-show="stackWidth > 0" v-bind="stackWrapperProps">
+          <div v-show="stackWidth > 0" v-bind="stackWrapperProps" class="flex flex-col items-center">
             <!-- Key by virtual-list index, NOT item.data (row-start address).
                  When bytesPerRow changes (splitpane drag), row addresses shift
                  so keying by address would unmount/re-mount every visible row.
@@ -305,6 +326,7 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
               :cell-width="BYTE_CELL_WIDTH"
               :row-height="ROW_HEIGHT"
               :label-width="ADDRESS_LABEL_WIDTH"
+              :x-offset="stackXOffset"
               :lhs="lhsSet"
               :rhs="rhsSet"
               :changed="changed"
@@ -333,9 +355,15 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
              gate the wrapper on a non-zero measured width). -->
         <div
           v-bind="heapContainerProps"
+          data-overlay-clip-region
           class="scrollbar-hidden relative min-h-0 flex-1 overflow-x-auto overflow-y-auto overscroll-none"
         >
-          <div v-show="heapWidth > 0" v-bind="heapWrapperProps">
+          <div v-show="heapWidth > 0" v-bind="heapWrapperProps" class="flex flex-col items-center">
+            <!-- Key by virtual-list index, NOT item.data (row-start address).
+                 When bytesPerRow changes (splitpane drag), row addresses shift
+                 so keying by address would unmount/re-mount every visible row.
+                 Keying by index reuses the same components and just updates
+                 their props. -->
             <MemoryMapByteRow
               v-for="item in heapList"
               :key="item.index"
@@ -361,6 +389,7 @@ watch(() => hover.pointerArrow.value?.target, (target) => {
               :cell-width="BYTE_CELL_WIDTH"
               :row-height="ROW_HEIGHT"
               :label-width="ADDRESS_LABEL_WIDTH"
+              :x-offset="heapXOffset"
               :lhs="lhsSet"
               :rhs="rhsSet"
               :changed="changed"

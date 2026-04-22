@@ -1,0 +1,75 @@
+{
+  "endianness": "le",
+  "pausedAt": {
+    "line": 49,
+    "text": "breakpoint()"
+  },
+  "allocations": [
+    {
+      "base": "0x0004",
+      "size": 4,
+      "region": "stack",
+      "layout": "scalar"
+    },
+    {
+      "base": "0x3fd8",
+      "size": 8,
+      "region": "heap",
+      "layout": "struct ListNode"
+    },
+    {
+      "base": "0x3fe0",
+      "size": 8,
+      "region": "heap",
+      "layout": "struct ListNode"
+    },
+    {
+      "base": "0x3fe8",
+      "size": 8,
+      "region": "heap",
+      "layout": "struct ListNode"
+    },
+    {
+      "base": "0x3ff0",
+      "size": 8,
+      "region": "heap",
+      "layout": "struct ListNode"
+    },
+    {
+      "base": "0x3ff8",
+      "size": 8,
+      "region": "heap",
+      "layout": "struct ListNode"
+    }
+  ],
+  "liveBytes": {
+    "0x0004": "d8 3f 00 00",
+    "0x3fd8": "05 00 00 00 e0 3f 00 00",
+    "0x3fe0": "04 00 00 00 e8 3f 00 00",
+    "0x3fe8": "03 00 00 00 f0 3f 00 00",
+    "0x3ff0": "02 00 00 00 f8 3f 00 00",
+    "0x3ff8": "01 00 00 00 00 00 00 00"
+  },
+  "pointerEdges": [
+    {
+      "source": "0x0004",
+      "target": "0x3fd8"
+    },
+    {
+      "source": "0x3fdc",
+      "target": "0x3fe0"
+    },
+    {
+      "source": "0x3fe4",
+      "target": "0x3fe8"
+    },
+    {
+      "source": "0x3fec",
+      "target": "0x3ff0"
+    },
+    {
+      "source": "0x3ff4",
+      "target": "0x3ff8"
+    }
+  ]
+}
